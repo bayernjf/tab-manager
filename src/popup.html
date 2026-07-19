@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Tab Garden</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <div><span class="eyebrow">TAB GARDEN</span><h1>标签花园</h1></div>
+    <button id="reconcile" class="ghost" title="立即重新整理">整理</button>
+  </header>
+
+  <section class="settings-card">
+    <label class="switch-row"><span><strong>自动分组</strong><small>同网站标签页自动聚合</small></span><input id="auto-toggle" type="checkbox"><i></i></label>
+    <label class="threshold"><span>达到</span><select id="minimum-tabs"><option value="2">2</option><option value="3">3</option><option value="4">4</option></select><span>个标签页时分组</span></label>
+  </section>
+
+  <section>
+    <div class="section-title"><h2>创建自定义分组</h2><button id="select-all" class="link">全选</button></div>
+    <div id="tabs-list" class="tabs-list"></div>
+    <div class="create-row">
+      <input id="group-name" maxlength="40" placeholder="分组名称">
+      <select id="group-color" aria-label="分组颜色"><option value="blue">蓝色</option><option value="green">绿色</option><option value="purple">紫色</option><option value="orange">橙色</option><option value="red">红色</option><option value="pink">粉色</option><option value="cyan">青色</option><option value="yellow">黄色</option><option value="grey">灰色</option></select>
+      <button id="create-group" class="primary">创建</button>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-title"><h2>自定义分组</h2></div>
+    <div id="groups-list"></div>
+  </section>
+  <p id="status" class="status" aria-live="polite"></p>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

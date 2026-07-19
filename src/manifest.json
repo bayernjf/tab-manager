@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Tab Garden",
+  "description": "按网站自动整理标签页，同时保留用户自定义分组。",
+  "version": "0.1.0",
+  "permissions": ["tabs", "tabGroups", "storage"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Tab Garden",
+    "default_popup": "popup.html"
+  }
+}
