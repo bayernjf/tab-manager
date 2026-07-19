@@ -26,8 +26,13 @@ async function databaseRequest<T>(path: string, init: RequestInit = {}): Promise
     const body = await response.json().catch(() => ({})) as { message?: string; details?: string };
     throw new Error(body.message || body.details || `同步失败 (${response.status})`);
   }
-  if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
+  const text = await response.text();
+  if (!text) return undefined as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error("Supabase 返回了无法解析的同步响应");
+  }
 }
 
 function toSettings(row: SettingsRow): Settings {

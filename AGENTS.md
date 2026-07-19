@@ -39,6 +39,7 @@ tab-manager/
 ├── tests/
 │   └── shared.test.js         # Node.js 单元测试
 ├── .env.example
+├── PULL_REQUEST_WORKFLOW.md # PR、Actions、发布和分支回同步流程
 ├── package.json
 └── tsconfig.json
 ```
@@ -230,6 +231,8 @@ when an authenticated session is resumed.
 ```
 
 ## Git 工作流
+
+涉及提交、push、PR、合并、Actions 等待、发布或分支同步时，必须先阅读并严格执行 `PULL_REQUEST_WORKFLOW.md`。该文件是完整交付流程的最高优先级项目内说明；本节只定义通用 Git 约定。
 
 ### 分支职责
 
