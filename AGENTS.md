@@ -18,6 +18,9 @@ Tab Garden 是一个 Chrome / Edge Manifest V3 标签管理扩展，使用原生
 
 ```text
 tab-manager/
+├── .github/workflows/
+│   ├── ci.yml                # PR/main/dev 验证与临时构建产物
+│   └── release.yml           # 版本标签打包及 GitHub Release
 ├── src/
 │   ├── manifest.json          # 扩展权限、后台和 popup 配置
 │   ├── background.ts          # 消息路由、标签分组、设置同步
@@ -290,6 +293,43 @@ when an authenticated session is resumed.
 - [ ] `git diff --check`
 - [ ] 浏览器手动测试
 ```
+
+## CI/CD
+
+### 持续集成
+
+`.github/workflows/ci.yml` 在以下情况运行：
+
+- 向 `main` 或 `dev` 发起或更新 Pull Request。
+- 代码 push 到 `main` 或 `dev`。
+- 用户在 GitHub Actions 页面手动触发。
+
+CI 使用 `.env.example` 作为无真实账号的构建配置，依次执行 `npm ci`、类型检查和 `npm test`，并保留 7 天的 `dist/` artifact。CI 不访问真实 Supabase 数据。
+
+### 版本发布
+
+`.github/workflows/release.yml` 在以下情况运行：
+
+- 代码合并或 push 到 `dev` 时，发布预览版。
+- 代码合并或 push 到 `main` 时，发布最新版。
+- 手动创建并 push 名称匹配 `v*` 的 Git tag 时，发布对应版本。
+
+发布通道：
+
+| 触发来源 | Release tag | 产物 | 行为 |
+|---|---|---|---|
+| `dev` | `dev-preview` | `tab-garden-preview.zip` | 保持 `manifest.json` 版本号不变，移动固定 tag 并覆盖预览 Release 和同名 asset |
+| `main` | 自动递增的 `vX.Y.Z` | `tab-garden-vX.Y.Z.zip` | 读取最高正式 tag 并将 patch 加一，更新包内 manifest 版本，创建新的正式 Release |
+| `v*` tag | 用户创建的 tag | `tab-garden-<tag>.zip` | 创建或更新该版本 Release |
+
+`dev-preview` 是滚动 tag，会由 Actions 强制移动到 `dev` 的最新提交，不要为它设置禁止 Actions 更新的保护规则。`main` 自动版本以仓库中最高的严格三段式 tag（`vMAJOR.MINOR.PATCH`）为基准递增 patch；若当前提交已有正式 tag，失败重跑时会复用该 tag，不会重复加版本。分支和 tag 发布都会执行完整类型检查与测试。
+
+Release workflow 需要仓库 Actions Secrets：
+
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+
+正式版本 tag 发布前必须确保 tag 所指向的 `src/manifest.json` 版本号正确。Release 构建产物包含公开的 Supabase publishable key，但不得包含 `service_role` key。
 
 ## 安全与 Git 约定
 
