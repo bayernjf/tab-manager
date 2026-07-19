@@ -7,9 +7,22 @@
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
+  <main id="auth-view" class="auth-view">
+    <div class="auth-brand"><span class="brand-mark">TG</span><span class="eyebrow">TAB GARDEN</span><h1>欢迎来到标签花园</h1><p>登录后开始整理你的浏览空间</p></div>
+    <form id="auth-form" class="auth-card">
+      <div class="auth-tabs" role="tablist"><button id="login-tab" class="auth-tab active" type="button">登录</button><button id="signup-tab" class="auth-tab" type="button">注册</button></div>
+      <label class="field"><span>邮箱</span><input id="auth-email" type="email" autocomplete="email" placeholder="you@example.com" required></label>
+      <label class="field"><span>密码</span><input id="auth-password" type="password" autocomplete="current-password" placeholder="至少 6 位" minlength="6" required></label>
+      <label id="confirm-field" class="field hidden"><span>确认密码</span><input id="auth-confirm" type="password" autocomplete="new-password" placeholder="再次输入密码" minlength="6"></label>
+      <button id="auth-submit" class="primary auth-submit" type="submit">登录</button>
+      <p id="auth-status" class="auth-message" aria-live="polite"></p>
+    </form>
+  </main>
+
+  <main id="app-view" class="hidden">
   <header>
     <div><span class="eyebrow">TAB GARDEN</span><h1>标签花园</h1></div>
-    <button id="reconcile" class="ghost" title="立即重新整理">整理</button>
+    <div class="header-actions"><button id="reconcile" class="ghost" title="立即重新整理">整理</button><button id="logout" class="ghost" title="退出登录">退出</button></div>
   </header>
 
   <section class="settings-card">
@@ -32,6 +45,7 @@
     <div id="groups-list"></div>
   </section>
   <p id="status" class="status" aria-live="polite"></p>
+  </main>
   <script type="module" src="popup.js"></script>
 </body>
 </html>

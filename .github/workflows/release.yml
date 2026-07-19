@@ -1,0 +1,156 @@
+name: Release extension
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    name: Build extension package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate release secrets
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          test -n "$SUPABASE_URL" || { echo "Missing SUPABASE_URL secret"; exit 1; }
+          test -n "$SUPABASE_ANON_KEY" || { echo "Missing SUPABASE_ANON_KEY secret"; exit 1; }
+
+      - name: Prepare production build config
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          printf 'SUPABASE_URL=%s\nSUPABASE_ANON_KEY=%s\n' "$SUPABASE_URL" "$SUPABASE_ANON_KEY" > .env.local
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test and build
+        run: npm test
+
+      - name: Resolve release channel
+        id: release
+        shell: bash
+        run: |
+          VERSION=$(node -e "const fs=require('fs'); console.log(JSON.parse(fs.readFileSync('src/manifest.json', 'utf8')).version)")
+          if [[ "$GITHUB_REF" == "refs/heads/dev" ]]; then
+            echo "tag=dev-preview" >> "$GITHUB_OUTPUT"
+            echo "name=Tab Garden Preview v${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "archive=tab-garden-preview.zip" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "generate_notes=false" >> "$GITHUB_OUTPUT"
+            echo "rolling=true" >> "$GITHUB_OUTPUT"
+            echo "create_tag=false" >> "$GITHUB_OUTPUT"
+            echo "package_version=${VERSION}" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
+            EXISTING_TAG=$(git tag --points-at "$GITHUB_SHA" --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)
+            if [[ -n "$EXISTING_TAG" ]]; then
+              RELEASE_VERSION=${EXISTING_TAG#v}
+              CREATE_TAG=false
+            else
+              LATEST_TAG=$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)
+              BASE_VERSION=${LATEST_TAG#v}
+              BASE_VERSION=${BASE_VERSION:-$VERSION}
+              IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE_VERSION"
+              RELEASE_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+              CREATE_TAG=true
+            fi
+            echo "tag=v${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
+            echo "name=Tab Garden v${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
+            echo "archive=tab-garden-v${RELEASE_VERSION}.zip" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "generate_notes=true" >> "$GITHUB_OUTPUT"
+            echo "rolling=false" >> "$GITHUB_OUTPUT"
+            echo "create_tag=${CREATE_TAG}" >> "$GITHUB_OUTPUT"
+            echo "package_version=${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
+          else
+            if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Release tag must use the vMAJOR.MINOR.PATCH format" >&2
+              exit 1
+            fi
+            RELEASE_VERSION=${GITHUB_REF_NAME#v}
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "name=Tab Garden ${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "archive=tab-garden-${GITHUB_REF_NAME}.zip" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "generate_notes=true" >> "$GITHUB_OUTPUT"
+            echo "rolling=false" >> "$GITHUB_OUTPUT"
+            echo "create_tag=false" >> "$GITHUB_OUTPUT"
+            echo "package_version=${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Move rolling release tag
+        if: steps.release.outputs.rolling == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          git tag --force "$RELEASE_TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$RELEASE_TAG" --force
+
+      - name: Create incremented production tag
+        if: steps.release.outputs.create_tag == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          git tag "$RELEASE_TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$RELEASE_TAG"
+
+      - name: Set packaged extension version
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        env:
+          PACKAGE_VERSION: ${{ steps.release.outputs.package_version }}
+        run: |
+          node -e "const fs=require('fs'); const path='dist/manifest.json'; const manifest=JSON.parse(fs.readFileSync(path, 'utf8')); manifest.version=process.env.PACKAGE_VERSION; fs.writeFileSync(path, JSON.stringify(manifest, null, 2) + '\n')"
+
+      - name: Create extension archive
+        env:
+          ARCHIVE_NAME: ${{ steps.release.outputs.archive }}
+        run: cd dist && zip -r "../${ARCHIVE_NAME}" .
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ steps.release.outputs.tag }}-${{ github.run_number }}
+          path: ${{ steps.release.outputs.archive }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release.outputs.tag }}
+          name: ${{ steps.release.outputs.name }}
+          files: ${{ steps.release.outputs.archive }}
+          prerelease: ${{ steps.release.outputs.prerelease }}
+          generate_release_notes: ${{ steps.release.outputs.generate_notes }}
+          overwrite_files: true
+          make_latest: ${{ steps.release.outputs.prerelease == 'false' }}

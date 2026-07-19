@@ -17,6 +17,15 @@ const autoToggle = $<HTMLInputElement>("#auto-toggle");
 const minimumTabs = $<HTMLSelectElement>("#minimum-tabs");
 const groupName = $<HTMLInputElement>("#group-name");
 const groupColor = $<HTMLSelectElement>("#group-color");
+const authView = $("#auth-view");
+const appView = $("#app-view");
+const authForm = $<HTMLFormElement>("#auth-form");
+const authEmail = $<HTMLInputElement>("#auth-email");
+const authPassword = $<HTMLInputElement>("#auth-password");
+const authConfirm = $<HTMLInputElement>("#auth-confirm");
+const authStatus = $("#auth-status");
+const authSubmit = $<HTMLButtonElement>("#auth-submit");
+let authMode: "login" | "signup" = "login";
 
 async function send<T>(message: unknown): Promise<T> {
   const response = await chrome.runtime.sendMessage(message) as T & { error?: string };
@@ -29,6 +38,65 @@ function showStatus(message: string, error = false): void {
   status.className = error ? "status error" : "status";
   if (message) setTimeout(() => { status.textContent = ""; }, 2400);
 }
+
+function setAuthMode(mode: "login" | "signup"): void {
+  authMode = mode;
+  $("#login-tab").classList.toggle("active", mode === "login");
+  $("#signup-tab").classList.toggle("active", mode === "signup");
+  $("#confirm-field").classList.toggle("hidden", mode === "login");
+  authConfirm.required = mode === "signup";
+  authPassword.autocomplete = mode === "login" ? "current-password" : "new-password";
+  authSubmit.textContent = mode === "login" ? "登录" : "创建账户";
+  authStatus.textContent = "";
+}
+
+function showAuth(authenticated: boolean): void {
+  authView.classList.toggle("hidden", authenticated);
+  appView.classList.toggle("hidden", !authenticated);
+}
+
+$("#login-tab").addEventListener("click", () => setAuthMode("login"));
+$("#signup-tab").addEventListener("click", () => setAuthMode("signup"));
+
+authForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  authStatus.className = "auth-message";
+  if (authMode === "signup" && authPassword.value !== authConfirm.value) {
+    authStatus.textContent = "两次输入的密码不一致";
+    authStatus.classList.add("error");
+    return;
+  }
+  authSubmit.disabled = true;
+  try {
+    if (authMode === "login") {
+      await send({ type: "auth-sign-in", email: authEmail.value, password: authPassword.value });
+      showAuth(true);
+      await load();
+    } else {
+      const result = await send<{ requiresEmailConfirmation: boolean }>({ type: "auth-sign-up", email: authEmail.value, password: authPassword.value });
+      if (result.requiresEmailConfirmation) {
+        setAuthMode("login");
+        authStatus.textContent = "注册成功，请查收验证邮件后登录";
+        authPassword.value = "";
+        authConfirm.value = "";
+      } else {
+        showAuth(true);
+        await load();
+      }
+    }
+  } catch (error) {
+    authStatus.textContent = error instanceof Error ? error.message : String(error);
+    authStatus.classList.add("error");
+  } finally { authSubmit.disabled = false; }
+});
+
+$("#logout").addEventListener("click", async () => {
+  try {
+    await send({ type: "auth-sign-out" });
+    authPassword.value = "";
+    showAuth(false);
+  } catch (error) { showStatus(String(error), true); }
+});
 
 function renderTabs(tabs: PopupTab[]): void {
   tabsList.replaceChildren();
@@ -130,4 +198,11 @@ $("#reconcile").addEventListener("click", async () => {
   } catch (error) { showStatus(String(error), true); }
 });
 
-void load().catch((error) => showStatus(error instanceof Error ? error.message : String(error), true));
+void send<{ user: { id: string; email?: string } | null }>({ type: "auth-state" }).then(async ({ user }) => {
+  showAuth(Boolean(user));
+  if (user) await load();
+}).catch((error) => {
+  showAuth(false);
+  authStatus.textContent = error instanceof Error ? error.message : String(error);
+  authStatus.classList.add("error");
+});

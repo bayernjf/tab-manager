@@ -8,6 +8,8 @@ import {
   type Settings,
 } from "./shared.js";
 import { loadState, saveAutoGroups, saveCustomGroups, saveSettings } from "./storage.js";
+import { getCurrentUser, signIn, signOut, signUp } from "./auth.js";
+import { pushSettings, syncSettings } from "./sync.js";
 
 const reconcileTimers = new Map<number, ReturnType<typeof setTimeout>>();
 const AUTO_COLORS: GroupColor[] = ["blue", "green", "purple", "cyan", "orange", "pink", "yellow", "red"];
@@ -122,6 +124,10 @@ async function reconcileAllWindows(): Promise<void> {
 }
 
 type PopupMessage =
+  | { type: "auth-state" }
+  | { type: "auth-sign-in"; email: string; password: string }
+  | { type: "auth-sign-up"; email: string; password: string }
+  | { type: "auth-sign-out" }
   | { type: "get-popup-state" }
   | { type: "create-custom-group"; tabIds: number[]; title: string; color: GroupColor }
   | { type: "delete-custom-group"; id: string }
@@ -152,9 +158,31 @@ async function popupState() {
 
 chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendResponse) => {
   void (async () => {
+    if (message.type === "auth-state") {
+      const user = await getCurrentUser();
+      if (user) await syncSettings(user.id);
+      return { user };
+    }
+    if (message.type === "auth-sign-in") {
+      const user = await signIn(message.email.trim(), message.password);
+      await syncSettings(user.id);
+      return { user };
+    }
+    if (message.type === "auth-sign-up") {
+      const result = await signUp(message.email.trim(), message.password);
+      if (!result.requiresEmailConfirmation && result.user) await syncSettings(result.user.id);
+      return result;
+    }
+    if (message.type === "auth-sign-out") {
+      await signOut();
+      return { ok: true };
+    }
     if (message.type === "get-popup-state") return popupState();
     if (message.type === "update-settings") {
       await saveSettings(message.settings);
+      const user = await getCurrentUser();
+      if (!user) throw new Error("登录已过期，设置已保存在本地，请重新登录后同步");
+      await pushSettings(user.id, message.settings);
       await reconcileAllWindows();
       return { ok: true };
     }
