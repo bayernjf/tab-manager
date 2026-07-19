@@ -19,6 +19,15 @@ npm install
 npm test
 ```
 
+## 配置 Supabase 登录
+
+1. 在 Supabase 创建项目，并在 **Authentication → Providers → Email** 开启邮箱登录。
+2. 从 **Project Settings → API** 复制 Project URL 和 anon/publishable key。
+3. 执行 `cp .env.example .env.local`，将它们填入 `.env.local`。不要使用 `service_role` key。
+4. 执行 `npm run build`，然后重新加载扩展。
+
+扩展支持邮箱注册、邮箱密码登录、邮件确认、自动刷新会话和退出登录。认证会话保存在扩展自己的 `chrome.storage.local` 中。登录后，自动分组开关和分组阈值会同步到 `public.user_settings`；已有云端设置优先，云端没有记录时会使用本地设置初始化。
+
 ## 加载到浏览器
 
 1. 执行 `npm run build`。
