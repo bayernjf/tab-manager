@@ -75,7 +75,7 @@ git pull --rebase origin <branch>
    - 修复、本地验证、创建真实 PR 到 `dev`；
    - 等待 PR Actions、合并、再等待 `dev` Actions；
    - 全部成功后删除本地和远端 fix 分支。
-7. pull 最新 `dev` 和 `feature/20260719`，将 `dev` 的最新状态同步回 feature 并 push。
+7. 不要仅为合并产生的 merge commit 将 `dev` 反向同步回 feature；feature 的提交已包含在 dev 的合并历史中。
 8. `dev` 全部成功前，不得创建 `dev → main` PR。
 
 ## 阶段三：dev 合并到 main
@@ -96,19 +96,21 @@ git pull --rebase origin <branch>
    - 修复必须重新经过 `dev` 和 `main` 的真实 PR、检查与合并流程；
    - 生产 Actions 成功后删除本地和远端 fix 分支。
 
-## 阶段四：向下同步分支
+## 阶段四：仅在 main 存在独立改动时回同步
 
-生产发布成功后，按以下方向同步：
+正常的 `dev → main` PR 合并后，`dev` 已是 `main` 的祖先，不能为了合并产生的 merge commit 再创建 `main → dev` PR。这样会制造没有文件差异的提交，并导致 GitHub 持续显示 dev 可再次合并到 main。
+
+仅当 `main` 收到未经过 `dev` 的独立改动（例如紧急 hotfix）时，才执行：
 
 ```text
-main → dev → feature/20260719
+main → dev
 ```
 
-1. fetch/pull 最新 `main`。
-2. 通过正常 merge/PR 将 `main` 的合并提交同步回 `dev`，不得 force push。
-3. 等待同步后的 `dev` Actions 成功。
-4. fetch/pull 最新 `dev` 和 `feature/20260719`。
-5. 将 `dev` 同步回 `feature/20260719`，验证并 push。
+1. fetch/pull 最新 `main` 和 `dev`，确认 main 确实包含 dev 没有的文件改动。
+2. 创建真实 `main → dev` PR，不得直接 force push 共享分支。
+3. 等待 PR Actions 成功并合并。
+4. 等待合并后的 dev CI 和 Preview Release 成功。
+5. 不需要自动将 dev 再同步回 feature；只有用户明确需要 feature 包含该 hotfix 时，才同步 feature。
 6. 出现冲突时停止并请求用户处理，不自动解决。
 
 ## 临时修复分支清理
@@ -134,6 +136,7 @@ git branch -d fix/<name>
 - 本地和远端分支列表；
 - `feature/20260719`、`dev`、`main` 的 commit；
 - 三个分支的 ahead/behind 状态；
+- 正常发布后确认 `dev` 和 feature 是 main 的祖先或与 main 相同，而不是仅因回同步 merge commit 显示为 ahead；
 - 所有相关 PR 均已合并；
 - CI、Preview Release 和正式 Release 全部成功；
 - 本流程创建的临时分支全部删除；
