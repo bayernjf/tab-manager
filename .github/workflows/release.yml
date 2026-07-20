@@ -144,6 +144,16 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Remove existing release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          ARCHIVE_NAME: ${{ steps.release.outputs.archive }}
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete-asset "$RELEASE_TAG" "$ARCHIVE_NAME" --repo "$GITHUB_REPOSITORY" --yes || true
+          fi
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
