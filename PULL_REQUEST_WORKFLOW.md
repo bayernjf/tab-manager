@@ -14,6 +14,10 @@
 
 ## 通用规则
 
+### GitHub 内容必须使用英文
+
+所有写入 GitHub 的内容必须使用英文，包括 Issue/PR 标题与描述、comments、reviews、commit/merge/tag messages、Release 内容，以及 Actions 的 workflow/job/step/artifact 显示名称。项目内中文文档和向用户提供的中文汇报不受此限制。
+
 ### 每次操作分支前必须同步
 
 ```bash

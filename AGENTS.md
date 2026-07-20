@@ -230,6 +230,18 @@ Upsert grouping preferences after local changes and restore them
 when an authenticated session is resumed.
 ```
 
+### GitHub 内容语言
+
+所有由 coding agent 写入 GitHub 的内容必须使用英文，包括但不限于：
+
+- Issue、Pull Request 的标题和描述
+- PR comments、review comments 和 review replies
+- Commit message、merge message 和 tag message
+- GitHub Release 标题、说明和自动生成说明之外的补充内容
+- GitHub Actions workflow、job、step 和 artifact 的显示名称
+
+本地文档、代码注释和面向扩展用户的界面文案仍按各自既有语言约定执行。向用户汇报可以使用简体中文。
+
 ## Git 工作流
 
 涉及提交、push、PR、合并、Actions 等待、发布或分支同步时，必须先阅读并严格执行 `PULL_REQUEST_WORKFLOW.md`。该文件是完整交付流程的最高优先级项目内说明；本节只定义通用 Git 约定。
@@ -279,22 +291,22 @@ when an authenticated session is resumed.
 ### PR 描述模板
 
 ```markdown
-## 改动摘要
+## Summary
 - ...
 
-## 影响范围
+## Scope
 - [ ] Popup UI
-- [ ] 标签分组
-- [ ] 认证与会话
-- [ ] Supabase 同步 / 数据库
-- [ ] 构建配置
-- [ ] 文档
+- [ ] Tab grouping
+- [ ] Authentication and sessions
+- [ ] Supabase sync / database
+- [ ] Build configuration
+- [ ] Documentation
 
-## 验证
+## Validation
 - [ ] `npm run typecheck`
 - [ ] `npm test`
 - [ ] `git diff --check`
-- [ ] 浏览器手动测试
+- [ ] Manual browser testing
 ```
 
 ## CI/CD
