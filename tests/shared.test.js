@@ -13,6 +13,7 @@ const {
   parsePortableData,
   siteTitle,
   toPortableData,
+  toPortableDataFromState,
 } = await import("../dist/shared.js");
 
 test("normalizes hostnames and strips www", () => {
@@ -163,5 +164,53 @@ test("maps portable data explicitly without runtime-only fields", () => {
     },
     groupRules: [{ id: "rule-1", title: "Example", color: "blue", domains: ["example.com"], matchScope: "exact", enabled: true, sortOrder: 1 }],
     ignoredSites: [{ id: "ignore-1", domain: "ads.example.com", matchScope: "exact", sortOrder: 1 }],
+  });
+});
+
+test("converts stored state without runtime group mappings", () => {
+  const portable = toPortableDataFromState({
+    settings: {
+      autoGroupEnabled: true,
+      minimumTabs: 2,
+    },
+    groupRules: [{
+      id: "rule-1",
+      title: "Example",
+      color: "blue",
+      domains: ["example.com"],
+      matchScope: "exact",
+      enabled: true,
+      sortOrder: 0,
+    }],
+    ignoredSites: [{ id: "ignore-1", domain: "ads.example.com", matchScope: "exact", sortOrder: 0 }],
+    autoGroups: {
+      "7:example.com": { groupId: 42, windowId: 7, siteKey: "example.com" },
+    },
+    customGroups: {
+      custom: { id: "custom", groupId: 99, windowId: 7, title: "Custom", color: "green" },
+    },
+  });
+
+  assert.deepEqual(portable, {
+    version: 1,
+    settings: {
+      autoGroupEnabled: true,
+      minimumTabs: 2,
+      defaultGroupColor: "blue",
+      cloudSyncEnabled: true,
+      syncRulesEnabled: true,
+      syncIgnoreListEnabled: true,
+      lastSuccessfulSyncAt: null,
+    },
+    groupRules: [{
+      id: "rule-1",
+      title: "Example",
+      color: "blue",
+      domains: ["example.com"],
+      matchScope: "exact",
+      enabled: true,
+      sortOrder: 0,
+    }],
+    ignoredSites: [{ id: "ignore-1", domain: "ads.example.com", matchScope: "exact", sortOrder: 0 }],
   });
 });

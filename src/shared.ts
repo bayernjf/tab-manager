@@ -69,6 +69,8 @@ export interface StoredState {
   settings: Settings;
   autoGroups: Record<string, AutoGroupRecord>;
   customGroups: Record<string, CustomGroupRecord>;
+  groupRules: GroupRule[];
+  ignoredSites: IgnoredSite[];
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -156,6 +158,10 @@ export function toPortableData(settings: Settings, groupRules: readonly GroupRul
       sortOrder: site.sortOrder,
     })),
   };
+}
+
+export function toPortableDataFromState(state: StoredState): PortableData {
+  return toPortableData(state.settings, state.groupRules, state.ignoredSites);
 }
 
 export function parsePortableData(value: unknown): PortableData | null {
