@@ -56,6 +56,29 @@ export interface BoardCard {
   manualOrder?: number;
 }
 
+export interface BoardTab {
+  id: number;
+  title: string;
+  url?: string;
+  favIconUrl?: string;
+}
+
+export interface BoardLogicalGroup extends BoardGroup {
+  tabs: readonly BoardTab[];
+}
+
+export interface BoardSegmentCard extends BoardLogicalGroup {
+  tabs: BoardTab[];
+  segmentIndex: number;
+  segmentCount: number;
+  heightUnits: 1 | 2;
+}
+
+export interface BoardTabDrop {
+  tabId: number;
+  targetBoardKey: BoardKey;
+}
+
 export interface BoardPlacement {
   boardKey: BoardKey;
   segmentIndex: number;
@@ -263,6 +286,46 @@ export function segmentTabs<T>(tabs: readonly T[]): T[][] {
     segments.push(tabs.slice(index, index + 10));
   }
   return segments;
+}
+
+export function buildBoardCards(groups: readonly BoardLogicalGroup[]): BoardSegmentCard[] {
+  const cards: BoardSegmentCard[] = [];
+  for (const group of groups) {
+    const segments = segmentTabs(group.tabs);
+    const cardTabs = segments.length ? segments : group.kind === "custom" || group.kind === "ungrouped" ? [[]] : [];
+    for (const [segmentIndex, tabs] of cardTabs.entries()) {
+      cards.push({
+        ...group,
+        tabs,
+        segmentIndex,
+        segmentCount: cardTabs.length,
+        heightUnits: heightUnitsForTabCount(tabs.length),
+      });
+    }
+  }
+  return cards;
+}
+
+export function moveBoardGroupRank(groups: readonly BoardGroup[], boardKey: BoardKey, rank: number): BoardGroup[] | null {
+  if (boardKey === "ungrouped" || !isSortOrder(rank)) return null;
+  const movable = groups.filter((group) => group.boardKey !== "ungrouped").sort((left, right) => left.rank - right.rank);
+  const currentIndex = movable.findIndex((group) => group.boardKey === boardKey);
+  if (currentIndex < 0 || rank < 1 || rank > movable.length) return null;
+  const [moved] = movable.splice(currentIndex, 1);
+  if (!moved) return null;
+  movable.splice(rank - 1, 0, moved);
+  const ranks = new Map(movable.map((group, index) => [group.boardKey, index + 1]));
+  const ungrouped = groups.filter((group) => group.boardKey === "ungrouped").map((group) => ({ ...group, rank: 0 }));
+  return [...ungrouped, ...movable.map((group) => ({ ...group, rank: ranks.get(group.boardKey) ?? group.rank }))];
+}
+
+export function validateBoardTabDrop(value: unknown): BoardTabDrop | null {
+  if (!isPlainObject(value) || typeof value.tabId !== "number" || !Number.isInteger(value.tabId) || value.tabId <= 0 || !isBoardKey(value.targetBoardKey)) return null;
+  return { tabId: value.tabId, targetBoardKey: value.targetBoardKey };
+}
+
+export function isManagedBoardTabSource(groupId: number, automaticGroupIds: ReadonlySet<number>, customGroupIds: ReadonlySet<number>): boolean {
+  return groupId === UNGROUPED || automaticGroupIds.has(groupId) || customGroupIds.has(groupId);
 }
 
 export function placeBoardCards(cards: readonly BoardCard[], laneCount: number, autoFill: boolean): BoardPlacementResult {

@@ -7,6 +7,7 @@ const {
   automaticBoardKey,
   boardCustomGroupFromSyncRow,
   boardLayoutFromSyncRow,
+  buildBoardCards,
   heightUnitsForTabCount,
   applyPortableImport,
   canConfirmOptionsImport,
@@ -28,12 +29,95 @@ const {
   siteTitle,
   segmentTabs,
   placeBoardCards,
+  moveBoardGroupRank,
+  validateBoardTabDrop,
+  isManagedBoardTabSource,
   validateBoardLayout,
   settingsFromSyncRow,
   toPortableData,
   toPortableDataFromState,
   updateGroupRuleFromInput,
 } = await import("../dist/shared.js");
+const { getCurrentUser, isExplicitAuthenticationFailure } = await import("../dist/auth.js");
+
+test("builds board cards from ten-tab segments and retains an empty custom card", () => {
+  const tabs = Array.from({ length: 11 }, (_value, index) => ({ id: index + 1, title: `Tab ${index + 1}` }));
+  const cards = buildBoardCards([
+    { boardKey: "custom:7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573", kind: "custom", title: "Empty", color: "purple", rank: 0, tabs: [] },
+    { boardKey: "auto:example.com", kind: "automatic", title: "Example", color: "blue", rank: 1, tabs },
+  ]);
+
+  assert.deepEqual(cards.map((card) => [card.boardKey, card.segmentIndex, card.segmentCount, card.tabs.length, card.heightUnits]), [
+    ["custom:7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573", 0, 1, 0, 1],
+    ["auto:example.com", 0, 2, 10, 2],
+    ["auto:example.com", 1, 2, 1, 1],
+  ]);
+});
+
+test("moves a logical board group to a new rank without moving Ungrouped", () => {
+  const groups = [
+    { boardKey: "ungrouped", kind: "ungrouped", title: "Ungrouped", color: "grey", rank: 0 },
+    { boardKey: "auto:one.example", kind: "automatic", title: "One", color: "blue", rank: 1 },
+    { boardKey: "auto:two.example", kind: "automatic", title: "Two", color: "green", rank: 2 },
+  ];
+
+  assert.deepEqual(moveBoardGroupRank(groups, "auto:two.example", 1).map((group) => [group.boardKey, group.rank]), [
+    ["ungrouped", 0],
+    ["auto:two.example", 1],
+    ["auto:one.example", 2],
+  ]);
+  assert.equal(moveBoardGroupRank(groups, "ungrouped", 2), null);
+});
+
+test("rejects invalid board tab drops before Chrome state changes", () => {
+  assert.equal(validateBoardTabDrop({ tabId: 1, targetBoardKey: "custom:not-a-uuid" }), null);
+  assert.equal(validateBoardTabDrop({ tabId: -1, targetBoardKey: "ungrouped" }), null);
+  assert.deepEqual(validateBoardTabDrop({ tabId: 1, targetBoardKey: "ungrouped" }), { tabId: 1, targetBoardKey: "ungrouped" });
+});
+
+test("permits board moves only from Ungrouped or extension-managed groups", () => {
+  assert.equal(isManagedBoardTabSource(-1, new Set([10]), new Set([20])), true);
+  assert.equal(isManagedBoardTabSource(10, new Set([10]), new Set([20])), true);
+  assert.equal(isManagedBoardTabSource(20, new Set([10]), new Set([20])), true);
+  assert.equal(isManagedBoardTabSource(30, new Set([10]), new Set([20])), false);
+});
+
+test("treats only explicit authentication responses as session-invalidating", () => {
+  assert.equal(isExplicitAuthenticationFailure({ status: 401 }), true);
+  assert.equal(isExplicitAuthenticationFailure({ status: 403 }), true);
+  assert.equal(isExplicitAuthenticationFailure({ status: 500 }), false);
+  assert.equal(isExplicitAuthenticationFailure(new TypeError("Failed to fetch")), false);
+});
+
+test("keeps the cached user through a transient auth network failure but clears an explicit rejection", async () => {
+  const values = {
+    supabaseSession: {
+      access_token: "access-token",
+      refresh_token: "refresh-token",
+      expires_at: Math.floor(Date.now() / 1000) + 3600,
+      user: { id: "user-1", email: "user@example.com" },
+    },
+  };
+  globalThis.chrome.storage = {
+    local: {
+      get: async (key) => key in values ? { [key]: values[key] } : {},
+      set: async (next) => Object.assign(values, next),
+      remove: async (key) => { delete values[key]; },
+    },
+  };
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+    assert.deepEqual(await getCurrentUser(), values.supabaseSession.user);
+    assert.ok(values.supabaseSession);
+
+    globalThis.fetch = async () => new Response(JSON.stringify({ message: "JWT expired" }), { status: 401 });
+    assert.equal(await getCurrentUser(), null);
+    assert.equal(values.supabaseSession, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 test("accepts only board keys that satisfy the database key contract", () => {
   assert.equal(automaticBoardKey("WWW.Example.com."), "auto:example.com");

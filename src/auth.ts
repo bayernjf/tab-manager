@@ -3,6 +3,8 @@ import { SUPABASE_ANON_KEY, SUPABASE_URL, assertSupabaseConfigured } from "./sup
 export interface AuthUser { id: string; email?: string }
 interface AuthSession { access_token: string; refresh_token: string; expires_at: number; user: AuthUser }
 
+interface AuthRequestError extends Error { status: number }
+
 const SESSION_KEY = "supabaseSession";
 
 function endpoint(path: string): string {
@@ -21,8 +23,17 @@ async function request<T>(path: string, init: RequestInit = {}, accessToken?: st
     },
   });
   const body = await response.json().catch(() => ({})) as T & { msg?: string; message?: string; error_description?: string };
-  if (!response.ok) throw new Error(body.msg || body.message || body.error_description || `认证请求失败 (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(body.msg || body.message || body.error_description || `认证请求失败 (${response.status})`) as AuthRequestError;
+    error.status = response.status;
+    throw error;
+  }
   return body;
+}
+
+export function isExplicitAuthenticationFailure(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "status" in error
+    && (error.status === 400 || error.status === 401 || error.status === 403);
 }
 
 function toSession(data: { access_token: string; refresh_token: string; expires_in: number; user: AuthUser }): AuthSession {
@@ -62,9 +73,12 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
   if (!session) return null;
   try {
     return await request<AuthUser>("/user", { method: "GET" }, session.access_token);
-  } catch {
-    await saveSession(null);
-    return null;
+  } catch (error) {
+    if (isExplicitAuthenticationFailure(error)) {
+      await saveSession(null);
+      return null;
+    }
+    return session.user;
   }
 }
 
@@ -78,16 +92,20 @@ async function getValidSession(): Promise<AuthSession | null> {
       });
       session = toSession(data);
       await saveSession(session);
-    } catch {
-      await saveSession(null);
-      return null;
+    } catch (error) {
+      if (isExplicitAuthenticationFailure(error)) {
+        await saveSession(null);
+        return null;
+      }
+      return session;
     }
   }
   return session;
 }
 
 export async function getAccessToken(): Promise<string | null> {
-  return (await getValidSession())?.access_token ?? null;
+  const session = await getValidSession();
+  return session && session.expires_at > Math.floor(Date.now() / 1000) ? session.access_token : null;
 }
 
 export async function signOut(): Promise<void> {

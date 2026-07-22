@@ -1,6 +1,9 @@
 import {
   UNGROUPED,
   autoRecordKey,
+  automaticBoardKey,
+  buildBoardCards,
+  customBoardKey,
   applyPortableImport,
   canConfirmOptionsImport,
   createGroupRuleFromInput,
@@ -12,6 +15,13 @@ import {
   syncFailureStatus,
   toPortableDataFromState,
   updateGroupRuleFromInput,
+  validateBoardLayout,
+  validateBoardTabDrop,
+  isManagedBoardTabSource,
+  moveBoardGroupRank,
+  type BoardGroup,
+  type BoardLogicalGroup,
+  type BoardTab,
   validateOptionsSettings,
   type CustomGroupRecord,
   type GroupColor,
@@ -20,7 +30,7 @@ import {
 } from "./shared.js";
 import { loadState, prepareOptionsForUser, saveAutoGroups, saveBoardCustomGroups, saveBoardLayouts, saveCustomGroups, saveOptionsData, saveSettings } from "./storage.js";
 import { getCurrentUser, signIn, signOut, signUp } from "./auth.js";
-import { pushSettings, replaceOptionalSyncData, restoreBoardSyncData, restoreOptionalSyncData, syncSettings } from "./sync.js";
+import { pushSettings, replaceBoardSyncData, replaceOptionalSyncData, restoreBoardSyncData, restoreOptionalSyncData, syncSettings } from "./sync.js";
 
 const reconcileTimers = new Map<number, ReturnType<typeof setTimeout>>();
 function scheduleReconcile(windowId?: number): void {
@@ -156,7 +166,14 @@ type PopupMessage =
   | { type: "create-ignored-site"; site: unknown }
   | { type: "delete-ignored-site"; id: unknown }
   | { type: "export-options-data" }
-  | { type: "import-options-data"; data?: unknown; confirmed?: boolean; cancelled?: boolean };
+  | { type: "import-options-data"; data?: unknown; confirmed?: boolean; cancelled?: boolean }
+  | { type: "open-tab-board" }
+  | { type: "get-board-state" }
+  | { type: "move-board-tab"; drop: unknown }
+  | { type: "move-board-group"; boardKey: unknown; rank: unknown }
+  | { type: "create-board-group"; title: unknown; color: unknown }
+  | { type: "delete-board-group"; id: unknown; confirmed?: boolean }
+  | { type: "save-board-layout"; layout: unknown };
 
 interface PendingOptionsImport {
   preview: PortableImportPreview;
@@ -297,6 +314,117 @@ async function popupState() {
   };
 }
 
+const BOARD_COLORS: readonly GroupColor[] = ["grey", "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange"];
+
+function boardGroupColor(value: unknown): GroupColor | null {
+  return typeof value === "string" && (BOARD_COLORS as readonly string[]).includes(value) ? value as GroupColor : null;
+}
+
+async function currentNormalWindowId(): Promise<number> {
+  const window = await chrome.windows.getCurrent();
+  if (window.id == null || window.type !== "normal") throw new Error("请在普通浏览器窗口中使用标签看板");
+  return window.id;
+}
+
+function boardTab(tab: chrome.tabs.Tab): BoardTab | null {
+  if (tab.id == null || tab.pinned || !getSiteKey(tab.url)) return null;
+  return { id: tab.id, title: tab.title || "未命名标签页", url: tab.url, favIconUrl: tab.favIconUrl };
+}
+
+function boardRank(state: Awaited<ReturnType<typeof loadState>>, boardKey: BoardGroup["boardKey"], fallback: number): number {
+  return state.boardLayouts.find((layout) => layout.boardKey === boardKey && layout.deviceClass === "desktop")?.rank ?? fallback;
+}
+
+async function boardLogicalGroups(windowId: number, state: Awaited<ReturnType<typeof loadState>>): Promise<BoardLogicalGroup[]> {
+  const tabs = await chrome.tabs.query({ windowId });
+  const eligible = tabs.flatMap((tab) => {
+    const mapped = boardTab(tab);
+    return mapped ? [{ tab, mapped }] : [];
+  });
+  const customRecords = new Map(Object.entries(state.customGroups)
+    .filter(([, record]) => record.windowId === windowId)
+    .map(([id, record]) => [id, record]));
+  const customByNativeId = new Map([...customRecords.values()].map((record) => [record.groupId, record]));
+  const automaticByNativeId = new Map(Object.values(state.autoGroups)
+    .filter((record) => record.windowId === windowId)
+    .map((record) => [record.groupId, record]));
+  const ungrouped: BoardTab[] = [];
+  const customTabs = new Map<string, BoardTab[]>();
+  const automaticTabs = new Map<string, BoardTab[]>();
+
+  for (const { tab, mapped } of eligible) {
+    if (tab.groupId === UNGROUPED) {
+      ungrouped.push(mapped);
+      continue;
+    }
+    const custom = customByNativeId.get(tab.groupId);
+    if (custom) {
+      const groupTabs = customTabs.get(custom.id) ?? [];
+      groupTabs.push(mapped);
+      customTabs.set(custom.id, groupTabs);
+      continue;
+    }
+    const automatic = automaticByNativeId.get(tab.groupId);
+    if (automatic) {
+      const groupTabs = automaticTabs.get(automatic.siteKey) ?? [];
+      groupTabs.push(mapped);
+      automaticTabs.set(automatic.siteKey, groupTabs);
+    }
+  }
+
+  const groups: BoardLogicalGroup[] = [{ boardKey: "ungrouped", kind: "ungrouped", title: "未分组", color: "grey", rank: 0, tabs: ungrouped }];
+  for (const custom of [...state.boardCustomGroups].sort((left, right) => left.sortOrder - right.sortOrder)) {
+    const boardKey = customBoardKey(custom.id);
+    if (!boardKey) continue;
+    groups.push({ boardKey, kind: "custom", title: custom.title, color: custom.color, rank: boardRank(state, boardKey, custom.sortOrder + 1), tabs: customTabs.get(custom.id) ?? [] });
+  }
+  let automaticRank = state.boardCustomGroups.length + 1;
+  for (const automatic of Object.values(state.autoGroups).filter((record) => record.windowId === windowId).sort((left, right) => left.siteKey.localeCompare(right.siteKey))) {
+    const boardKey = automaticBoardKey(automatic.siteKey);
+    if (!boardKey) continue;
+    const tabsForGroup = automaticTabs.get(automatic.siteKey) ?? [];
+    if (!tabsForGroup.length) continue;
+    const decision = resolveAutoGroup(automatic.siteKey, state.settings, state.groupRules, state.ignoredSites);
+    groups.push({
+      boardKey,
+      kind: "automatic",
+      title: decision.kind === "group" ? decision.title : automatic.siteKey,
+      color: decision.kind === "group" ? decision.color : state.settings.defaultGroupColor ?? "blue",
+      rank: boardRank(state, boardKey, automaticRank++),
+      tabs: tabsForGroup,
+    });
+  }
+  return groups.sort((left, right) => left.rank - right.rank);
+}
+
+async function boardState() {
+  const user = await getCurrentUser();
+  if (!user) return { user: null, loginRequired: true, message: "请先登录后使用标签看板。", groups: [] };
+  const windowId = await currentNormalWindowId();
+  const state = await loadState();
+  const groups = await boardLogicalGroups(windowId, state);
+  return { user: { id: user.id, email: user.email }, loginRequired: false, windowId, groups: buildBoardCards(groups), layouts: state.boardLayouts };
+}
+
+async function requireBoardUser() {
+  const user = await getCurrentUser();
+  if (!user) throw new Error("请先登录后再修改标签看板");
+  return user;
+}
+
+async function syncBoardMutation(state: Awaited<ReturnType<typeof loadState>>, include: { groups?: boolean; layouts?: boolean }) {
+  const user = await requireBoardUser();
+  try {
+    await replaceBoardSyncData(user.id, state.settings, {
+      ...(include.groups ? { boardCustomGroups: state.boardCustomGroups } : {}),
+      ...(include.layouts ? { boardLayouts: state.boardLayouts } : {}),
+    });
+    return { synced: true, sync: { state: "ready" as const } };
+  } catch (error) {
+    return { synced: false, sync: syncFailureStatus(error) };
+  }
+}
+
 chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendResponse) => {
   void (async () => {
     if (message.type === "auth-state") {
@@ -320,6 +448,114 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       await signOut();
       pendingOptionsImport = null;
       return { ok: true };
+    }
+    if (message.type === "open-tab-board") {
+      await requireBoardUser();
+      const windowId = await currentNormalWindowId();
+      const tab = await chrome.tabs.create({ windowId, url: chrome.runtime.getURL("board.html") });
+      return { ok: true, tabId: tab.id };
+    }
+    if (message.type === "get-board-state") return boardState();
+    if (message.type === "move-board-tab") {
+      await requireBoardUser();
+      const drop = validateBoardTabDrop(message.drop);
+      if (!drop) throw new Error("无效的标签拖放目标");
+      const windowId = await currentNormalWindowId();
+      const tab = await chrome.tabs.get(drop.tabId);
+      if (tab.windowId !== windowId || !boardTab(tab)) throw new Error("该标签页不能移动到看板");
+      const state = await loadState();
+      const automaticGroupIds = new Set(Object.values(state.autoGroups).filter((record) => record.windowId === windowId).map((record) => record.groupId));
+      const customGroupIds = new Set(Object.values(state.customGroups).filter((record) => record.windowId === windowId).map((record) => record.groupId));
+      if (!isManagedBoardTabSource(tab.groupId, automaticGroupIds, customGroupIds)) throw new Error("不能移动非本扩展管理的原生分组标签页");
+
+      if (drop.targetBoardKey === "ungrouped") {
+        if (tab.groupId !== UNGROUPED) await chrome.tabs.ungroup([drop.tabId]);
+        scheduleReconcile(windowId);
+        return { ok: true };
+      }
+      if (drop.targetBoardKey.startsWith("custom:")) {
+        const id = drop.targetBoardKey.slice("custom:".length);
+        const durable = state.boardCustomGroups.find((group) => group.id === id);
+        if (!durable) throw new Error("目标自定义分组不存在");
+        let record = state.customGroups[id];
+        if (!record || record.windowId !== windowId) {
+          const groupId = await chrome.tabs.group({ tabIds: [drop.tabId], createProperties: { windowId } });
+          await chrome.tabGroups.update(groupId, { title: durable.title, color: durable.color });
+          record = { id, groupId, windowId, title: durable.title, color: durable.color };
+          state.customGroups[id] = record;
+        } else {
+          const existing = await existingGroupIds(windowId);
+          if (!existing.has(record.groupId)) throw new Error("目标自定义分组已失效，请刷新看板后重试");
+          await chrome.tabs.group({ tabIds: [drop.tabId], groupId: record.groupId });
+        }
+        await saveCustomGroups(state.customGroups);
+        scheduleReconcile(windowId);
+        return { ok: true };
+      }
+      const siteKey = drop.targetBoardKey.slice("auto:".length);
+      if (getSiteKey(tab.url) !== siteKey) throw new Error("标签页只能移动到同一网站的自动分组");
+      const target = Object.values(state.autoGroups).find((record) => record.windowId === windowId && record.siteKey === siteKey);
+      if (!target || !(await existingGroupIds(windowId)).has(target.groupId)) throw new Error("目标自动分组已失效，请刷新看板后重试");
+      await chrome.tabs.group({ tabIds: [drop.tabId], groupId: target.groupId });
+      scheduleReconcile(windowId);
+      return { ok: true };
+    }
+    if (message.type === "move-board-group") {
+      await requireBoardUser();
+      if (typeof message.boardKey !== "string" || typeof message.rank !== "number" || !Number.isInteger(message.rank)) throw new Error("无效的分组排序");
+      const windowId = await currentNormalWindowId();
+      const state = await loadState();
+      const moved = moveBoardGroupRank(await boardLogicalGroups(windowId, state), message.boardKey as BoardGroup["boardKey"], message.rank);
+      if (!moved) throw new Error("该分组不能移动到指定位置");
+      const layoutsByKey = new Map(state.boardLayouts.filter((layout) => layout.deviceClass !== "desktop").map((layout) => [`${layout.deviceClass}:${layout.boardKey}`, layout]));
+      for (const group of moved) {
+        if (group.boardKey === "ungrouped") continue;
+        const previous = state.boardLayouts.find((layout) => layout.deviceClass === "desktop" && layout.boardKey === group.boardKey);
+        layoutsByKey.set(`desktop:${group.boardKey}`, { boardKey: group.boardKey, deviceClass: "desktop", rank: group.rank, autoFill: previous?.autoFill ?? true, ...(previous?.autoFill === false ? { manualLane: previous.manualLane, manualOrder: previous.manualOrder } : {}) });
+      }
+      state.boardLayouts = [...layoutsByKey.values()];
+      await saveBoardLayouts(state.boardLayouts);
+      return { ok: true, ...(await syncBoardMutation(state, { layouts: true })) };
+    }
+    if (message.type === "create-board-group") {
+      await requireBoardUser();
+      const title = typeof message.title === "string" ? message.title.trim() : "";
+      const color = boardGroupColor(message.color);
+      if (!title || title.length > 40 || !color) throw new Error("自定义分组信息无效");
+      const state = await loadState();
+      const id = crypto.randomUUID();
+      state.boardCustomGroups = [...state.boardCustomGroups, { id, title, color, sortOrder: state.boardCustomGroups.reduce((max, group) => Math.max(max, group.sortOrder), -1) + 1 }];
+      await saveBoardCustomGroups(state.boardCustomGroups);
+      return { ok: true, id, ...(await syncBoardMutation(state, { groups: true })) };
+    }
+    if (message.type === "delete-board-group") {
+      await requireBoardUser();
+      if (!message.confirmed || !safeRecordId(message.id)) throw new Error("请确认删除自定义分组");
+      const state = await loadState();
+      if (!state.boardCustomGroups.some((group) => group.id === message.id)) throw new Error("自定义分组不存在");
+      const record = state.customGroups[message.id];
+      if (record) {
+        const tabs = await chrome.tabs.query({ groupId: record.groupId });
+        if (tabs.length) await chrome.tabs.ungroup(tabs.flatMap((tab) => tab.id == null ? [] : [tab.id]));
+        delete state.customGroups[message.id];
+      }
+      const boardKey = customBoardKey(message.id);
+      state.boardCustomGroups = state.boardCustomGroups.filter((group) => group.id !== message.id);
+      state.boardLayouts = boardKey ? state.boardLayouts.filter((layout) => layout.boardKey !== boardKey) : state.boardLayouts;
+      await Promise.all([saveCustomGroups(state.customGroups), saveBoardCustomGroups(state.boardCustomGroups), saveBoardLayouts(state.boardLayouts)]);
+      if (record) scheduleReconcile(record.windowId);
+      return { ok: true, ...(await syncBoardMutation(state, { groups: true, layouts: true })) };
+    }
+    if (message.type === "save-board-layout") {
+      await requireBoardUser();
+      const layout = validateBoardLayout(message.layout);
+      if (!layout || layout.boardKey === "ungrouped") throw new Error("看板布局无效");
+      const windowId = await currentNormalWindowId();
+      const state = await loadState();
+      if (!(await boardLogicalGroups(windowId, state)).some((group) => group.boardKey === layout.boardKey)) throw new Error("看板分组不存在");
+      state.boardLayouts = [...state.boardLayouts.filter((item) => item.boardKey !== layout.boardKey || item.deviceClass !== layout.deviceClass), layout];
+      await saveBoardLayouts(state.boardLayouts);
+      return { ok: true, ...(await syncBoardMutation(state, { layouts: true })) };
     }
     if (message.type === "get-popup-state") return popupState();
     if (message.type === "get-options-state") return optionsState();
