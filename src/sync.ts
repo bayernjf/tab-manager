@@ -3,6 +3,7 @@ import { SUPABASE_ANON_KEY, SUPABASE_URL, assertSupabaseConfigured } from "./sup
 import {
   groupRuleFromSyncRow,
   ignoredSiteFromSyncRow,
+  resolveCloudCollection,
   settingsFromSyncRow,
   type GroupRule,
   type GroupRuleSyncRow,
@@ -131,6 +132,32 @@ export async function replaceIgnoredSites(userId: string, sites: readonly Ignore
 export interface OptionalSyncData {
   groupRules?: GroupRule[];
   ignoredSites?: IgnoredSite[];
+}
+
+export async function restoreOptionalSyncData(
+  userId: string,
+  settings: Settings,
+  localData: Required<OptionalSyncData>,
+): Promise<OptionalSyncData> {
+  const remoteData = await fetchOptionalSyncData(userId, settings);
+  const restoredData: OptionalSyncData = {};
+  const initialData: OptionalSyncData = {};
+
+  if (remoteData.groupRules !== undefined) {
+    const resolution = resolveCloudCollection(localData.groupRules, remoteData.groupRules);
+    restoredData.groupRules = resolution.local;
+    if (resolution.initializeRemote) initialData.groupRules = resolution.local;
+  }
+  if (remoteData.ignoredSites !== undefined) {
+    const resolution = resolveCloudCollection(localData.ignoredSites, remoteData.ignoredSites);
+    restoredData.ignoredSites = resolution.local;
+    if (resolution.initializeRemote) initialData.ignoredSites = resolution.local;
+  }
+
+  if (initialData.groupRules !== undefined || initialData.ignoredSites !== undefined) {
+    await replaceOptionalSyncData(userId, settings, initialData);
+  }
+  return restoredData;
 }
 
 export async function fetchOptionalSyncData(userId: string, settings: Settings): Promise<OptionalSyncData> {

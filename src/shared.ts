@@ -90,6 +90,16 @@ export interface PortableImportPreview {
   ignoredSiteCount: number;
 }
 
+export interface CloudCollectionResolution<T> {
+  local: T[];
+  initializeRemote: boolean;
+}
+
+export interface SyncFailureStatus {
+  state: "error";
+  message: string;
+}
+
 export interface AutoGroupRecord {
   groupId: number;
   windowId: number;
@@ -324,6 +334,20 @@ export function createGroupRuleFromInput(value: unknown, id: string, sortOrder: 
 
 export function validateGroupRule(value: unknown): GroupRule | null {
   return parseGroupRules([value])?.[0] ?? null;
+}
+
+export function updateGroupRuleFromInput(value: unknown, existing: GroupRule): GroupRule | null {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["id", "title", "color", "domains", "matchScope", "enabled"]) || value.id !== existing.id) return null;
+  return parseGroupRules([{ ...value, sortOrder: existing.sortOrder }])?.[0] ?? null;
+}
+
+export function resolveCloudCollection<T>(local: readonly T[], remote: readonly T[]): CloudCollectionResolution<T> {
+  if (remote.length > 0) return { local: [...remote], initializeRemote: false };
+  return { local: [...local], initializeRemote: local.length > 0 };
+}
+
+export function syncFailureStatus(_error: unknown): SyncFailureStatus {
+  return { state: "error", message: "云端同步暂时不可用，请稍后重试。" };
 }
 
 export function createIgnoredSiteFromInput(value: unknown, id: string, sortOrder: number): IgnoredSite | null {

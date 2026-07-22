@@ -18,11 +18,21 @@ const {
   previewPortableImport,
   resolveAutoGroup,
   resetOptionsForUser,
+  resolveCloudCollection,
+  syncFailureStatus,
   siteTitle,
   settingsFromSyncRow,
   toPortableData,
   toPortableDataFromState,
+  updateGroupRuleFromInput,
 } = await import("../dist/shared.js");
+
+test("marks cloud restore failures as retryable without exposing error details", () => {
+  assert.deepEqual(syncFailureStatus(new Error("Bearer top-secret-token failed")), {
+    state: "error",
+    message: "云端同步暂时不可用，请稍后重试。",
+  });
+});
 
 test("converts complete Supabase settings rows to concrete local settings", () => {
   assert.deepEqual(settingsFromSyncRow({
@@ -64,6 +74,53 @@ test("rejects malformed Supabase group-rule colors and match scopes", () => {
     match_scope: "everywhere",
     sort_order: 0,
   }), null);
+});
+
+test("preserves an existing rule sort order when editing the UI DTO", () => {
+  const existing = {
+    id: "rule-1",
+    title: "Before",
+    color: "blue",
+    domains: ["example.com"],
+    matchScope: "exact",
+    enabled: true,
+    sortOrder: 7,
+  };
+
+  assert.deepEqual(updateGroupRuleFromInput({
+    id: "rule-1",
+    title: "After",
+    color: "green",
+    domains: ["docs.example.com"],
+    matchScope: "domain-and-subdomains",
+    enabled: false,
+  }, existing), {
+    ...existing,
+    title: "After",
+    color: "green",
+    domains: ["docs.example.com"],
+    matchScope: "domain-and-subdomains",
+    enabled: false,
+  });
+});
+
+test("uses existing cloud category data instead of stale local data", () => {
+  const local = [{ id: "local", title: "Stale", color: "blue", domains: ["local.example.com"], matchScope: "exact", enabled: true, sortOrder: 0 }];
+  const remote = [{ id: "remote", title: "Current", color: "green", domains: ["remote.example.com"], matchScope: "exact", enabled: true, sortOrder: 0 }];
+
+  assert.deepEqual(resolveCloudCollection(local, remote), {
+    local: remote,
+    initializeRemote: false,
+  });
+});
+
+test("initializes an absent cloud category from local data without clearing local data", () => {
+  const local = [{ id: "local", domain: "local.example.com", matchScope: "exact", sortOrder: 0 }];
+
+  assert.deepEqual(resolveCloudCollection(local, []), {
+    local,
+    initializeRemote: true,
+  });
 });
 
 test("rejects Supabase rows returned for a different user", () => {
@@ -386,6 +443,31 @@ test("clears durable options when their owner differs from the signed-in user", 
   assert.equal(switched.state.settings.minimumTabs, 2);
   assert.deepEqual(switched.state.autoGroups, state.autoGroups);
   assert.equal(resetOptionsForUser(state, "account-a", "account-a").changed, false);
+});
+
+test("prepares persisted options for the authenticated account before reading them", async () => {
+  const values = {
+    optionsUserId: "account-a",
+    settings: { autoGroupEnabled: false, minimumTabs: 6, defaultGroupColor: "purple" },
+    groupRules: [{ id: "rule-a", title: "Account A", color: "blue", domains: ["a.example.com"], matchScope: "exact", enabled: true, sortOrder: 0 }],
+    ignoredSites: [{ id: "ignore-a", domain: "ads.example.com", matchScope: "exact", sortOrder: 0 }],
+  };
+  globalThis.chrome.storage = {
+    local: {
+      get: async (keys) => {
+        const requested = Array.isArray(keys) ? keys : [keys];
+        return Object.fromEntries(requested.flatMap((key) => key in values ? [[key, values[key]]] : []));
+      },
+      set: async (next) => Object.assign(values, next),
+    },
+  };
+  const { prepareOptionsForUser } = await import("../dist/storage.js");
+
+  const prepared = await prepareOptionsForUser("account-b");
+
+  assert.deepEqual(prepared.groupRules, []);
+  assert.deepEqual(prepared.ignoredSites, []);
+  assert.equal(values.optionsUserId, "account-b");
 });
 
 test("only confirms an import preview for its original signed-in user", () => {

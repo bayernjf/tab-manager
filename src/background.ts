@@ -9,8 +9,9 @@ import {
   isIgnoredSite,
   previewPortableImport,
   resolveAutoGroup,
+  syncFailureStatus,
   toPortableDataFromState,
-  validateGroupRule,
+  updateGroupRuleFromInput,
   validateOptionsSettings,
   type CustomGroupRecord,
   type GroupColor,
@@ -19,7 +20,7 @@ import {
 } from "./shared.js";
 import { loadState, prepareOptionsForUser, saveAutoGroups, saveCustomGroups, saveOptionsData, saveSettings } from "./storage.js";
 import { getCurrentUser, signIn, signOut, signUp } from "./auth.js";
-import { fetchOptionalSyncData, pushSettings, replaceOptionalSyncData, syncSettings } from "./sync.js";
+import { pushSettings, replaceOptionalSyncData, restoreOptionalSyncData, syncSettings } from "./sync.js";
 
 const reconcileTimers = new Map<number, ReturnType<typeof setTimeout>>();
 function scheduleReconcile(windowId?: number): void {
@@ -168,8 +169,21 @@ function safeRecordId(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && value.length <= 128;
 }
 
+function isUpdateGroupRuleInput(value: unknown): value is { id: string } {
+  return typeof value === "object" && value !== null && "id" in value && safeRecordId(value.id);
+}
+
 async function optionsState() {
-  const [state, user] = await Promise.all([loadState(), getCurrentUser()]);
+  const user = await getCurrentUser();
+  let sync: { state: "ready" | "error"; message?: string } = { state: "ready" };
+  if (user) {
+    try {
+      await restoreUserOptions(user.id);
+    } catch (error) {
+      sync = syncFailureStatus(error);
+    }
+  }
+  const state = await loadState();
   return {
     user: user ? { id: user.id, email: user.email } : null,
     settings: state.settings,
@@ -181,8 +195,24 @@ async function optionsState() {
       syncRulesEnabled: state.settings.syncRulesEnabled ?? false,
       syncIgnoreListEnabled: state.settings.syncIgnoreListEnabled ?? false,
       lastSuccessfulSyncAt: state.settings.lastSuccessfulSyncAt ?? null,
+      sync,
     },
   };
+}
+
+async function synchronizeOptionsFromCloud(state: Awaited<ReturnType<typeof loadState>>): Promise<boolean> {
+  const user = await getCurrentUser();
+  if (!user || !state.settings.cloudSyncEnabled) return false;
+  await pushSettings(user.id, state.settings);
+  const optionalData = await restoreOptionalSyncData(user.id, state.settings, {
+    groupRules: state.groupRules,
+    ignoredSites: state.ignoredSites,
+  });
+  if (optionalData.groupRules !== undefined) state.groupRules = optionalData.groupRules;
+  if (optionalData.ignoredSites !== undefined) state.ignoredSites = optionalData.ignoredSites;
+  state.settings.lastSuccessfulSyncAt = new Date().toISOString();
+  await saveOptionsData(state.settings, state.groupRules, state.ignoredSites);
+  return true;
 }
 
 async function synchronizeOptions(state: Awaited<ReturnType<typeof loadState>>, include: { settings: boolean; rules: boolean; ignoredSites: boolean }): Promise<boolean> {
@@ -215,7 +245,10 @@ async function restoreUserOptions(userId: string): Promise<void> {
   await prepareOptionsForUser(userId);
   const settings = await syncSettings(userId);
   const state = await loadState();
-  const optionalData = await fetchOptionalSyncData(userId, settings);
+  const optionalData = await restoreOptionalSyncData(userId, settings, {
+    groupRules: state.groupRules,
+    ignoredSites: state.ignoredSites,
+  });
   if (optionalData.groupRules !== undefined) state.groupRules = optionalData.groupRules;
   if (optionalData.ignoredSites !== undefined) state.ignoredSites = optionalData.ignoredSites;
   await saveOptionsData(state.settings, state.groupRules, state.ignoredSites);
@@ -272,8 +305,11 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
     if (message.type === "get-options-state") return optionsState();
     if (message.type === "export-options-data") return { data: toPortableDataFromState(await loadState()) };
     if (message.type === "sync-now") {
+      const user = await getCurrentUser();
+      if (user) await restoreUserOptions(user.id);
       const state = await loadState();
-      const synced = await reconcileOptionsMutation(state, { settings: true, rules: true, ignoredSites: true });
+      const synced = await synchronizeOptionsFromCloud(state);
+      await reconcileAllWindows();
       return { ok: true, synced, lastSuccessfulSyncAt: state.settings.lastSuccessfulSyncAt ?? null };
     }
     if (message.type === "save-options-settings") {
@@ -299,11 +335,15 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       return { ok: true, synced, rule };
     }
     if (message.type === "update-group-rule") {
-      const rule = validateGroupRule(message.rule);
-      if (!rule) throw new Error("分组规则包含无效数据");
       const state = await loadState();
-      const index = state.groupRules.findIndex((item) => item.id === rule.id);
+      const input = message.rule;
+      if (!isUpdateGroupRuleInput(input)) throw new Error("分组规则包含无效数据");
+      const index = state.groupRules.findIndex((item) => item.id === input.id);
       if (index < 0) throw new Error("找不到要更新的分组规则");
+      const existing = state.groupRules[index];
+      if (!existing) throw new Error("找不到要更新的分组规则");
+      const rule = updateGroupRuleFromInput(input, existing);
+      if (!rule) throw new Error("分组规则包含无效数据");
       state.groupRules = state.groupRules.map((item, itemIndex) => itemIndex === index ? rule : item);
       await saveOptionsData(state.settings, state.groupRules, state.ignoredSites);
       const synced = await reconcileOptionsMutation(state, { settings: false, rules: true, ignoredSites: false });
