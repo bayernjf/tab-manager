@@ -13,6 +13,7 @@ const {
   normalizeDomainInput,
   normalizeHostname,
   parsePortableData,
+  resolveAutoGroup,
   siteTitle,
   settingsFromSyncRow,
   toPortableData,
@@ -162,6 +163,37 @@ test("an ignored site wins over an otherwise matching rule", () => {
 
   assert.equal(isIgnoredSite("docs.example.com", ignoredSites), true);
   assert.equal(isIgnoredSite("docs.example.com", ignoredSites) ? undefined : findMatchingRule("docs.example.com", rules), undefined);
+});
+
+test("resolves ignored sites before matching rules", () => {
+  const settings = { autoGroupEnabled: true, minimumTabs: 2, defaultGroupColor: "purple" };
+  const rules = [{ id: "docs-rule", title: "Documentation", color: "blue", domains: ["docs.example.com"], matchScope: "exact", enabled: true, sortOrder: 0 }];
+  const ignoredSites = [{ id: "ignore-docs", domain: "docs.example.com", matchScope: "exact", sortOrder: 0 }];
+
+  assert.deepEqual(resolveAutoGroup("docs.example.com", settings, rules, ignoredSites), { kind: "ignore" });
+});
+
+test("resolves a matching rule's title and color", () => {
+  const settings = { autoGroupEnabled: true, minimumTabs: 2, defaultGroupColor: "purple" };
+  const rules = [{ id: "docs-rule", title: "Documentation", color: "green", domains: ["example.com"], matchScope: "domain-and-subdomains", enabled: true, sortOrder: 0 }];
+
+  assert.deepEqual(resolveAutoGroup("docs.example.com", settings, rules, []), {
+    kind: "group",
+    siteKey: "docs.example.com",
+    title: "Documentation",
+    color: "green",
+  });
+});
+
+test("resolves unmatched sites with the default title and color", () => {
+  const settings = { autoGroupEnabled: true, minimumTabs: 2, defaultGroupColor: "purple" };
+
+  assert.deepEqual(resolveAutoGroup("github.com", settings, [], []), {
+    kind: "group",
+    siteKey: "github.com",
+    title: "Github",
+    color: "purple",
+  });
 });
 
 test("parses only valid portable data and rejects sensitive unknown keys", () => {

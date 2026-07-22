@@ -34,6 +34,10 @@ export interface IgnoredSite {
   sortOrder: number;
 }
 
+export type AutoGroupDecision =
+  | { kind: "ignore" }
+  | { kind: "group"; title: string; color: GroupColor; siteKey: string };
+
 export interface SettingsSyncRow {
   user_id: string;
   auto_group_enabled: boolean;
@@ -187,6 +191,23 @@ export function findMatchingRule(hostname: string, rules: readonly GroupRule[]):
 
 export function isIgnoredSite(hostname: string, ignoredSites: readonly IgnoredSite[]): boolean {
   return ignoredSites.some((site) => matchesDomain(hostname, site.domain, site.matchScope));
+}
+
+export function resolveAutoGroup(
+  siteKey: string,
+  settings: Settings,
+  rules: readonly GroupRule[],
+  ignoredSites: readonly IgnoredSite[],
+): AutoGroupDecision {
+  if (isIgnoredSite(siteKey, ignoredSites)) return { kind: "ignore" };
+  const rule = findMatchingRule(siteKey, rules);
+  if (rule) return { kind: "group", title: rule.title, color: rule.color, siteKey };
+  return {
+    kind: "group",
+    title: siteTitle(siteKey),
+    color: settings.defaultGroupColor ?? DEFAULT_SETTINGS.defaultGroupColor!,
+    siteKey,
+  };
 }
 
 export function toPortableData(settings: Settings, groupRules: readonly GroupRule[], ignoredSites: readonly IgnoredSite[]): PortableData {

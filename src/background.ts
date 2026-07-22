@@ -2,7 +2,8 @@ import {
   UNGROUPED,
   autoRecordKey,
   getSiteKey,
-  siteTitle,
+  isIgnoredSite,
+  resolveAutoGroup,
   type CustomGroupRecord,
   type GroupColor,
   type Settings,
@@ -12,14 +13,6 @@ import { getCurrentUser, signIn, signOut, signUp } from "./auth.js";
 import { pushSettings, syncSettings } from "./sync.js";
 
 const reconcileTimers = new Map<number, ReturnType<typeof setTimeout>>();
-const AUTO_COLORS: GroupColor[] = ["blue", "green", "purple", "cyan", "orange", "pink", "yellow", "red"];
-
-function colorFor(siteKey: string): GroupColor {
-  let hash = 0;
-  for (const char of siteKey) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  return AUTO_COLORS[hash % AUTO_COLORS.length] ?? "blue";
-}
-
 function scheduleReconcile(windowId?: number): void {
   if (windowId == null || windowId < 0) return;
   const current = reconcileTimers.get(windowId);
@@ -58,6 +51,14 @@ export async function reconcileWindow(windowId: number): Promise<void> {
     return;
   }
 
+  for (const [key, record] of Object.entries(state.autoGroups)) {
+    if (record.windowId !== windowId || !isIgnoredSite(record.siteKey, state.ignoredSites)) continue;
+    const groupedTabs = await chrome.tabs.query({ groupId: record.groupId });
+    if (groupedTabs.length) await chrome.tabs.ungroup(groupedTabs.flatMap((tab) => tab.id == null ? [] : [tab.id]));
+    delete state.autoGroups[key];
+    stateChanged = true;
+  }
+
   const autoGroupIds = new Set(
     Object.values(state.autoGroups).filter((record) => record.windowId === windowId).map((record) => record.groupId),
   );
@@ -66,7 +67,8 @@ export async function reconcileWindow(windowId: number): Promise<void> {
 
   // A tab in any non-managed group is considered manually grouped and remains untouched.
   const candidates = tabs.filter((tab) => {
-    if (tab.id == null || tab.pinned || !getSiteKey(tab.url)) return false;
+    const siteKey = getSiteKey(tab.url);
+    if (tab.id == null || tab.pinned || !siteKey || resolveAutoGroup(siteKey, state.settings, state.groupRules, state.ignoredSites).kind === "ignore") return false;
     return tab.groupId === UNGROUPED || (autoGroupIds.has(tab.groupId) && !customGroupIds.has(tab.groupId));
   });
 
@@ -81,6 +83,8 @@ export async function reconcileWindow(windowId: number): Promise<void> {
 
   for (const [siteKey, siteTabs] of bySite) {
     if (siteTabs.length < state.settings.minimumTabs) continue;
+    const decision = resolveAutoGroup(siteKey, state.settings, state.groupRules, state.ignoredSites);
+    if (decision.kind === "ignore") continue;
     const key = autoRecordKey(windowId, siteKey);
     const tabIds = siteTabs.flatMap((tab) => tab.id == null ? [] : [tab.id]);
     let record = state.autoGroups[key];
@@ -96,8 +100,8 @@ export async function reconcileWindow(windowId: number): Promise<void> {
     }
 
     await chrome.tabGroups.update(record.groupId, {
-      title: siteTitle(siteKey),
-      color: colorFor(siteKey),
+      title: decision.title,
+      color: decision.color,
     });
   }
 
