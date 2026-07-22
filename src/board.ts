@@ -1,4 +1,4 @@
-import { isBoardKey, placeBoardCards, type BoardKey, type BoardLayout, type BoardSegmentCard, type GroupColor } from "./shared.js";
+import { boardCardsForDevice, isBoardKey, manualBoardGridRow, moveManualBoardCard, placeBoardCards, type BoardKey, type BoardLayout, type BoardSegmentCard, type GroupColor } from "./shared.js";
 
 interface BoardState {
   user: { id: string; email?: string } | null;
@@ -16,7 +16,7 @@ const $ = <T extends Element>(selector: string): T => {
   return element;
 };
 
-const boardGrid = $("#board-grid");
+const boardGrid = $<HTMLElement>("#board-grid");
 const boardContent = $("#board-content");
 const loginRequired = $("#login-required");
 const loginMessage = $("#login-message");
@@ -116,12 +116,14 @@ function renderTab(tab: BoardSegmentCard["tabs"][number], targetBoardKey: BoardK
   return row;
 }
 
-function renderCard(card: BoardSegmentCard, rank: number, automatic: boolean): HTMLElement {
+function renderCard(card: BoardSegmentCard, rank: number, automatic: boolean, placement: { slot: number; compositeHeight: 1 | 2 }): HTMLElement {
   const article = document.createElement("article");
   article.className = "group-card";
   article.dataset.height = String(card.heightUnits);
   article.style.setProperty("--group-color", groupColor(card.color));
-  const canMoveGroup = card.boardKey !== "ungrouped" && card.segmentIndex === 0;
+  const row = manualBoardGridRow({ slot: placement.slot, heightUnits: placement.compositeHeight });
+  article.style.gridRow = `${row.start} / span ${row.span}`;
+  const canMoveGroup = card.boardKey !== "ungrouped";
   article.draggable = canMoveGroup;
   if (canMoveGroup) {
     article.addEventListener("dragstart", (event) => {
@@ -200,20 +202,19 @@ function renderBoard(state: BoardState): void {
   const automatic = !movable.some((card) => layouts.find((layout) => layout.boardKey === card.boardKey && layout.deviceClass === deviceClass())?.autoFill === false);
   autoFill.checked = automatic;
   autoFill.disabled = movable.length === 0;
-  const cards = state.groups.map((card) => {
-    const layout = layouts.find((item) => item.boardKey === card.boardKey && item.deviceClass === deviceClass());
-    return { ...card, manualLane: layout?.manualLane, manualOrder: layout?.manualOrder };
-  });
+  const cards = boardCardsForDevice(state.groups, layouts, deviceClass());
   const placement = placeBoardCards(cards, laneCount(), automatic);
-  const lanes = Array.from({ length: laneCount() }, () => {
+  boardGrid.style.gridTemplateColumns = `repeat(${placement.laneHeights.length}, minmax(0, 1fr))`;
+  const lanes = Array.from({ length: placement.laneHeights.length }, () => {
     const lane = document.createElement("div");
     lane.className = "board-lane";
+    lane.classList.toggle("manual-layout", !automatic);
     return lane;
   });
   for (const item of [...placement.placements].sort((left, right) => left.lane - right.lane || left.order - right.order)) {
     const card = cards.find((candidate) => candidate.boardKey === item.boardKey && candidate.segmentIndex === item.segmentIndex);
     const lane = lanes[item.lane];
-    if (card && lane) lane.append(renderCard(card, card.rank, automatic));
+    if (card && lane) lane.append(renderCard(card, card.rank, automatic, item));
   }
   boardGrid.append(...lanes);
 }
@@ -256,29 +257,23 @@ async function moveGroup(boardKey: BoardKey, targetBoardKey: BoardKey, rank: num
 async function saveManualGroupPosition(boardKey: BoardKey, targetBoardKey: BoardKey): Promise<void> {
   if (!currentState || boardKey === targetBoardKey) return;
   const layouts = currentState.layouts ?? [];
-  const cards = currentState.groups.filter((card) => card.boardKey !== "ungrouped" && card.segmentIndex === 0).map((card) => {
-    const layout = layouts.find((item) => item.boardKey === card.boardKey && item.deviceClass === deviceClass());
-    return { ...card, manualLane: layout?.manualLane, manualOrder: layout?.manualOrder };
-  });
+  const cards = boardCardsForDevice(currentState.groups.filter((card) => card.boardKey !== "ungrouped"), layouts, deviceClass());
   const placement = placeBoardCards(cards, laneCount(), false);
-  const byKey = new Map(cards.map((card) => [card.boardKey, card]));
+  const byKey = new Map(cards.filter((card) => card.segmentIndex === 0).map((card) => [card.boardKey, card]));
   const targetPlacement = placement.placements.find((item) => item.boardKey === targetBoardKey);
   if (!targetPlacement) throw new Error("目标分组已变化，请刷新看板后重试");
-  const lanes = Array.from({ length: laneCount() }, (_value, lane) => placement.placements
-    .filter((item) => item.lane === lane && item.boardKey !== boardKey)
-    .sort((left, right) => left.order - right.order));
-  const destination = lanes[targetPlacement.lane];
-  if (!destination) throw new Error("目标分组位置无效");
-  const targetIndex = destination.findIndex((item) => item.boardKey === targetBoardKey);
-  if (targetIndex < 0) throw new Error("目标分组已变化，请刷新看板后重试");
   const moved = placement.placements.find((item) => item.boardKey === boardKey);
-  const movedCard = byKey.get(boardKey);
-  if (!moved || !movedCard) throw new Error("分组已变化，请刷新看板后重试");
-  destination.splice(targetIndex, 0, { ...moved, lane: targetPlacement.lane });
-  await Promise.all(lanes.flatMap((lane, laneIndex) => lane.flatMap((item, order) => {
+  if (!moved || !byKey.has(boardKey)) throw new Error("分组已变化，请刷新看板后重试");
+  const resolved = moveManualBoardCard(placement.placements, boardKey, targetBoardKey, laneCount());
+  if (!resolved) throw new Error("目标分组已变化，请刷新看板后重试");
+  const originalByKey = new Map(placement.placements.filter((item) => item.segmentIndex === 0).map((item) => [item.boardKey, item]));
+  await Promise.all(resolved.filter((item) => item.segmentIndex === 0).flatMap((item) => {
+    const original = originalByKey.get(item.boardKey);
     const card = byKey.get(item.boardKey);
-    return card ? [send({ type: "save-board-layout", layout: { boardKey: card.boardKey, deviceClass: deviceClass(), rank: card.rank, autoFill: false, manualLane: laneIndex, manualOrder: order } })] : [];
-  })));
+    return card && original && (item.lane !== original.lane || item.slot !== original.slot)
+      ? [send({ type: "save-board-layout", layout: { boardKey: item.boardKey, deviceClass: deviceClass(), rank: card.rank, autoFill: false, manualLane: item.lane, manualSlot: item.slot } })]
+      : [];
+  }));
 }
 
 async function deleteGroup(id: string): Promise<void> {
@@ -291,14 +286,20 @@ async function deleteGroup(id: string): Promise<void> {
 
 async function saveAutoFill(enabled: boolean): Promise<void> {
   if (!currentState) return;
+  const cards = boardCardsForDevice(currentState.groups.filter((card) => card.boardKey !== "ungrouped"), currentState.layouts ?? [], deviceClass());
+  const positions = placeBoardCards(cards, laneCount(), true);
   const groups = currentState.groups.filter((card) => card.boardKey !== "ungrouped" && card.segmentIndex === 0);
   try {
-    await Promise.all(groups.map((card, index) => send({
+  await Promise.all(groups.flatMap((card) => {
+    const position = positions.placements.find((item) => item.boardKey === card.boardKey && item.segmentIndex === 0);
+    if (!position) return [];
+    return [send({
       type: "save-board-layout",
       layout: enabled
         ? { boardKey: card.boardKey, deviceClass: deviceClass(), rank: card.rank, autoFill: true }
-        : { boardKey: card.boardKey, deviceClass: deviceClass(), rank: card.rank, autoFill: false, manualLane: index % laneCount(), manualOrder: Math.floor(index / laneCount()) },
-    })));
+        : { boardKey: card.boardKey, deviceClass: deviceClass(), rank: card.rank, autoFill: false, manualLane: position.lane, manualSlot: position.slot },
+    })];
+  }));
     showStatus(enabled ? "已启用自动填充" : "已关闭自动填充");
     await load();
   } catch (error) {

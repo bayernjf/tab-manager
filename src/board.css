@@ -22,9 +22,10 @@ h2 { margin: 0; font-size: 14px; }
 .new-group-form input, .new-group-form select { height: 36px; border: 1px solid #cfdad2; border-radius: 8px; background: #fff; color: #31463c; }
 .new-group-form input { min-width: 210px; padding: 0 10px; }
 .new-group-form select { padding: 0 8px; }
-.board-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: start; }
-.board-lane { display: grid; gap: 16px; min-width: 0; }
-.group-card { min-width: 0; overflow: hidden; border: 1px solid #d7e0d9; border-top: 4px solid var(--group-color, #6d8fc4); border-radius: 12px; background: #fff; box-shadow: 0 5px 18px rgba(36, 67, 51, .07); }
+.board-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: start; overflow-x: auto; }
+.board-lane { display: grid; grid-auto-rows: 220px; gap: 16px; min-width: 180px; }
+.board-lane.manual-layout { grid-auto-rows: 220px; }
+.group-card { align-self: start; min-width: 0; overflow: hidden; border: 1px solid #d7e0d9; border-top: 4px solid var(--group-color, #6d8fc4); border-radius: 12px; background: #fff; box-shadow: 0 5px 18px rgba(36, 67, 51, .07); }
 .group-card.dragging { opacity: .45; }
 .group-card.drop-target { outline: 3px solid #77a88a; outline-offset: 3px; }
 .group-card[data-height="1"] .tabs { min-height: 174px; }

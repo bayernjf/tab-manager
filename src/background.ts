@@ -538,7 +538,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       for (const group of moved) {
         if (group.boardKey === "ungrouped") continue;
         const previous = state.boardLayouts.find((layout) => layout.deviceClass === "desktop" && layout.boardKey === group.boardKey);
-        layoutsByKey.set(`desktop:${group.boardKey}`, { boardKey: group.boardKey, deviceClass: "desktop", rank: group.rank, autoFill: previous?.autoFill ?? true, ...(previous?.autoFill === false ? { manualLane: previous.manualLane, manualOrder: previous.manualOrder } : {}) });
+        layoutsByKey.set(`desktop:${group.boardKey}`, { boardKey: group.boardKey, deviceClass: "desktop", rank: group.rank, autoFill: previous?.autoFill ?? true, ...(previous?.autoFill === false ? { manualLane: previous.manualLane, manualSlot: previous.manualSlot } : {}) });
       }
       state.boardLayouts = [...layoutsByKey.values()];
       await saveBoardLayouts(state.boardLayouts);

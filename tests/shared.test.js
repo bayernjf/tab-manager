@@ -30,6 +30,9 @@ const {
   siteTitle,
   segmentTabs,
   placeBoardCards,
+  boardCardsForDevice,
+  manualBoardGridRow,
+  moveManualBoardCard,
   moveBoardGroupRank,
   validateBoardTabDrop,
   isManagedBoardTabSource,
@@ -229,17 +232,36 @@ test("splits board tabs into ten-tab segments", () => {
   assert.deepEqual(segmentTabs(tabs), [tabs.slice(0, 10), tabs.slice(10)]);
 });
 
-test("auto-fills board cards into the leftmost shortest lane", () => {
+test("auto-fills complete multi-segment groups as topmost leftmost rectangles", () => {
   const placed = placeBoardCards([
-    { boardKey: "auto:one.example", segmentIndex: 0, heightUnits: 2 },
-    { boardKey: "auto:two.example", segmentIndex: 0, heightUnits: 2 },
-    { boardKey: "auto:three.example", segmentIndex: 0, heightUnits: 1 },
-    { boardKey: "auto:four.example", segmentIndex: 0, heightUnits: 1 },
-    { boardKey: "auto:five.example", segmentIndex: 0, heightUnits: 1 },
+    { boardKey: "auto:one.example", segmentIndex: 0, heightUnits: 2, rank: 1 },
+    { boardKey: "auto:one.example", segmentIndex: 1, heightUnits: 1, rank: 1 },
+    { boardKey: "auto:two.example", segmentIndex: 0, heightUnits: 1, rank: 2 },
+    { boardKey: "auto:three.example", segmentIndex: 0, heightUnits: 1, rank: 3 },
   ], 3, true);
 
-  assert.deepEqual(placed.laneHeights, [3, 2, 2]);
-  assert.deepEqual(placed.placements.map((placement) => placement.lane), [0, 1, 2, 2, 0]);
+  assert.deepEqual(placed.placements.map((placement) => [placement.boardKey, placement.segmentIndex, placement.lane, placement.slot, placement.compositeHeight]), [
+    ["auto:one.example", 0, 0, 0, 2],
+    ["auto:one.example", 1, 1, 0, 2],
+    ["auto:two.example", 0, 2, 0, 1],
+    ["auto:three.example", 0, 2, 1, 1],
+  ]);
+});
+
+test("reserves the short segment's lower cell in a twenty-one-tab composite", () => {
+  const placed = placeBoardCards([
+    { boardKey: "auto:a.example", segmentIndex: 0, heightUnits: 2, rank: 1 },
+    { boardKey: "auto:a.example", segmentIndex: 1, heightUnits: 2, rank: 1 },
+    { boardKey: "auto:a.example", segmentIndex: 2, heightUnits: 1, rank: 1 },
+    { boardKey: "auto:b.example", segmentIndex: 0, heightUnits: 1, rank: 2 },
+  ], 3, true);
+
+  assert.deepEqual(placed.placements.map((placement) => [placement.boardKey, placement.segmentIndex, placement.lane, placement.slot]), [
+    ["auto:a.example", 0, 0, 0],
+    ["auto:a.example", 1, 1, 0],
+    ["auto:a.example", 2, 2, 0],
+    ["auto:b.example", 0, 0, 2],
+  ]);
 });
 
 test("keeps manual card lane and order for device-specific rendering", () => {
@@ -256,6 +278,109 @@ test("keeps manual card lane and order for device-specific rendering", () => {
   ]);
 });
 
+test("keeps an empty manual grid slot when card heights change", () => {
+  const placed = placeBoardCards([
+    { boardKey: "auto:one.example", segmentIndex: 0, heightUnits: 2, manualLane: 0, manualSlot: 0 },
+    { boardKey: "auto:two.example", segmentIndex: 0, heightUnits: 1, manualLane: 0, manualSlot: 3 },
+  ], 2, false);
+
+  assert.deepEqual(placed.placements.map((placement) => [placement.boardKey, placement.lane, placement.slot]), [
+    ["auto:one.example", 0, 0],
+    ["auto:two.example", 0, 3],
+  ]);
+});
+
+test("spans a fixed manual grid unit for each five-tab card height", () => {
+  assert.deepEqual(manualBoardGridRow({ slot: 3, heightUnits: 2 }), { start: 4, span: 2 });
+  assert.deepEqual(manualBoardGridRow({ slot: 3, heightUnits: 1 }), { start: 4, span: 1 });
+});
+
+test("shifts manual cards by a dragged two-unit span without grid overlap", () => {
+  const moved = moveManualBoardCard([
+    { boardKey: "auto:source.example", segmentIndex: 0, heightUnits: 2, lane: 0, order: 0, slot: 0 },
+    { boardKey: "auto:target.example", segmentIndex: 0, heightUnits: 1, lane: 0, order: 2, slot: 2 },
+    { boardKey: "auto:after.example", segmentIndex: 0, heightUnits: 1, lane: 0, order: 3, slot: 3 },
+  ], "auto:source.example", "auto:target.example");
+
+  assert.deepEqual(moved?.map((placement) => [placement.boardKey, placement.lane, placement.slot, placement.heightUnits]), [
+    ["auto:source.example", 0, 2, 2],
+    ["auto:target.example", 0, 4, 1],
+    ["auto:after.example", 0, 5, 1],
+  ]);
+  const intervals = moved?.map((placement) => [placement.slot, placement.slot + placement.heightUnits]).sort((left, right) => left[0] - right[0]);
+  assert.ok(intervals?.every((interval, index) => index === 0 || intervals[index - 1][1] <= interval[0]));
+});
+
+test("selects manual board slots only from the active device layout", () => {
+  const cards = [{ boardKey: "auto:example.com", segmentIndex: 0, heightUnits: 1 }];
+  const layouts = [
+    { boardKey: "auto:example.com", deviceClass: "desktop", rank: 0, autoFill: false, manualLane: 2, manualSlot: 4 },
+    { boardKey: "auto:example.com", deviceClass: "tablet", rank: 0, autoFill: false, manualLane: 1, manualSlot: 1 },
+  ];
+
+  assert.deepEqual(boardCardsForDevice(cards, layouts, "desktop"), [{
+    boardKey: "auto:example.com", segmentIndex: 0, heightUnits: 1, manualLane: 2, manualSlot: 4,
+  }]);
+  assert.deepEqual(boardCardsForDevice(cards, layouts, "tablet"), [{
+    boardKey: "auto:example.com", segmentIndex: 0, heightUnits: 1, manualLane: 1, manualSlot: 1,
+  }]);
+});
+
+test("keeps eleven-tab segments in one horizontal manual composite", () => {
+  const cards = buildBoardCards([{
+    boardKey: "auto:example.com", kind: "automatic", title: "Example", color: "blue", rank: 0,
+    tabs: Array.from({ length: 11 }, (_value, index) => ({ id: index + 1, title: `Tab ${index + 1}` })),
+  }]);
+  const positioned = boardCardsForDevice(cards, [{
+    boardKey: "auto:example.com", deviceClass: "desktop", rank: 0, autoFill: false, manualLane: 1, manualSlot: 3,
+  }], "desktop");
+
+  const placed = placeBoardCards(positioned, 3, false);
+  assert.deepEqual(placed.placements.map((placement) => [placement.segmentIndex, placement.lane, placement.slot, placement.compositeHeight]), [
+    [0, 1, 3, 2],
+    [1, 2, 3, 2],
+  ]);
+});
+
+test("moves every segment of a composite together in manual layout", () => {
+  const moved = moveManualBoardCard([
+    { boardKey: "auto:a.example", segmentIndex: 0, heightUnits: 2, lane: 0, order: 0, slot: 0, compositeHeight: 2 },
+    { boardKey: "auto:a.example", segmentIndex: 1, heightUnits: 1, lane: 1, order: 0, slot: 0, compositeHeight: 2 },
+    { boardKey: "auto:b.example", segmentIndex: 0, heightUnits: 1, lane: 2, order: 0, slot: 0, compositeHeight: 1 },
+  ], "auto:a.example", "auto:b.example", 4);
+
+  assert.deepEqual(moved?.filter((placement) => placement.boardKey === "auto:a.example").map((placement) => [placement.lane, placement.slot]), [
+    [2, 0], [3, 0],
+  ]);
+});
+
+test("clamps a two-wide manual composite dropped on the last of three lanes", () => {
+  const moved = moveManualBoardCard([
+    { boardKey: "auto:a.example", segmentIndex: 0, heightUnits: 2, lane: 0, order: 0, slot: 0, compositeWidth: 2, compositeHeight: 2 },
+    { boardKey: "auto:a.example", segmentIndex: 1, heightUnits: 1, lane: 1, order: 0, slot: 0, compositeWidth: 2, compositeHeight: 2 },
+    { boardKey: "auto:b.example", segmentIndex: 0, heightUnits: 1, lane: 2, order: 0, slot: 0, compositeWidth: 1, compositeHeight: 1 },
+  ], "auto:a.example", "auto:b.example", 3);
+
+  assert.deepEqual(moved?.filter((placement) => placement.boardKey === "auto:a.example").map((placement) => placement.lane), [1, 2]);
+});
+
+test("keeps eleven- and twenty-one-tab composites horizontal at every board width", () => {
+  for (const laneCount of [3, 2, 1]) {
+    const eleven = placeBoardCards([
+      { boardKey: "auto:eleven.example", segmentIndex: 0, heightUnits: 2, rank: 1 },
+      { boardKey: "auto:eleven.example", segmentIndex: 1, heightUnits: 1, rank: 1 },
+    ], laneCount, true).placements;
+    const twentyOne = placeBoardCards([
+      { boardKey: "auto:twenty-one.example", segmentIndex: 0, heightUnits: 2, rank: 1 },
+      { boardKey: "auto:twenty-one.example", segmentIndex: 1, heightUnits: 2, rank: 1 },
+      { boardKey: "auto:twenty-one.example", segmentIndex: 2, heightUnits: 1, rank: 1 },
+    ], laneCount, true).placements;
+
+    assert.deepEqual(eleven.map((placement) => [placement.lane, placement.slot]), [[0, 0], [1, 0]]);
+    assert.deepEqual(twentyOne.map((placement) => [placement.lane, placement.slot]), [[0, 0], [1, 0], [2, 0]]);
+  }
+});
+
 test("validates isolated manual board layouts for each device class", () => {
   const desktop = validateBoardLayout({
     boardKey: "custom:7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573",
@@ -263,7 +388,7 @@ test("validates isolated manual board layouts for each device class", () => {
     rank: 2,
     autoFill: false,
     manualLane: 1,
-    manualOrder: 3,
+    manualSlot: 3,
   });
   const tablet = validateBoardLayout({
     boardKey: "custom:7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573",
@@ -271,7 +396,7 @@ test("validates isolated manual board layouts for each device class", () => {
     rank: 2,
     autoFill: false,
     manualLane: 0,
-    manualOrder: 1,
+    manualSlot: 1,
   });
 
   assert.deepEqual(desktop, {
@@ -280,7 +405,7 @@ test("validates isolated manual board layouts for each device class", () => {
     rank: 2,
     autoFill: false,
     manualLane: 1,
-    manualOrder: 3,
+    manualSlot: 3,
   });
   assert.deepEqual(tablet, {
     boardKey: "custom:7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573",
@@ -288,7 +413,7 @@ test("validates isolated manual board layouts for each device class", () => {
     rank: 2,
     autoFill: false,
     manualLane: 0,
-    manualOrder: 1,
+    manualSlot: 1,
   });
   assert.notDeepEqual(desktop, tablet);
   assert.equal(validateBoardLayout({ ...desktop, deviceClass: "watch" }), null);

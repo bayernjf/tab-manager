@@ -20,6 +20,8 @@ export interface BoardLayout {
   rank: number;
   autoFill: boolean;
   manualLane?: number;
+  /** Stable manual grid row. manualOrder is retained only while old local data migrates. */
+  manualSlot?: number;
   manualOrder?: number;
 }
 
@@ -45,6 +47,7 @@ export interface BoardLayoutSyncRow {
   rank: number;
   auto_fill: boolean;
   manual_lane: number | null;
+  manual_slot: number | null;
   manual_order: number | null;
 }
 
@@ -52,7 +55,10 @@ export interface BoardCard {
   boardKey: BoardKey;
   segmentIndex: number;
   heightUnits: 1 | 2;
+  /** Logical-group order used when automatic placement chooses rectangles. */
+  rank?: number;
   manualLane?: number;
+  manualSlot?: number;
   manualOrder?: number;
 }
 
@@ -87,6 +93,10 @@ export interface BoardPlacement {
   heightUnits: 1 | 2;
   lane: number;
   order: number;
+  slot: number;
+  /** Dimensions of the logical group's indivisible rectangle. */
+  compositeWidth: number;
+  compositeHeight: 1 | 2;
 }
 
 export interface BoardPlacementResult {
@@ -341,38 +351,121 @@ export function isManagedBoardTabSource(groupId: number, automaticGroupIds: Read
 
 export function placeBoardCards(cards: readonly BoardCard[], laneCount: number, autoFill: boolean): BoardPlacementResult {
   if (!Number.isInteger(laneCount) || laneCount < 1) return { placements: [], laneHeights: [] };
-  const laneHeights = Array<number>(laneCount).fill(0);
-  const laneOrders = Array<number>(laneCount).fill(0);
+  const grouped = new Map<BoardKey, { cards: BoardCard[]; index: number; rank: number }>();
+  cards.forEach((card, index) => {
+    const current = grouped.get(card.boardKey);
+    if (current) current.cards.push(card);
+    else grouped.set(card.boardKey, { cards: [card], index, rank: isSortOrder(card.rank) ? card.rank : index });
+  });
+  const composites = [...grouped.values()]
+    .map((group) => ({
+      ...group,
+      cards: [...group.cards].sort((left, right) => left.segmentIndex - right.segmentIndex),
+      width: group.cards.length,
+      height: group.cards.reduce<1 | 2>((height, card) => Math.max(height, card.heightUnits) as 1 | 2, 1),
+    }))
+    .sort((left, right) => autoFill ? left.rank - right.rank || left.index - right.index : left.index - right.index);
+  const columns = Math.max(laneCount, ...composites.map((composite) => composite.width));
+  const occupied = new Set<string>();
   const placements: BoardPlacement[] = [];
 
-  for (const card of cards) {
-    const manualLane = card.manualLane;
-    const lane = autoFill ? shortestLane(laneHeights) : validManualLane(manualLane, laneCount) ? manualLane : 0;
-    const nextOrder = laneOrders[lane] ?? 0;
-    const order = autoFill ? nextOrder : isSortOrder(card.manualOrder) ? card.manualOrder : nextOrder;
-    placements.push({ boardKey: card.boardKey, segmentIndex: card.segmentIndex, heightUnits: card.heightUnits, lane, order });
-    laneHeights[lane] = (laneHeights[lane] ?? 0) + card.heightUnits;
-    laneOrders[lane] = Math.max(nextOrder, order + 1);
+  const fits = (lane: number, slot: number, width: number, height: number): boolean => {
+    if (lane < 0 || lane + width > columns || slot < 0) return false;
+    for (let column = lane; column < lane + width; column += 1) for (let row = slot; row < slot + height; row += 1) {
+      if (occupied.has(`${column}:${row}`)) return false;
+    }
+    return true;
+  };
+  const firstFit = (width: number, height: number, fromSlot = 0): { lane: number; slot: number } => {
+    for (let slot = fromSlot; ; slot += 1) for (let lane = 0; lane <= columns - width; lane += 1) {
+      if (fits(lane, slot, width, height)) return { lane, slot };
+    }
+  };
+  for (const composite of composites) {
+    const first = composite.cards[0];
+    if (!first) continue;
+    const requestedLane = validManualLane(first.manualLane, columns) ? first.manualLane : 0;
+    const requestedSlot = first.manualSlot ?? first.manualOrder;
+    const position = !autoFill && isSortOrder(requestedSlot) && fits(requestedLane, requestedSlot, composite.width, composite.height)
+      ? { lane: requestedLane, slot: requestedSlot }
+      : firstFit(composite.width, composite.height, !autoFill && isSortOrder(requestedSlot) ? requestedSlot : 0);
+    for (let column = position.lane; column < position.lane + composite.width; column += 1) for (let row = position.slot; row < position.slot + composite.height; row += 1) occupied.add(`${column}:${row}`);
+    composite.cards.forEach((card, offset) => placements.push({
+      boardKey: card.boardKey,
+      segmentIndex: card.segmentIndex,
+      heightUnits: card.heightUnits,
+      lane: position.lane + offset,
+      order: position.slot,
+      slot: position.slot,
+      compositeWidth: composite.width,
+      compositeHeight: composite.height,
+    }));
   }
-
+  const laneHeights = Array.from({ length: columns }, (_value, lane) => placements.reduce((height, placement) => placement.lane === lane ? Math.max(height, placement.slot + placement.compositeHeight) : height, 0));
   return { placements, laneHeights };
+}
+
+export function boardCardsForDevice<T extends BoardCard>(cards: readonly T[], layouts: readonly BoardLayout[], deviceClass: DeviceClass): T[] {
+  return cards.map((card) => {
+    const layout = layouts.find((item) => item.boardKey === card.boardKey && item.deviceClass === deviceClass);
+    const baseSlot = layout?.manualSlot ?? layout?.manualOrder;
+    return {
+      ...card,
+      ...(layout?.manualLane === undefined ? {} : { manualLane: layout.manualLane }),
+      ...(baseSlot === undefined ? {} : { manualSlot: baseSlot }),
+      ...(layout?.manualOrder === undefined ? {} : { manualOrder: layout.manualOrder }),
+    };
+  });
+}
+
+export function manualBoardGridRow(placement: Pick<BoardPlacement, "slot" | "heightUnits">): { start: number; span: 1 | 2 } {
+  return { start: placement.slot + 1, span: placement.heightUnits };
+}
+
+export function moveManualBoardCard(placements: readonly BoardPlacement[], boardKey: BoardKey, targetBoardKey: BoardKey, laneCount?: number): BoardPlacement[] | null {
+  const visibleLaneCount = laneCount ?? Math.max(1, ...placements.map((placement) => placement.lane + 1));
+  if (!Number.isInteger(visibleLaneCount) || visibleLaneCount < 1) return null;
+  const source = placements.find((placement) => placement.boardKey === boardKey && placement.segmentIndex === 0);
+  const target = placements.find((placement) => placement.boardKey === targetBoardKey && placement.segmentIndex === 0);
+  if (!source || !target || source === target) return null;
+
+  const sourceSegments = placements
+    .filter((placement) => placement.boardKey === boardKey)
+    .sort((left, right) => left.segmentIndex - right.segmentIndex);
+  const sourceWidth = sourceSegments.length;
+  const sourceHeight = source.compositeHeight ?? source.heightUnits;
+  // A composite wider than the visible board remains horizontally scrollable;
+  // its only durable origin is zero. Otherwise keep its whole width on-board.
+  const sourceStart = Math.min(Math.max(0, target.lane), Math.max(0, visibleLaneCount - sourceWidth));
+  const sourceEnd = sourceStart + sourceWidth;
+  return placements.map((placement) => {
+    const offset = sourceSegments.indexOf(placement);
+    if (offset >= 0) return { ...placement, lane: sourceStart + offset, order: target.slot, slot: target.slot };
+    const placementEnd = placement.lane + (placement.compositeWidth ?? 1);
+    const overlapsMovedColumns = placement.lane < sourceEnd && placementEnd > sourceStart;
+    return overlapsMovedColumns && placement.slot >= target.slot
+      ? { ...placement, order: placement.slot + sourceHeight, slot: placement.slot + sourceHeight }
+      : placement;
+  });
 }
 
 export function validateBoardLayout(value: unknown): BoardLayout | null {
   if (!isPlainObject(value) || !isBoardKey(value.boardKey) || !isDeviceClass(value.deviceClass) || !isSortOrder(value.rank) || typeof value.autoFill !== "boolean") return null;
   const hasManualLane = value.manualLane !== undefined;
+  const hasManualSlot = value.manualSlot !== undefined;
   const hasManualOrder = value.manualOrder !== undefined;
   if (value.autoFill) {
-    return hasManualLane || hasManualOrder ? null : { boardKey: value.boardKey, deviceClass: value.deviceClass, rank: value.rank, autoFill: true };
+    return hasManualLane || hasManualSlot || hasManualOrder ? null : { boardKey: value.boardKey, deviceClass: value.deviceClass, rank: value.rank, autoFill: true };
   }
-  if (!hasManualLane || !hasManualOrder || !isSortOrder(value.manualLane) || !isSortOrder(value.manualOrder)) return null;
+  const manualSlot = hasManualSlot ? value.manualSlot : value.manualOrder;
+  if (!hasManualLane || !isSortOrder(value.manualLane) || !isSortOrder(manualSlot)) return null;
   return {
     boardKey: value.boardKey,
     deviceClass: value.deviceClass,
     rank: value.rank,
     autoFill: false,
     manualLane: value.manualLane,
-    manualOrder: value.manualOrder,
+    manualSlot,
   };
 }
 
@@ -384,8 +477,8 @@ export function boardCustomGroupFromSyncRow(value: unknown, expectedUserId?: str
 export function boardLayoutFromSyncRow(value: unknown, expectedUserId?: string): BoardLayout | null {
   if (!isPlainObject(value) || typeof value.user_id !== "string" || (expectedUserId !== undefined && value.user_id !== expectedUserId) || !isBoardKey(value.board_key) || !isDeviceClass(value.device_class) || !isSortOrder(value.rank) || typeof value.auto_fill !== "boolean") return null;
   const manualLane = value.manual_lane === null ? undefined : value.manual_lane;
-  const manualOrder = value.manual_order === null ? undefined : value.manual_order;
-  return validateBoardLayout({ boardKey: value.board_key, deviceClass: value.device_class, rank: value.rank, autoFill: value.auto_fill, ...(manualLane === undefined ? {} : { manualLane }), ...(manualOrder === undefined ? {} : { manualOrder }) });
+  const manualSlot = value.manual_slot === null || value.manual_slot === undefined ? value.manual_order : value.manual_slot;
+  return validateBoardLayout({ boardKey: value.board_key, deviceClass: value.device_class, rank: value.rank, autoFill: value.auto_fill, ...(manualLane === undefined ? {} : { manualLane }), ...(manualSlot === null || manualSlot === undefined ? {} : { manualSlot }) });
 }
 
 export function normalizeDomainInput(value: string): string | null {

@@ -153,7 +153,7 @@ export async function replaceBoardCustomGroups(userId: string, groups: readonly 
 
 export async function fetchBoardLayouts(userId: string): Promise<BoardLayout[]> {
   const rows = await databaseRequest<BoardLayoutSyncRow[]>(
-    `/board_layouts?user_id=eq.${encodeURIComponent(userId)}&select=user_id,board_key,device_class,rank,auto_fill,manual_lane,manual_order&order=device_class.asc,rank.asc,board_key.asc`,
+    `/board_layouts?user_id=eq.${encodeURIComponent(userId)}&select=user_id,board_key,device_class,rank,auto_fill,manual_lane,manual_slot,manual_order&order=device_class.asc,rank.asc,board_key.asc`,
   );
   const layouts = rows.map((row) => boardLayoutFromSyncRow(row, userId));
   if (layouts.some((layout) => !layout)) throw new Error("Supabase 返回了无效的看板布局数据");
@@ -161,7 +161,7 @@ export async function fetchBoardLayouts(userId: string): Promise<BoardLayout[]> 
 }
 
 export async function replaceBoardLayouts(userId: string, layouts: readonly BoardLayout[]): Promise<void> {
-  const rows = layouts.map((layout): BoardLayoutSyncRow => ({ user_id: userId, board_key: layout.boardKey, device_class: layout.deviceClass, rank: layout.rank, auto_fill: layout.autoFill, manual_lane: layout.manualLane ?? null, manual_order: layout.manualOrder ?? null }));
+  const rows = layouts.map((layout): BoardLayoutSyncRow => ({ user_id: userId, board_key: layout.boardKey, device_class: layout.deviceClass, rank: layout.rank, auto_fill: layout.autoFill, manual_lane: layout.manualLane ?? null, manual_slot: layout.manualSlot ?? null, manual_order: null }));
   if (rows.some((row) => !boardLayoutFromSyncRow(row, userId))) throw new Error("看板布局包含无效数据");
   await databaseRequest<unknown>(`/board_layouts?user_id=eq.${encodeURIComponent(userId)}`, { method: "DELETE" });
   if (rows.length) await databaseRequest<unknown>("/board_layouts", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(rows) });
