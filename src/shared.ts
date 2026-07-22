@@ -84,6 +84,12 @@ export interface PortableData {
   ignoredSites: IgnoredSite[];
 }
 
+export interface PortableImportPreview {
+  data: PortableData;
+  groupRuleCount: number;
+  ignoredSiteCount: number;
+}
+
 export interface AutoGroupRecord {
   groupId: number;
   windowId: number;
@@ -251,6 +257,82 @@ export function parsePortableData(value: unknown): PortableData | null {
   const ignoredSites = parseIgnoredSites(value.ignoredSites);
   if (!settings || !groupRules || !ignoredSites) return null;
   return { version: 1, settings, groupRules, ignoredSites };
+}
+
+export function previewPortableImport(value: unknown): PortableImportPreview | null {
+  let parsedValue = value;
+  if (typeof value === "string") {
+    if (value.length > 1_000_000) return null;
+    try {
+      parsedValue = JSON.parse(value) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  const data = parsePortableData(parsedValue);
+  if (!data) return null;
+  return { data, groupRuleCount: data.groupRules.length, ignoredSiteCount: data.ignoredSites.length };
+}
+
+export function applyPortableImport(state: StoredState, preview: PortableImportPreview, confirmed: boolean): StoredState {
+  if (!confirmed) return state;
+  return {
+    ...state,
+    settings: { ...preview.data.settings, lastSuccessfulSyncAt: null },
+    groupRules: preview.data.groupRules.map((rule) => ({ ...rule, domains: [...rule.domains] })),
+    ignoredSites: preview.data.ignoredSites.map((site) => ({ ...site })),
+  };
+}
+
+export function resetOptionsForUser(state: StoredState, storedUserId: string | undefined, userId: string): { state: StoredState; changed: boolean } {
+  if (storedUserId === userId) return { state, changed: false };
+  return {
+    state: {
+      ...state,
+      settings: { ...DEFAULT_SETTINGS },
+      groupRules: [],
+      ignoredSites: [],
+    },
+    changed: true,
+  };
+}
+
+export function canConfirmOptionsImport(previewUserId: string | null, currentUserId: string | null): boolean {
+  return previewUserId !== null && previewUserId === currentUserId;
+}
+
+export function validateOptionsSettings(value: unknown): Settings | null {
+  if (!isPlainObject(value)) return null;
+  const allowedKeys = ["autoGroupEnabled", "minimumTabs", "defaultGroupColor", "cloudSyncEnabled", "syncRulesEnabled", "syncIgnoreListEnabled", "lastSuccessfulSyncAt"];
+  if (Object.keys(value).some((key) => !allowedKeys.includes(key))) return null;
+  const parsed = parsePortableSettings({
+    autoGroupEnabled: value.autoGroupEnabled,
+    minimumTabs: value.minimumTabs,
+    defaultGroupColor: value.defaultGroupColor,
+    cloudSyncEnabled: value.cloudSyncEnabled,
+    syncRulesEnabled: value.syncRulesEnabled,
+    syncIgnoreListEnabled: value.syncIgnoreListEnabled,
+    lastSuccessfulSyncAt: null,
+  });
+  return parsed ? { ...parsed, lastSuccessfulSyncAt: null } : null;
+}
+
+export function createGroupRuleFromInput(value: unknown, id: string, sortOrder: number): GroupRule | null {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["title", "color", "domains", "matchScope", "enabled"])) return null;
+  return parseGroupRules([{ ...value, id, sortOrder }])?.[0] ?? null;
+}
+
+export function validateGroupRule(value: unknown): GroupRule | null {
+  return parseGroupRules([value])?.[0] ?? null;
+}
+
+export function createIgnoredSiteFromInput(value: unknown, id: string, sortOrder: number): IgnoredSite | null {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["domain", "matchScope"])) return null;
+  return parseIgnoredSites([{ ...value, id, sortOrder }])?.[0] ?? null;
+}
+
+export function validateIgnoredSite(value: unknown): IgnoredSite | null {
+  return parseIgnoredSites([value])?.[0] ?? null;
 }
 
 function isValidDomain(domain: string): boolean {

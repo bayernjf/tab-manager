@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 globalThis.chrome = { tabGroups: { TAB_GROUP_ID_NONE: -1 } };
 const {
   autoRecordKey,
+  applyPortableImport,
+  canConfirmOptionsImport,
   findMatchingRule,
   groupRuleFromSyncRow,
   getSiteKey,
@@ -13,7 +15,9 @@ const {
   normalizeDomainInput,
   normalizeHostname,
   parsePortableData,
+  previewPortableImport,
   resolveAutoGroup,
+  resetOptionsForUser,
   siteTitle,
   settingsFromSyncRow,
   toPortableData,
@@ -323,4 +327,69 @@ test("converts stored state without runtime group mappings", () => {
     }],
     ignoredSites: [{ id: "ignore-1", domain: "ads.example.com", matchScope: "exact", sortOrder: 0 }],
   });
+});
+
+test("keeps stored state unchanged for invalid or unconfirmed imports", () => {
+  const state = {
+    settings: { autoGroupEnabled: true, minimumTabs: 2 },
+    groupRules: [],
+    ignoredSites: [],
+    autoGroups: { "7:example.com": { groupId: 42, windowId: 7, siteKey: "example.com" } },
+    customGroups: {},
+  };
+  const before = structuredClone(state);
+  const valid = {
+    version: 1,
+    settings: {
+      autoGroupEnabled: false,
+      minimumTabs: 4,
+      defaultGroupColor: "purple",
+      cloudSyncEnabled: true,
+      syncRulesEnabled: true,
+      syncIgnoreListEnabled: true,
+      lastSuccessfulSyncAt: null,
+    },
+    groupRules: [],
+    ignoredSites: [],
+  };
+
+  assert.equal(previewPortableImport({ ...valid, settings: { ...valid.settings, minimumTabs: 0 } }), null);
+  const preview = previewPortableImport(valid);
+  assert.ok(preview);
+  assert.ok(previewPortableImport(JSON.stringify(valid)));
+  assert.equal(applyPortableImport(state, preview, false), state);
+  assert.deepEqual(state, before);
+});
+
+test("exports a detached portable snapshot without runtime fields", () => {
+  const rules = [{ id: "rule-1", title: "Example", color: "blue", domains: ["example.com"], matchScope: "exact", enabled: true, sortOrder: 0, groupId: 42 }];
+  const exported = toPortableData({ autoGroupEnabled: true, minimumTabs: 2 }, rules, []);
+
+  exported.groupRules[0].domains[0] = "changed.example.com";
+  assert.equal(rules[0].domains[0], "example.com");
+  assert.equal("groupId" in exported.groupRules[0], false);
+});
+
+test("clears durable options when their owner differs from the signed-in user", () => {
+  const state = {
+    settings: { autoGroupEnabled: false, minimumTabs: 6, defaultGroupColor: "purple" },
+    groupRules: [{ id: "rule-a", title: "Account A", color: "blue", domains: ["a.example.com"], matchScope: "exact", enabled: true, sortOrder: 0 }],
+    ignoredSites: [{ id: "ignore-a", domain: "ads.example.com", matchScope: "exact", sortOrder: 0 }],
+    autoGroups: { "7:a.example.com": { groupId: 42, windowId: 7, siteKey: "a.example.com" } },
+    customGroups: {},
+  };
+
+  const switched = resetOptionsForUser(state, "account-a", "account-b");
+  assert.equal(switched.changed, true);
+  assert.deepEqual(switched.state.groupRules, []);
+  assert.deepEqual(switched.state.ignoredSites, []);
+  assert.equal(switched.state.settings.minimumTabs, 2);
+  assert.deepEqual(switched.state.autoGroups, state.autoGroups);
+  assert.equal(resetOptionsForUser(state, "account-a", "account-a").changed, false);
+});
+
+test("only confirms an import preview for its original signed-in user", () => {
+  assert.equal(canConfirmOptionsImport("account-a", "account-a"), true);
+  assert.equal(canConfirmOptionsImport("account-a", "account-b"), false);
+  assert.equal(canConfirmOptionsImport("account-a", null), false);
 });

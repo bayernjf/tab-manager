@@ -1,5 +1,6 @@
 import {
   DEFAULT_SETTINGS,
+  resetOptionsForUser,
   type AutoGroupRecord,
   type CustomGroupRecord,
   type GroupRule,
@@ -8,7 +9,7 @@ import {
   type StoredState,
 } from "./shared.js";
 
-const KEYS = ["settings", "autoGroups", "customGroups", "groupRules", "ignoredSites"] as const;
+const KEYS = ["settings", "autoGroups", "customGroups", "groupRules", "ignoredSites", "optionsUserId"] as const;
 
 export async function loadState(): Promise<StoredState> {
   const data = await chrome.storage.local.get(KEYS);
@@ -39,4 +40,22 @@ export async function saveGroupRules(groupRules: GroupRule[]): Promise<void> {
 
 export async function saveIgnoredSites(ignoredSites: IgnoredSite[]): Promise<void> {
   await chrome.storage.local.set({ ignoredSites });
+}
+
+export async function saveOptionsData(settings: Settings, groupRules: GroupRule[], ignoredSites: IgnoredSite[]): Promise<void> {
+  await chrome.storage.local.set({ settings, groupRules, ignoredSites });
+}
+
+export async function prepareOptionsForUser(userId: string): Promise<StoredState> {
+  const [state, data] = await Promise.all([loadState(), chrome.storage.local.get("optionsUserId")]);
+  const prepared = resetOptionsForUser(state, data.optionsUserId as string | undefined, userId);
+  if (prepared.changed) {
+    await chrome.storage.local.set({
+      optionsUserId: userId,
+      settings: prepared.state.settings,
+      groupRules: prepared.state.groupRules,
+      ignoredSites: prepared.state.ignoredSites,
+    });
+  }
+  return prepared.state;
 }
