@@ -26,23 +26,23 @@ Add a dedicated tab-board page opened from the extension popup. It provides a st
 - A card with one through five tabs uses one unit (five visible tab rows).
 - A card with six through ten tabs uses two units (ten visible tab rows).
 - Ten tabs is the maximum per card. The eleventh and later tabs create the second visual card for the same logical group; every additional ten tabs create another segment.
-- Segments share group name/color and display an ordinal suffix such as `Work · 2`. Group-level dragging changes the logical group's order; tab ordering remains continuous across segments.
+- Segments share group name/color and display an ordinal suffix such as `Work · 2`. They form one inseparable horizontal composite block: a 21-tab group displays `Work`, `Work · 2`, and `Work · 3` left-to-right. Group-level dragging moves the complete composite block; tab ordering remains continuous across segments.
 
 ## Layout Algorithm
 
 - Board cards use a fixed-width grid. Desktop uses three lanes; tablet and phone definitions are persisted for future clients with two and one lane respectively.
-- Each card spans one or two five-row grid units according to its tab count.
-- When `autoFill` is enabled, cards are placed in synchronized logical rank order into the shortest lane that can accept the height; ties use the leftmost lane. This is a deterministic compact masonry layout.
-- Example: two two-unit cards plus three one-unit cards occupy a three-lane grid at lane heights `3 / 2 / 2` units. This is the minimal possible maximum lane height for seven units in three lanes.
-- Dragging a card displays an insertion target. Dropping it updates the logical group rank, synchronizes that rank, then recomputes compact placement for the active device class.
-- When `autoFill` is disabled, cards do not fill gaps after a drag or a height change. Positions are stored independently for `desktop`, `tablet`, and `mobile`; these coordinate layouts do not overwrite one another.
+- Each segment card spans one or two five-row grid units according to its tab count. All segments for a logical group form a horizontal composite block whose outer height is its tallest segment; its internal lower blanks are reserved and are never filled by another group.
+- When `autoFill` is enabled, composite blocks are placed in synchronized logical rank order into the topmost, then leftmost, complete grid area that fits the entire block. This is deterministic compact masonry between logical groups, not inside a logical group's segments.
+- For example, `A` (height 2), `A · 2` (height 2), and `A · 3` (height 1) form a three-column-by-two-unit composite block. The unit beneath `A · 3` remains reserved. Other logical groups may fill only areas outside that outer block.
+- Dragging a composite block displays an insertion target. Dropping it updates the logical group rank, synchronizes that rank, then recomputes composite placement for the active device class.
+- When `autoFill` is disabled, composite blocks do not fill gaps after a drag or a height change. Positions are stored independently for `desktop`, `tablet`, and `mobile`; these coordinate layouts do not overwrite one another.
 - Even when auto-fill is enabled, every logical group rank is synchronized. Pixel coordinates are never synchronized in auto-fill mode.
 
 ## Data and Synchronization
 
 - Add a later numbered migration; never modify previously executed migrations.
 - Persist durable custom board groups and board layout records under RLS, owned by `auth.uid() = user_id`.
-- Layout records include stable group key, device class, logical rank, auto-fill preference, and optional manual lane/order position.
+- Layout records include stable group key, device class, logical rank, auto-fill preference, and optional manual lane/slot position for the whole composite block.
 - Synchronize only durable group/layout metadata. Do not synchronize tab IDs, window IDs, native Chrome group IDs, tab URLs/titles, runtime automatic mappings, or sessions.
 - Existing privacy/global sync settings gate these board metadata writes. Offline failures preserve the local board state and return retryable status.
 
@@ -62,6 +62,6 @@ Add a dedicated tab-board page opened from the extension popup. It provides a st
 
 ## Testing
 
-- Unit tests: segment calculation, height unit calculation, deterministic compact placement, rank changes, device-class isolation, and portable layout validation.
-- Manual checks: ungrouped tab movement, custom/automatic group behavior, card and tab drag/drop, ten-tab split, auto-fill on/off, desktop layout persistence, offline fallback, and a second account's isolation.
+- Unit tests: segment calculation, composite-block geometry, height unit calculation, deterministic composite placement, rank changes, device-class isolation, and portable layout validation.
+- Manual checks: ungrouped tab movement, custom/automatic group behavior, card and tab drag/drop, ten-tab split, horizontal multi-segment blocks, auto-fill on/off, desktop layout persistence, offline fallback, and a second account's isolation.
 - Delivery checks: `npm run typecheck`, `npm test`, `git diff --check`, `npm run build`.
