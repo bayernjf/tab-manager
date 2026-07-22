@@ -23,6 +23,31 @@ export interface BoardLayout {
   manualOrder?: number;
 }
 
+export interface BoardCustomGroup {
+  id: string;
+  title: string;
+  color: GroupColor;
+  sortOrder: number;
+}
+
+export interface BoardCustomGroupSyncRow {
+  id: string;
+  user_id: string;
+  title: string;
+  color: GroupColor;
+  sort_order: number;
+}
+
+export interface BoardLayoutSyncRow {
+  user_id: string;
+  board_key: BoardKey;
+  device_class: DeviceClass;
+  rank: number;
+  auto_fill: boolean;
+  manual_lane: number | null;
+  manual_order: number | null;
+}
+
 export interface BoardCard {
   boardKey: BoardKey;
   segmentIndex: number;
@@ -162,6 +187,8 @@ export interface StoredState {
   customGroups: Record<string, CustomGroupRecord>;
   groupRules: GroupRule[];
   ignoredSites: IgnoredSite[];
+  boardCustomGroups: BoardCustomGroup[];
+  boardLayouts: BoardLayout[];
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -215,7 +242,7 @@ export function automaticBoardKey(siteKey: string): BoardKey | null {
 }
 
 export function customBoardKey(id: string): BoardKey | null {
-  return isRecordId(id) ? `custom:${id}` : null;
+  return isUuid(id) ? `custom:${id}` : null;
 }
 
 export function isBoardKey(value: unknown): value is BoardKey {
@@ -273,6 +300,18 @@ export function validateBoardLayout(value: unknown): BoardLayout | null {
     manualLane: value.manualLane,
     manualOrder: value.manualOrder,
   };
+}
+
+export function boardCustomGroupFromSyncRow(value: unknown, expectedUserId?: string): BoardCustomGroup | null {
+  if (!isPlainObject(value) || typeof value.user_id !== "string" || (expectedUserId !== undefined && value.user_id !== expectedUserId) || !isUuid(value.id) || typeof value.title !== "string" || !value.title.trim() || value.title.length > 40 || !isGroupColor(value.color) || !isSortOrder(value.sort_order)) return null;
+  return { id: value.id, title: value.title.trim(), color: value.color, sortOrder: value.sort_order };
+}
+
+export function boardLayoutFromSyncRow(value: unknown, expectedUserId?: string): BoardLayout | null {
+  if (!isPlainObject(value) || typeof value.user_id !== "string" || (expectedUserId !== undefined && value.user_id !== expectedUserId) || !isBoardKey(value.board_key) || !isDeviceClass(value.device_class) || !isSortOrder(value.rank) || typeof value.auto_fill !== "boolean") return null;
+  const manualLane = value.manual_lane === null ? undefined : value.manual_lane;
+  const manualOrder = value.manual_order === null ? undefined : value.manual_order;
+  return validateBoardLayout({ boardKey: value.board_key, deviceClass: value.device_class, rank: value.rank, autoFill: value.auto_fill, ...(manualLane === undefined ? {} : { manualLane }), ...(manualOrder === undefined ? {} : { manualOrder }) });
 }
 
 export function normalizeDomainInput(value: string): string | null {
@@ -410,6 +449,8 @@ export function resetOptionsForUser(state: StoredState, storedUserId: string | u
       settings: { ...DEFAULT_SETTINGS },
       groupRules: [],
       ignoredSites: [],
+      boardCustomGroups: [],
+      boardLayouts: [],
     },
     changed: true,
   };
@@ -512,6 +553,10 @@ function shortestLane(laneHeights: readonly number[]): number {
 
 function isRecordId(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && value.length <= 128;
+}
+
+function isUuid(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
 }
 
 function isSortOrder(value: unknown): value is number {

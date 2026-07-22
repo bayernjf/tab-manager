@@ -4,9 +4,13 @@ import assert from "node:assert/strict";
 globalThis.chrome = { tabGroups: { TAB_GROUP_ID_NONE: -1 } };
 const {
   autoRecordKey,
+  automaticBoardKey,
+  boardCustomGroupFromSyncRow,
+  boardLayoutFromSyncRow,
   heightUnitsForTabCount,
   applyPortableImport,
   canConfirmOptionsImport,
+  customBoardKey,
   findMatchingRule,
   groupRuleFromSyncRow,
   getSiteKey,
@@ -30,6 +34,84 @@ const {
   toPortableDataFromState,
   updateGroupRuleFromInput,
 } = await import("../dist/shared.js");
+
+test("accepts only board keys that satisfy the database key contract", () => {
+  assert.equal(automaticBoardKey("WWW.Example.com."), "auto:example.com");
+  assert.equal(automaticBoardKey("localhost"), null);
+  assert.equal(customBoardKey("7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573"), "custom:7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573");
+  assert.equal(customBoardKey("7C5E0DF8-D6B4-4B10-A820-2D1D1EF9B573"), null);
+});
+
+test("converts durable board custom groups from Supabase rows", () => {
+  assert.deepEqual(boardCustomGroupFromSyncRow({
+    id: "7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573",
+    user_id: "user-1",
+    title: "Research",
+    color: "purple",
+    sort_order: 3,
+  }, "user-1"), {
+    id: "7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573",
+    title: "Research",
+    color: "purple",
+    sortOrder: 3,
+  });
+});
+
+test("converts an automatic board layout using a stable site key", () => {
+  assert.deepEqual(boardLayoutFromSyncRow({
+    user_id: "user-1",
+    board_key: "auto:example.com",
+    device_class: "desktop",
+    rank: 2,
+    auto_fill: true,
+    manual_lane: null,
+    manual_order: null,
+  }, "user-1"), {
+    boardKey: "auto:example.com",
+    deviceClass: "desktop",
+    rank: 2,
+    autoFill: true,
+  });
+});
+
+test("rejects invalid board device classes and cross-user rows", () => {
+  const layout = {
+    user_id: "other-user",
+    board_key: "auto:example.com",
+    device_class: "desktop",
+    rank: 0,
+    auto_fill: true,
+    manual_lane: null,
+    manual_order: null,
+  };
+  const customGroup = { id: "7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573", user_id: "other-user", title: "Research", color: "blue", sort_order: 0 };
+
+  assert.equal(boardLayoutFromSyncRow({ ...layout, user_id: "user-1", device_class: "watch" }, "user-1"), null);
+  assert.equal(boardLayoutFromSyncRow(layout, "user-1"), null);
+  assert.equal(boardCustomGroupFromSyncRow(customGroup, "user-1"), null);
+});
+
+test("rejects board custom groups without UUIDs and noncanonical automatic site keys", () => {
+  const customGroup = {
+    id: "group-1",
+    user_id: "user-1",
+    title: "Research",
+    color: "blue",
+    sort_order: 0,
+  };
+  const layout = {
+    user_id: "user-1",
+    board_key: "auto:www.example.com",
+    device_class: "desktop",
+    rank: 0,
+    auto_fill: true,
+    manual_lane: null,
+    manual_order: null,
+  };
+
+  assert.equal(boardCustomGroupFromSyncRow(customGroup, "user-1"), null);
+  assert.equal(boardLayoutFromSyncRow(layout, "user-1"), null);
+});
 
 test("maps board tab counts to five-row height units", () => {
   for (const tabCount of [0, 1, 2, 3, 4, 5]) {
@@ -61,7 +143,7 @@ test("auto-fills board cards into the leftmost shortest lane", () => {
 
 test("validates isolated manual board layouts for each device class", () => {
   const desktop = validateBoardLayout({
-    boardKey: "custom:group-1",
+    boardKey: "custom:7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573",
     deviceClass: "desktop",
     rank: 2,
     autoFill: false,
@@ -69,7 +151,7 @@ test("validates isolated manual board layouts for each device class", () => {
     manualOrder: 3,
   });
   const tablet = validateBoardLayout({
-    boardKey: "custom:group-1",
+    boardKey: "custom:7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573",
     deviceClass: "tablet",
     rank: 2,
     autoFill: false,
@@ -78,7 +160,7 @@ test("validates isolated manual board layouts for each device class", () => {
   });
 
   assert.deepEqual(desktop, {
-    boardKey: "custom:group-1",
+    boardKey: "custom:7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573",
     deviceClass: "desktop",
     rank: 2,
     autoFill: false,
@@ -86,7 +168,7 @@ test("validates isolated manual board layouts for each device class", () => {
     manualOrder: 3,
   });
   assert.deepEqual(tablet, {
-    boardKey: "custom:group-1",
+    boardKey: "custom:7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573",
     deviceClass: "tablet",
     rank: 2,
     autoFill: false,

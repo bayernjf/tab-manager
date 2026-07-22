@@ -18,9 +18,9 @@ import {
   type PortableImportPreview,
   type Settings,
 } from "./shared.js";
-import { loadState, prepareOptionsForUser, saveAutoGroups, saveCustomGroups, saveOptionsData, saveSettings } from "./storage.js";
+import { loadState, prepareOptionsForUser, saveAutoGroups, saveBoardCustomGroups, saveBoardLayouts, saveCustomGroups, saveOptionsData, saveSettings } from "./storage.js";
 import { getCurrentUser, signIn, signOut, signUp } from "./auth.js";
-import { pushSettings, replaceOptionalSyncData, restoreOptionalSyncData, syncSettings } from "./sync.js";
+import { pushSettings, replaceOptionalSyncData, restoreBoardSyncData, restoreOptionalSyncData, syncSettings } from "./sync.js";
 
 const reconcileTimers = new Map<number, ReturnType<typeof setTimeout>>();
 function scheduleReconcile(windowId?: number): void {
@@ -210,8 +210,18 @@ async function synchronizeOptionsFromCloud(state: Awaited<ReturnType<typeof load
   });
   if (optionalData.groupRules !== undefined) state.groupRules = optionalData.groupRules;
   if (optionalData.ignoredSites !== undefined) state.ignoredSites = optionalData.ignoredSites;
+  const boardData = await restoreBoardSyncData(user.id, state.settings, {
+    boardCustomGroups: state.boardCustomGroups,
+    boardLayouts: state.boardLayouts,
+  });
+  if (boardData.boardCustomGroups !== undefined) state.boardCustomGroups = boardData.boardCustomGroups;
+  if (boardData.boardLayouts !== undefined) state.boardLayouts = boardData.boardLayouts;
   state.settings.lastSuccessfulSyncAt = new Date().toISOString();
-  await saveOptionsData(state.settings, state.groupRules, state.ignoredSites);
+  await Promise.all([
+    saveOptionsData(state.settings, state.groupRules, state.ignoredSites),
+    saveBoardCustomGroups(state.boardCustomGroups),
+    saveBoardLayouts(state.boardLayouts),
+  ]);
   return true;
 }
 
@@ -251,7 +261,17 @@ async function restoreUserOptions(userId: string): Promise<void> {
   });
   if (optionalData.groupRules !== undefined) state.groupRules = optionalData.groupRules;
   if (optionalData.ignoredSites !== undefined) state.ignoredSites = optionalData.ignoredSites;
-  await saveOptionsData(state.settings, state.groupRules, state.ignoredSites);
+  const boardData = await restoreBoardSyncData(userId, settings, {
+    boardCustomGroups: state.boardCustomGroups,
+    boardLayouts: state.boardLayouts,
+  });
+  if (boardData.boardCustomGroups !== undefined) state.boardCustomGroups = boardData.boardCustomGroups;
+  if (boardData.boardLayouts !== undefined) state.boardLayouts = boardData.boardLayouts;
+  await Promise.all([
+    saveOptionsData(state.settings, state.groupRules, state.ignoredSites),
+    saveBoardCustomGroups(state.boardCustomGroups),
+    saveBoardLayouts(state.boardLayouts),
+  ]);
   await reconcileAllWindows();
 }
 
@@ -429,10 +449,16 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const state = await loadState();
       const id = crypto.randomUUID();
       state.customGroups[id] = { id, groupId, windowId: group.windowId, title: message.title.trim() || "自定义分组", color: message.color };
+      state.boardCustomGroups = [...state.boardCustomGroups, {
+        id,
+        title: message.title.trim() || "自定义分组",
+        color: message.color,
+        sortOrder: state.boardCustomGroups.reduce((max, item) => Math.max(max, item.sortOrder), -1) + 1,
+      }];
       for (const [key, auto] of Object.entries(state.autoGroups)) {
         if (auto.groupId === groupId) delete state.autoGroups[key];
       }
-      await Promise.all([saveCustomGroups(state.customGroups), saveAutoGroups(state.autoGroups)]);
+      await Promise.all([saveCustomGroups(state.customGroups), saveAutoGroups(state.autoGroups), saveBoardCustomGroups(state.boardCustomGroups)]);
       scheduleReconcile(group.windowId);
       return { ok: true };
     }
@@ -443,7 +469,8 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
         const tabs = await chrome.tabs.query({ groupId: record.groupId });
         if (tabs.length) await chrome.tabs.ungroup(tabs.flatMap((tab) => tab.id == null ? [] : [tab.id]));
         delete state.customGroups[message.id];
-        await saveCustomGroups(state.customGroups);
+        state.boardCustomGroups = state.boardCustomGroups.filter((group) => group.id !== message.id);
+        await Promise.all([saveCustomGroups(state.customGroups), saveBoardCustomGroups(state.boardCustomGroups)]);
         scheduleReconcile(record.windowId);
       }
       return { ok: true };
