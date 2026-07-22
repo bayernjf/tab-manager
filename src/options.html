@@ -23,7 +23,13 @@
         <p id="status" class="status" role="status"></p>
         <section id="account" class="panel" tabindex="-1">
           <h1>账户与同步</h1>
-          <div class="card"><h2>账户</h2><p id="account-email">正在读取账户状态…</p><p id="account-state" class="muted"></p><button id="sync-now" type="button">立即同步</button><button id="sign-out" class="secondary" type="button">退出登录</button></div>
+          <div id="account-card" class="card"><h2>账户</h2><p id="account-email">正在读取账户状态…</p><p id="account-state" class="muted"></p><button id="sync-now" type="button">立即同步</button><button id="sign-out" class="secondary" type="button">退出登录</button></div>
+          <div id="login-required" class="card login-required" role="region" aria-labelledby="login-required-title" hidden>
+            <h2 id="login-required-title">请先登录</h2>
+            <p>登录后才能管理分组规则、忽略网站、外观、导入导出和同步设置。</p>
+            <button id="open-login" type="button">打开扩展弹窗登录</button>
+            <p id="login-instruction" class="muted" hidden>如果未打开弹窗，请点击浏览器工具栏中的 Tab Garden 图标，然后在弹窗中登录。</p>
+          </div>
         </section>
         <section id="rules" class="panel" tabindex="-1" hidden>
           <h1>域名分组规则</h1><p class="muted">命中的网站会按规则创建自动分组。</p>
