@@ -2,9 +2,51 @@ export const UNGROUPED = chrome.tabGroups.TAB_GROUP_ID_NONE;
 
 export type GroupColor = "grey" | "blue" | "red" | "yellow" | "green" | "pink" | "purple" | "cyan" | "orange";
 export type MatchScope = "exact" | "domain-and-subdomains";
+export type DeviceClass = "desktop" | "tablet" | "mobile";
+export type BoardKey = "ungrouped" | `auto:${string}` | `custom:${string}`;
+export type BoardGroupKind = "automatic" | "custom" | "ungrouped";
+
+export interface BoardGroup {
+  boardKey: BoardKey;
+  kind: BoardGroupKind;
+  title: string;
+  color: GroupColor;
+  rank: number;
+}
+
+export interface BoardLayout {
+  boardKey: BoardKey;
+  deviceClass: DeviceClass;
+  rank: number;
+  autoFill: boolean;
+  manualLane?: number;
+  manualOrder?: number;
+}
+
+export interface BoardCard {
+  boardKey: BoardKey;
+  segmentIndex: number;
+  heightUnits: 1 | 2;
+  manualLane?: number;
+  manualOrder?: number;
+}
+
+export interface BoardPlacement {
+  boardKey: BoardKey;
+  segmentIndex: number;
+  heightUnits: 1 | 2;
+  lane: number;
+  order: number;
+}
+
+export interface BoardPlacementResult {
+  placements: BoardPlacement[];
+  laneHeights: number[];
+}
 
 const GROUP_COLORS: readonly GroupColor[] = ["grey", "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange"];
 const MATCH_SCOPES: readonly MatchScope[] = ["exact", "domain-and-subdomains"];
+const DEVICE_CLASSES: readonly DeviceClass[] = ["desktop", "tablet", "mobile"];
 const MAX_PORTABLE_RECORDS = 100;
 
 export interface Settings {
@@ -165,6 +207,72 @@ export function ignoredSiteFromSyncRow(value: unknown, expectedUserId?: string):
 export function normalizeHostname(hostname: string): string {
   const normalized = hostname.trim().toLowerCase().replace(/\.$/, "");
   return normalized.startsWith("www.") ? normalized.slice(4) : normalized;
+}
+
+export function automaticBoardKey(siteKey: string): BoardKey | null {
+  const normalizedSiteKey = normalizeDomainInput(siteKey);
+  return normalizedSiteKey ? `auto:${normalizedSiteKey}` : null;
+}
+
+export function customBoardKey(id: string): BoardKey | null {
+  return isRecordId(id) ? `custom:${id}` : null;
+}
+
+export function isBoardKey(value: unknown): value is BoardKey {
+  if (value === "ungrouped") return true;
+  if (typeof value !== "string") return false;
+  if (value.startsWith("auto:")) return automaticBoardKey(value.slice("auto:".length)) === value;
+  if (value.startsWith("custom:")) return customBoardKey(value.slice("custom:".length)) === value;
+  return false;
+}
+
+export function heightUnitsForTabCount(tabCount: number): 1 | 2 {
+  return tabCount <= 5 ? 1 : 2;
+}
+
+export function segmentTabs<T>(tabs: readonly T[]): T[][] {
+  const segments: T[][] = [];
+  for (let index = 0; index < tabs.length; index += 10) {
+    segments.push(tabs.slice(index, index + 10));
+  }
+  return segments;
+}
+
+export function placeBoardCards(cards: readonly BoardCard[], laneCount: number, autoFill: boolean): BoardPlacementResult {
+  if (!Number.isInteger(laneCount) || laneCount < 1) return { placements: [], laneHeights: [] };
+  const laneHeights = Array<number>(laneCount).fill(0);
+  const laneOrders = Array<number>(laneCount).fill(0);
+  const placements: BoardPlacement[] = [];
+
+  for (const card of cards) {
+    const manualLane = card.manualLane;
+    const lane = autoFill ? shortestLane(laneHeights) : validManualLane(manualLane, laneCount) ? manualLane : 0;
+    const nextOrder = laneOrders[lane] ?? 0;
+    const order = autoFill ? nextOrder : isSortOrder(card.manualOrder) ? card.manualOrder : nextOrder;
+    placements.push({ boardKey: card.boardKey, segmentIndex: card.segmentIndex, heightUnits: card.heightUnits, lane, order });
+    laneHeights[lane] = (laneHeights[lane] ?? 0) + card.heightUnits;
+    laneOrders[lane] = Math.max(nextOrder, order + 1);
+  }
+
+  return { placements, laneHeights };
+}
+
+export function validateBoardLayout(value: unknown): BoardLayout | null {
+  if (!isPlainObject(value) || !isBoardKey(value.boardKey) || !isDeviceClass(value.deviceClass) || !isSortOrder(value.rank) || typeof value.autoFill !== "boolean") return null;
+  const hasManualLane = value.manualLane !== undefined;
+  const hasManualOrder = value.manualOrder !== undefined;
+  if (value.autoFill) {
+    return hasManualLane || hasManualOrder ? null : { boardKey: value.boardKey, deviceClass: value.deviceClass, rank: value.rank, autoFill: true };
+  }
+  if (!hasManualLane || !hasManualOrder || !isSortOrder(value.manualLane) || !isSortOrder(value.manualOrder)) return null;
+  return {
+    boardKey: value.boardKey,
+    deviceClass: value.deviceClass,
+    rank: value.rank,
+    autoFill: false,
+    manualLane: value.manualLane,
+    manualOrder: value.manualOrder,
+  };
 }
 
 export function normalizeDomainInput(value: string): string | null {
@@ -382,6 +490,24 @@ function isGroupColor(value: unknown): value is GroupColor {
 
 function isMatchScope(value: unknown): value is MatchScope {
   return typeof value === "string" && MATCH_SCOPES.includes(value as MatchScope);
+}
+
+function isDeviceClass(value: unknown): value is DeviceClass {
+  return typeof value === "string" && DEVICE_CLASSES.includes(value as DeviceClass);
+}
+
+function validManualLane(value: unknown, laneCount: number): value is number {
+  return isSortOrder(value) && value < laneCount;
+}
+
+function shortestLane(laneHeights: readonly number[]): number {
+  let shortestLaneIndex = 0;
+  for (let index = 1; index < laneHeights.length; index += 1) {
+    const currentHeight = laneHeights[index];
+    const shortestHeight = laneHeights[shortestLaneIndex];
+    if (currentHeight !== undefined && shortestHeight !== undefined && currentHeight < shortestHeight) shortestLaneIndex = index;
+  }
+  return shortestLaneIndex;
 }
 
 function isRecordId(value: unknown): value is string {

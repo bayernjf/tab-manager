@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 globalThis.chrome = { tabGroups: { TAB_GROUP_ID_NONE: -1 } };
 const {
   autoRecordKey,
+  heightUnitsForTabCount,
   applyPortableImport,
   canConfirmOptionsImport,
   findMatchingRule,
@@ -21,11 +22,100 @@ const {
   resolveCloudCollection,
   syncFailureStatus,
   siteTitle,
+  segmentTabs,
+  placeBoardCards,
+  validateBoardLayout,
   settingsFromSyncRow,
   toPortableData,
   toPortableDataFromState,
   updateGroupRuleFromInput,
 } = await import("../dist/shared.js");
+
+test("maps board tab counts to five-row height units", () => {
+  for (const tabCount of [0, 1, 2, 3, 4, 5]) {
+    assert.equal(heightUnitsForTabCount(tabCount), 1);
+  }
+  for (const tabCount of [6, 7, 8, 9, 10]) {
+    assert.equal(heightUnitsForTabCount(tabCount), 2);
+  }
+});
+
+test("splits board tabs into ten-tab segments", () => {
+  const tabs = Array.from({ length: 11 }, (_value, index) => `tab-${index + 1}`);
+
+  assert.deepEqual(segmentTabs(tabs), [tabs.slice(0, 10), tabs.slice(10)]);
+});
+
+test("auto-fills board cards into the leftmost shortest lane", () => {
+  const placed = placeBoardCards([
+    { boardKey: "auto:one.example", segmentIndex: 0, heightUnits: 2 },
+    { boardKey: "auto:two.example", segmentIndex: 0, heightUnits: 2 },
+    { boardKey: "auto:three.example", segmentIndex: 0, heightUnits: 1 },
+    { boardKey: "auto:four.example", segmentIndex: 0, heightUnits: 1 },
+    { boardKey: "auto:five.example", segmentIndex: 0, heightUnits: 1 },
+  ], 3, true);
+
+  assert.deepEqual(placed.laneHeights, [3, 2, 2]);
+  assert.deepEqual(placed.placements.map((placement) => placement.lane), [0, 1, 2, 2, 0]);
+});
+
+test("validates isolated manual board layouts for each device class", () => {
+  const desktop = validateBoardLayout({
+    boardKey: "custom:group-1",
+    deviceClass: "desktop",
+    rank: 2,
+    autoFill: false,
+    manualLane: 1,
+    manualOrder: 3,
+  });
+  const tablet = validateBoardLayout({
+    boardKey: "custom:group-1",
+    deviceClass: "tablet",
+    rank: 2,
+    autoFill: false,
+    manualLane: 0,
+    manualOrder: 1,
+  });
+
+  assert.deepEqual(desktop, {
+    boardKey: "custom:group-1",
+    deviceClass: "desktop",
+    rank: 2,
+    autoFill: false,
+    manualLane: 1,
+    manualOrder: 3,
+  });
+  assert.deepEqual(tablet, {
+    boardKey: "custom:group-1",
+    deviceClass: "tablet",
+    rank: 2,
+    autoFill: false,
+    manualLane: 0,
+    manualOrder: 1,
+  });
+  assert.notDeepEqual(desktop, tablet);
+  assert.equal(validateBoardLayout({ ...desktop, deviceClass: "watch" }), null);
+  assert.equal(validateBoardLayout({ ...desktop, manualLane: -1 }), null);
+  assert.deepEqual(validateBoardLayout({
+    boardKey: "auto:docs.example",
+    deviceClass: "mobile",
+    rank: 4,
+    autoFill: true,
+  }), {
+    boardKey: "auto:docs.example",
+    deviceClass: "mobile",
+    rank: 4,
+    autoFill: true,
+  });
+  assert.equal(validateBoardLayout({
+    boardKey: "auto:docs.example",
+    deviceClass: "mobile",
+    rank: 4,
+    autoFill: true,
+    manualLane: 0,
+    manualOrder: 0,
+  }), null);
+});
 
 test("marks cloud restore failures as retryable without exposing error details", () => {
   assert.deepEqual(syncFailureStatus(new Error("Bearer top-secret-token failed")), {
