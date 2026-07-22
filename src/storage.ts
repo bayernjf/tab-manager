@@ -1,24 +1,22 @@
 import {
   DEFAULT_SETTINGS,
   resetOptionsForUser,
-  type AutoGroupRecord,
   type BoardCustomGroup,
   type BoardLayout,
-  type CustomGroupRecord,
+  type VirtualBoardAssignment,
   type GroupRule,
   type IgnoredSite,
   type Settings,
   type StoredState,
 } from "./shared.js";
 
-const KEYS = ["settings", "autoGroups", "customGroups", "groupRules", "ignoredSites", "boardCustomGroups", "boardLayouts", "optionsUserId"] as const;
+const KEYS = ["settings", "boardAssignments", "groupRules", "ignoredSites", "boardCustomGroups", "boardLayouts", "optionsUserId"] as const;
 
 export async function loadState(): Promise<StoredState> {
   const data = await chrome.storage.local.get(KEYS);
   return {
     settings: { ...DEFAULT_SETTINGS, ...(data.settings as Partial<Settings> | undefined) },
-    autoGroups: (data.autoGroups as Record<string, AutoGroupRecord> | undefined) ?? {},
-    customGroups: (data.customGroups as Record<string, CustomGroupRecord> | undefined) ?? {},
+    boardAssignments: (data.boardAssignments as Record<string, VirtualBoardAssignment> | undefined) ?? {},
     groupRules: (data.groupRules as GroupRule[] | undefined) ?? [],
     ignoredSites: (data.ignoredSites as IgnoredSite[] | undefined) ?? [],
     boardCustomGroups: (data.boardCustomGroups as BoardCustomGroup[] | undefined) ?? [],
@@ -30,12 +28,8 @@ export async function saveSettings(settings: Settings): Promise<void> {
   await chrome.storage.local.set({ settings });
 }
 
-export async function saveAutoGroups(autoGroups: Record<string, AutoGroupRecord>): Promise<void> {
-  await chrome.storage.local.set({ autoGroups });
-}
-
-export async function saveCustomGroups(customGroups: Record<string, CustomGroupRecord>): Promise<void> {
-  await chrome.storage.local.set({ customGroups });
+export async function saveBoardAssignments(boardAssignments: Record<string, VirtualBoardAssignment>): Promise<void> {
+  await chrome.storage.local.set({ boardAssignments });
 }
 
 export async function saveGroupRules(groupRules: GroupRule[]): Promise<void> {

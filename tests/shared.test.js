@@ -1,9 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-globalThis.chrome = { tabGroups: { TAB_GROUP_ID_NONE: -1 } };
+globalThis.chrome = {};
 const {
-  autoRecordKey,
   automaticBoardKey,
   boardDropIndex,
   boardCustomGroupFromSyncRow,
@@ -35,12 +34,13 @@ const {
   moveManualBoardCard,
   moveBoardGroupRank,
   validateBoardTabDrop,
-  isManagedBoardTabSource,
   validateBoardLayout,
   settingsFromSyncRow,
   toPortableData,
   toPortableDataFromState,
   updateGroupRuleFromInput,
+  buildVirtualBoardGroups,
+  moveVirtualBoardAssignment,
 } = await import("../dist/shared.js");
 const { getCurrentUser, isExplicitAuthenticationFailure } = await import("../dist/auth.js");
 
@@ -95,11 +95,38 @@ test("computes final tab-strip indices for before and after board drops", () => 
   assert.equal(boardDropIndex(-1, 1, "before"), null);
 });
 
-test("permits board moves only from Ungrouped or extension-managed groups", () => {
-  assert.equal(isManagedBoardTabSource(-1, new Set([10]), new Set([20])), true);
-  assert.equal(isManagedBoardTabSource(10, new Set([10]), new Set([20])), true);
-  assert.equal(isManagedBoardTabSource(20, new Set([10]), new Set([20])), true);
-  assert.equal(isManagedBoardTabSource(30, new Set([10]), new Set([20])), false);
+test("moves and clears local virtual board assignments without browser group ids", () => {
+  const customKey = "custom:7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573";
+  const automaticKey = "auto:other.example";
+  const moved = moveVirtualBoardAssignment({}, 7, 12, customKey);
+  assert.deepEqual(moved, { "7:12": { windowId: 7, tabId: 12, boardKey: customKey, order: 0 } });
+
+  const reassigned = moveVirtualBoardAssignment(moved, 7, 12, automaticKey, 3);
+  assert.deepEqual(reassigned["7:12"], { windowId: 7, tabId: 12, boardKey: automaticKey, order: 3 });
+  assert.deepEqual(moveVirtualBoardAssignment(reassigned, 7, 12, "ungrouped"), {});
+});
+
+test("builds virtual automatic groups by site while custom assignments take precedence", () => {
+  const customId = "7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573";
+  const groups = buildVirtualBoardGroups({
+    windowId: 7,
+    tabs: [
+      { id: 1, title: "One", url: "https://www.example.com/a" },
+      { id: 2, title: "Two", url: "https://example.com/b" },
+      { id: 3, title: "Three", url: "https://example.com/c" },
+    ],
+    settings: { autoGroupEnabled: true, minimumTabs: 2, defaultGroupColor: "blue" },
+    rules: [],
+    ignoredSites: [],
+    customGroups: [{ id: customId, title: "Research", color: "purple", sortOrder: 0 }],
+    assignments: { "7:1": { windowId: 7, tabId: 1, boardKey: `custom:${customId}`, order: 0 } },
+  });
+
+  assert.deepEqual(groups.map((group) => [group.boardKey, group.tabs.map((tab) => tab.id)]), [
+    ["ungrouped", []],
+    [`custom:${customId}`, [1]],
+    ["auto:example.com", [2, 3]],
+  ]);
 });
 
 test("treats only explicit authentication responses as session-invalidating", () => {
@@ -579,8 +606,7 @@ test("classifies only web URLs", () => {
   assert.equal(getSiteKey("not a url"), null);
 });
 
-test("builds window-scoped keys and readable titles", () => {
-  assert.equal(autoRecordKey(12, "docs.example.com"), "12:docs.example.com");
+test("builds readable site titles", () => {
   assert.equal(siteTitle("github.com"), "Github");
 });
 
@@ -730,8 +756,8 @@ test("maps portable data explicitly without runtime-only fields", () => {
       syncIgnoreListEnabled: false,
       lastSuccessfulSyncAt: "2026-07-22T00:00:00.000Z",
     },
-    [{ id: "rule-1", title: "Example", color: "blue", domains: ["example.com"], matchScope: "exact", enabled: true, sortOrder: 1, accessToken: "secret", groupId: 42, windowId: 7 }],
-    [{ id: "ignore-1", domain: "ads.example.com", matchScope: "exact", sortOrder: 1, accessToken: "secret", groupId: 42, windowId: 7 }],
+    [{ id: "rule-1", title: "Example", color: "blue", domains: ["example.com"], matchScope: "exact", enabled: true, sortOrder: 1, accessToken: "secret" }],
+    [{ id: "ignore-1", domain: "ads.example.com", matchScope: "exact", sortOrder: 1, accessToken: "secret" }],
   );
 
   assert.deepEqual(portable, {
@@ -766,12 +792,7 @@ test("converts stored state without runtime group mappings", () => {
       sortOrder: 0,
     }],
     ignoredSites: [{ id: "ignore-1", domain: "ads.example.com", matchScope: "exact", sortOrder: 0 }],
-    autoGroups: {
-      "7:example.com": { groupId: 42, windowId: 7, siteKey: "example.com" },
-    },
-    customGroups: {
-      custom: { id: "custom", groupId: 99, windowId: 7, title: "Custom", color: "green" },
-    },
+    boardAssignments: { "7:12": { windowId: 7, tabId: 12, boardKey: "auto:example.com", order: 0 } },
   });
 
   assert.deepEqual(portable, {
@@ -803,8 +824,7 @@ test("keeps stored state unchanged for invalid or unconfirmed imports", () => {
     settings: { autoGroupEnabled: true, minimumTabs: 2 },
     groupRules: [],
     ignoredSites: [],
-    autoGroups: { "7:example.com": { groupId: 42, windowId: 7, siteKey: "example.com" } },
-    customGroups: {},
+    boardAssignments: { "7:12": { windowId: 7, tabId: 12, boardKey: "auto:example.com", order: 0 } },
   };
   const before = structuredClone(state);
   const valid = {
@@ -831,12 +851,12 @@ test("keeps stored state unchanged for invalid or unconfirmed imports", () => {
 });
 
 test("exports a detached portable snapshot without runtime fields", () => {
-  const rules = [{ id: "rule-1", title: "Example", color: "blue", domains: ["example.com"], matchScope: "exact", enabled: true, sortOrder: 0, groupId: 42 }];
+  const rules = [{ id: "rule-1", title: "Example", color: "blue", domains: ["example.com"], matchScope: "exact", enabled: true, sortOrder: 0, accessToken: "secret" }];
   const exported = toPortableData({ autoGroupEnabled: true, minimumTabs: 2 }, rules, []);
 
   exported.groupRules[0].domains[0] = "changed.example.com";
   assert.equal(rules[0].domains[0], "example.com");
-  assert.equal("groupId" in exported.groupRules[0], false);
+  assert.equal("accessToken" in exported.groupRules[0], false);
 });
 
 test("clears durable options when their owner differs from the signed-in user", () => {
@@ -844,8 +864,7 @@ test("clears durable options when their owner differs from the signed-in user", 
     settings: { autoGroupEnabled: false, minimumTabs: 6, defaultGroupColor: "purple" },
     groupRules: [{ id: "rule-a", title: "Account A", color: "blue", domains: ["a.example.com"], matchScope: "exact", enabled: true, sortOrder: 0 }],
     ignoredSites: [{ id: "ignore-a", domain: "ads.example.com", matchScope: "exact", sortOrder: 0 }],
-    autoGroups: { "7:a.example.com": { groupId: 42, windowId: 7, siteKey: "a.example.com" } },
-    customGroups: {},
+    boardAssignments: { "7:12": { windowId: 7, tabId: 12, boardKey: "auto:a.example.com", order: 0 } },
   };
 
   const switched = resetOptionsForUser(state, "account-a", "account-b");
@@ -853,7 +872,7 @@ test("clears durable options when their owner differs from the signed-in user", 
   assert.deepEqual(switched.state.groupRules, []);
   assert.deepEqual(switched.state.ignoredSites, []);
   assert.equal(switched.state.settings.minimumTabs, 2);
-  assert.deepEqual(switched.state.autoGroups, state.autoGroups);
+  assert.deepEqual(switched.state.boardAssignments, state.boardAssignments);
   assert.equal(resetOptionsForUser(state, "account-a", "account-a").changed, false);
 });
 

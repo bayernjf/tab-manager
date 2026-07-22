@@ -3,7 +3,7 @@
   "name": "Tab Garden",
   "description": "按网站自动整理标签页，同时保留用户自定义分组。",
   "version": "0.1.0",
-  "permissions": ["tabs", "tabGroups", "storage"],
+  "permissions": ["tabs", "storage"],
   "host_permissions": ["https://*.supabase.co/*"],
   "background": {
     "service_worker": "background.js",

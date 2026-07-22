@@ -1,5 +1,3 @@
-export const UNGROUPED = chrome.tabGroups.TAB_GROUP_ID_NONE;
-
 export type GroupColor = "grey" | "blue" | "red" | "yellow" | "green" | "pink" | "purple" | "cyan" | "orange";
 export type MatchScope = "exact" | "domain-and-subdomains";
 export type DeviceClass = "desktop" | "tablet" | "mobile";
@@ -202,24 +200,30 @@ export interface SyncFailureStatus {
   message: string;
 }
 
-export interface AutoGroupRecord {
-  groupId: number;
+export interface VirtualBoardAssignment {
   windowId: number;
-  siteKey: string;
+  tabId: number;
+  boardKey: Exclude<BoardKey, "ungrouped">;
+  order: number;
 }
 
-export interface CustomGroupRecord {
-  id: string;
-  groupId: number;
+export interface VirtualBoardTab extends BoardTab {
+  id: number;
+}
+
+export interface VirtualBoardGroupInput {
   windowId: number;
-  title: string;
-  color: GroupColor;
+  tabs: readonly VirtualBoardTab[];
+  settings: Settings;
+  rules: readonly GroupRule[];
+  ignoredSites: readonly IgnoredSite[];
+  customGroups: readonly BoardCustomGroup[];
+  assignments: Record<string, VirtualBoardAssignment>;
 }
 
 export interface StoredState {
   settings: Settings;
-  autoGroups: Record<string, AutoGroupRecord>;
-  customGroups: Record<string, CustomGroupRecord>;
+  boardAssignments: Record<string, VirtualBoardAssignment>;
   groupRules: GroupRule[];
   ignoredSites: IgnoredSite[];
   boardCustomGroups: BoardCustomGroup[];
@@ -339,14 +343,89 @@ export function validateBoardTabDrop(value: unknown): BoardTabDrop | null {
   return { tabId: value.tabId, targetBoardKey: value.targetBoardKey, position: value.position, targetTabId: value.targetTabId };
 }
 
+export function virtualBoardAssignmentKey(windowId: number, tabId: number): string {
+  return `${windowId}:${tabId}`;
+}
+
+export function moveVirtualBoardAssignment(
+  assignments: Record<string, VirtualBoardAssignment>,
+  windowId: number,
+  tabId: number,
+  boardKey: BoardKey,
+  order = 0,
+): Record<string, VirtualBoardAssignment> {
+  const key = virtualBoardAssignmentKey(windowId, tabId);
+  const next = { ...assignments };
+  if (boardKey === "ungrouped") {
+    delete next[key];
+    return next;
+  }
+  return { ...next, [key]: { windowId, tabId, boardKey, order } };
+}
+
+export function buildVirtualBoardGroups(input: VirtualBoardGroupInput): BoardLogicalGroup[] {
+  const customByKey = new Map(input.customGroups.flatMap((group) => {
+    const key = customBoardKey(group.id);
+    return key ? [[key, group] as const] : [];
+  }));
+  const assigned = new Map<number, VirtualBoardAssignment>();
+  for (const assignment of Object.values(input.assignments)) {
+    if (assignment.windowId === input.windowId) assigned.set(assignment.tabId, assignment);
+  }
+  const naturalBySite = new Map<string, VirtualBoardTab[]>();
+  for (const tab of input.tabs) {
+    if (assigned.has(tab.id)) continue;
+    const siteKey = getSiteKey(tab.url);
+    if (!siteKey || resolveAutoGroup(siteKey, input.settings, input.rules, input.ignoredSites).kind === "ignore") continue;
+    const siteTabs = naturalBySite.get(siteKey) ?? [];
+    siteTabs.push(tab);
+    naturalBySite.set(siteKey, siteTabs);
+  }
+  const tabsByKey = new Map<BoardKey, Array<{ tab: VirtualBoardTab; order: number }>>();
+  const put = (key: BoardKey, tab: VirtualBoardTab, order: number): void => {
+    const tabs = tabsByKey.get(key) ?? [];
+    tabs.push({ tab, order });
+    tabsByKey.set(key, tabs);
+  };
+  for (const tab of input.tabs) {
+    const assignment = assigned.get(tab.id);
+    if (assignment) {
+      if (assignment.boardKey.startsWith("custom:") && !customByKey.has(assignment.boardKey)) continue;
+      if (assignment.boardKey.startsWith("auto:")) {
+        const siteKey = assignment.boardKey.slice("auto:".length);
+        if (!input.settings.autoGroupEnabled || resolveAutoGroup(siteKey, input.settings, input.rules, input.ignoredSites).kind === "ignore") continue;
+      }
+      put(assignment.boardKey, tab, assignment.order);
+      continue;
+    }
+    const siteKey = getSiteKey(tab.url);
+    const natural = siteKey ? naturalBySite.get(siteKey) : undefined;
+    const key = siteKey && natural && input.settings.autoGroupEnabled && natural.length >= input.settings.minimumTabs ? automaticBoardKey(siteKey) : null;
+    if (key) put(key, tab, tab.id);
+  }
+  const tabsFor = (key: BoardKey): BoardTab[] => (tabsByKey.get(key) ?? [])
+    .sort((left, right) => left.order - right.order || left.tab.id - right.tab.id).map(({ tab }) => tab);
+  const groups: BoardLogicalGroup[] = [{ boardKey: "ungrouped", kind: "ungrouped", title: "未分组", color: "grey", rank: 0, tabs: [] }];
+  for (const custom of [...input.customGroups].sort((left, right) => left.sortOrder - right.sortOrder)) {
+    const key = customBoardKey(custom.id);
+    if (key) groups.push({ boardKey: key, kind: "custom", title: custom.title, color: custom.color, rank: custom.sortOrder + 1, tabs: tabsFor(key) });
+  }
+  const automaticKeys = [...tabsByKey.keys()].filter((key): key is `auto:${string}` => key.startsWith("auto:")).sort();
+  for (const [index, key] of automaticKeys.entries()) {
+    const siteKey = key.slice("auto:".length);
+    const decision = resolveAutoGroup(siteKey, input.settings, input.rules, input.ignoredSites);
+    groups.push({ boardKey: key, kind: "automatic", title: decision.kind === "group" ? decision.title : siteKey, color: decision.kind === "group" ? decision.color : input.settings.defaultGroupColor ?? "blue", rank: input.customGroups.length + index + 1, tabs: tabsFor(key) });
+  }
+  const groupedIds = new Set(groups.flatMap((group) => group.tabs.map((tab) => tab.id)));
+  const ungrouped = groups[0];
+  if (ungrouped) ungrouped.tabs = input.tabs.filter((tab) => !groupedIds.has(tab.id));
+  return groups;
+}
+
 export function boardDropIndex(sourceIndex: number, targetIndex: number, position: "before" | "after"): number | null {
   if (!Number.isInteger(sourceIndex) || sourceIndex < 0 || !Number.isInteger(targetIndex) || targetIndex < 0) return null;
   const insertionIndex = position === "before" ? targetIndex : targetIndex + 1;
   return sourceIndex < insertionIndex ? insertionIndex - 1 : insertionIndex;
-}
-
-export function isManagedBoardTabSource(groupId: number, automaticGroupIds: ReadonlySet<number>, customGroupIds: ReadonlySet<number>): boolean {
-  return groupId === UNGROUPED || automaticGroupIds.has(groupId) || customGroupIds.has(groupId);
 }
 
 export function placeBoardCards(cards: readonly BoardCard[], laneCount: number, autoFill: boolean): BoardPlacementResult {
@@ -783,10 +862,6 @@ export function getSiteKey(url?: string): string | null {
   } catch {
     return null;
   }
-}
-
-export function autoRecordKey(windowId: number, siteKey: string): string {
-  return `${windowId}:${siteKey}`;
 }
 
 export function siteTitle(siteKey: string): string {

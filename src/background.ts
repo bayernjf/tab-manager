@@ -1,7 +1,4 @@
 import {
-  UNGROUPED,
-  boardDropIndex,
-  autoRecordKey,
   automaticBoardKey,
   buildBoardCards,
   customBoardKey,
@@ -10,143 +7,26 @@ import {
   createGroupRuleFromInput,
   createIgnoredSiteFromInput,
   getSiteKey,
-  isIgnoredSite,
   previewPortableImport,
-  resolveAutoGroup,
   syncFailureStatus,
   toPortableDataFromState,
   updateGroupRuleFromInput,
   validateBoardLayout,
   validateBoardTabDrop,
-  isManagedBoardTabSource,
+  buildVirtualBoardGroups,
+  moveVirtualBoardAssignment,
   moveBoardGroupRank,
   type BoardGroup,
   type BoardLogicalGroup,
   type BoardTab,
   validateOptionsSettings,
-  type CustomGroupRecord,
   type GroupColor,
   type PortableImportPreview,
   type Settings,
 } from "./shared.js";
-import { loadState, prepareOptionsForUser, saveAutoGroups, saveBoardCustomGroups, saveBoardLayouts, saveCustomGroups, saveOptionsData, saveSettings } from "./storage.js";
+import { loadState, prepareOptionsForUser, saveBoardAssignments, saveBoardCustomGroups, saveBoardLayouts, saveOptionsData, saveSettings } from "./storage.js";
 import { getCurrentUser, signIn, signOut, signUp } from "./auth.js";
 import { pushSettings, replaceBoardSyncData, replaceOptionalSyncData, restoreBoardSyncData, restoreOptionalSyncData, syncSettings } from "./sync.js";
-
-const reconcileTimers = new Map<number, ReturnType<typeof setTimeout>>();
-function scheduleReconcile(windowId?: number): void {
-  if (windowId == null || windowId < 0) return;
-  const current = reconcileTimers.get(windowId);
-  if (current) clearTimeout(current);
-  reconcileTimers.set(windowId, setTimeout(() => {
-    reconcileTimers.delete(windowId);
-    void reconcileWindow(windowId);
-  }, 180));
-}
-
-async function existingGroupIds(windowId: number): Promise<Set<number>> {
-  const groups = await chrome.tabGroups.query({ windowId });
-  return new Set(groups.map((group) => group.id));
-}
-
-export async function reconcileWindow(windowId: number): Promise<void> {
-  const state = await loadState();
-  const validGroups = await existingGroupIds(windowId);
-  let stateChanged = false;
-
-  for (const [key, record] of Object.entries(state.autoGroups)) {
-    if (record.windowId === windowId && !validGroups.has(record.groupId)) {
-      delete state.autoGroups[key];
-      stateChanged = true;
-    }
-  }
-  for (const [id, record] of Object.entries(state.customGroups)) {
-    if (record.windowId === windowId && !validGroups.has(record.groupId)) {
-      delete state.customGroups[id];
-      stateChanged = true;
-    }
-  }
-
-  if (!state.settings.autoGroupEnabled) {
-    if (stateChanged) await Promise.all([saveAutoGroups(state.autoGroups), saveCustomGroups(state.customGroups)]);
-    return;
-  }
-
-  for (const [key, record] of Object.entries(state.autoGroups)) {
-    if (record.windowId !== windowId || !isIgnoredSite(record.siteKey, state.ignoredSites)) continue;
-    const groupedTabs = await chrome.tabs.query({ groupId: record.groupId });
-    if (groupedTabs.length) await chrome.tabs.ungroup(groupedTabs.flatMap((tab) => tab.id == null ? [] : [tab.id]));
-    delete state.autoGroups[key];
-    stateChanged = true;
-  }
-
-  const autoGroupIds = new Set(
-    Object.values(state.autoGroups).filter((record) => record.windowId === windowId).map((record) => record.groupId),
-  );
-  const customGroupIds = new Set(Object.values(state.customGroups).map((record) => record.groupId));
-  const tabs = await chrome.tabs.query({ windowId });
-
-  // A tab in any non-managed group is considered manually grouped and remains untouched.
-  const candidates = tabs.filter((tab) => {
-    const siteKey = getSiteKey(tab.url);
-    if (tab.id == null || tab.pinned || !siteKey || resolveAutoGroup(siteKey, state.settings, state.groupRules, state.ignoredSites).kind === "ignore") return false;
-    return tab.groupId === UNGROUPED || (autoGroupIds.has(tab.groupId) && !customGroupIds.has(tab.groupId));
-  });
-
-  const bySite = new Map<string, chrome.tabs.Tab[]>();
-  for (const tab of candidates) {
-    const siteKey = getSiteKey(tab.url);
-    if (!siteKey) continue;
-    const group = bySite.get(siteKey) ?? [];
-    group.push(tab);
-    bySite.set(siteKey, group);
-  }
-
-  for (const [siteKey, siteTabs] of bySite) {
-    if (siteTabs.length < state.settings.minimumTabs) continue;
-    const decision = resolveAutoGroup(siteKey, state.settings, state.groupRules, state.ignoredSites);
-    if (decision.kind === "ignore") continue;
-    const key = autoRecordKey(windowId, siteKey);
-    const tabIds = siteTabs.flatMap((tab) => tab.id == null ? [] : [tab.id]);
-    let record = state.autoGroups[key];
-
-    if (!record || !validGroups.has(record.groupId)) {
-      const groupId = await chrome.tabs.group({ tabIds, createProperties: { windowId } });
-      record = { groupId, windowId, siteKey };
-      state.autoGroups[key] = record;
-      validGroups.add(groupId);
-      stateChanged = true;
-    } else {
-      await chrome.tabs.group({ tabIds, groupId: record.groupId });
-    }
-
-    await chrome.tabGroups.update(record.groupId, {
-      title: decision.title,
-      color: decision.color,
-    });
-  }
-
-  // Dissolve automatic groups that no longer meet the threshold or contain a single site.
-  for (const [key, record] of Object.entries(state.autoGroups)) {
-    if (record.windowId !== windowId) continue;
-    const groupedTabs = await chrome.tabs.query({ groupId: record.groupId });
-    const matching = groupedTabs.filter((tab) => getSiteKey(tab.url) === record.siteKey);
-    const hasForeignTab = matching.length !== groupedTabs.length;
-    if (matching.length < state.settings.minimumTabs || hasForeignTab) {
-      if (groupedTabs.length) await chrome.tabs.ungroup(groupedTabs.flatMap((tab) => tab.id == null ? [] : [tab.id]));
-      delete state.autoGroups[key];
-      stateChanged = true;
-      scheduleReconcile(windowId);
-    }
-  }
-
-  if (stateChanged) await Promise.all([saveAutoGroups(state.autoGroups), saveCustomGroups(state.customGroups)]);
-}
-
-async function reconcileAllWindows(): Promise<void> {
-  const windows = await chrome.windows.getAll({ windowTypes: ["normal"] });
-  await Promise.all(windows.flatMap((window) => window.id == null ? [] : [reconcileWindow(window.id)]));
-}
 
 type PopupMessage =
   | { type: "auth-state" }
@@ -157,7 +37,6 @@ type PopupMessage =
   | { type: "create-custom-group"; tabIds: number[]; title: string; color: GroupColor }
   | { type: "delete-custom-group"; id: string }
   | { type: "update-settings"; settings: Settings }
-  | { type: "reconcile-now" }
   | { type: "get-options-state" }
   | { type: "sync-now" }
   | { type: "save-options-settings"; settings: unknown }
@@ -261,12 +140,8 @@ async function synchronizeOptions(state: Awaited<ReturnType<typeof loadState>>, 
   return true;
 }
 
-async function reconcileOptionsMutation(state: Awaited<ReturnType<typeof loadState>>, include: { settings: boolean; rules: boolean; ignoredSites: boolean }): Promise<boolean> {
-  try {
-    return await synchronizeOptions(state, include);
-  } finally {
-    await reconcileAllWindows();
-  }
+async function synchronizeOptionsMutation(state: Awaited<ReturnType<typeof loadState>>, include: { settings: boolean; rules: boolean; ignoredSites: boolean }): Promise<boolean> {
+  return synchronizeOptions(state, include);
 }
 
 async function restoreUserOptions(userId: string): Promise<void> {
@@ -290,7 +165,6 @@ async function restoreUserOptions(userId: string): Promise<void> {
     saveBoardCustomGroups(state.boardCustomGroups),
     saveBoardLayouts(state.boardLayouts),
   ]);
-  await reconcileAllWindows();
 }
 
 async function popupState() {
@@ -305,13 +179,10 @@ async function popupState() {
       title: tab.title || "未命名标签页",
       url: tab.url,
       favIconUrl: tab.favIconUrl,
-      groupId: tab.groupId,
       pinned: tab.pinned,
     })),
     settings: state.settings,
-    customGroups: Object.entries(state.customGroups)
-      .filter(([, group]) => group.windowId === windowId)
-      .map(([, group]) => ({ ...group })),
+    customGroups: state.boardCustomGroups,
   };
 }
 
@@ -340,62 +211,11 @@ async function boardLogicalGroups(windowId: number, state: Awaited<ReturnType<ty
   const tabs = await chrome.tabs.query({ windowId });
   const eligible = tabs.flatMap((tab) => {
     const mapped = boardTab(tab);
-    return mapped ? [{ tab, mapped }] : [];
+    return mapped ? [mapped] : [];
   });
-  const customRecords = new Map(Object.entries(state.customGroups)
-    .filter(([, record]) => record.windowId === windowId)
-    .map(([id, record]) => [id, record]));
-  const customByNativeId = new Map([...customRecords.values()].map((record) => [record.groupId, record]));
-  const automaticByNativeId = new Map(Object.values(state.autoGroups)
-    .filter((record) => record.windowId === windowId)
-    .map((record) => [record.groupId, record]));
-  const ungrouped: BoardTab[] = [];
-  const customTabs = new Map<string, BoardTab[]>();
-  const automaticTabs = new Map<string, BoardTab[]>();
-
-  for (const { tab, mapped } of eligible) {
-    if (tab.groupId === UNGROUPED) {
-      ungrouped.push(mapped);
-      continue;
-    }
-    const custom = customByNativeId.get(tab.groupId);
-    if (custom) {
-      const groupTabs = customTabs.get(custom.id) ?? [];
-      groupTabs.push(mapped);
-      customTabs.set(custom.id, groupTabs);
-      continue;
-    }
-    const automatic = automaticByNativeId.get(tab.groupId);
-    if (automatic) {
-      const groupTabs = automaticTabs.get(automatic.siteKey) ?? [];
-      groupTabs.push(mapped);
-      automaticTabs.set(automatic.siteKey, groupTabs);
-    }
-  }
-
-  const groups: BoardLogicalGroup[] = [{ boardKey: "ungrouped", kind: "ungrouped", title: "未分组", color: "grey", rank: 0, tabs: ungrouped }];
-  for (const custom of [...state.boardCustomGroups].sort((left, right) => left.sortOrder - right.sortOrder)) {
-    const boardKey = customBoardKey(custom.id);
-    if (!boardKey) continue;
-    groups.push({ boardKey, kind: "custom", title: custom.title, color: custom.color, rank: boardRank(state, boardKey, custom.sortOrder + 1), tabs: customTabs.get(custom.id) ?? [] });
-  }
-  let automaticRank = state.boardCustomGroups.length + 1;
-  for (const automatic of Object.values(state.autoGroups).filter((record) => record.windowId === windowId).sort((left, right) => left.siteKey.localeCompare(right.siteKey))) {
-    const boardKey = automaticBoardKey(automatic.siteKey);
-    if (!boardKey) continue;
-    const tabsForGroup = automaticTabs.get(automatic.siteKey) ?? [];
-    if (!tabsForGroup.length) continue;
-    const decision = resolveAutoGroup(automatic.siteKey, state.settings, state.groupRules, state.ignoredSites);
-    groups.push({
-      boardKey,
-      kind: "automatic",
-      title: decision.kind === "group" ? decision.title : automatic.siteKey,
-      color: decision.kind === "group" ? decision.color : state.settings.defaultGroupColor ?? "blue",
-      rank: boardRank(state, boardKey, automaticRank++),
-      tabs: tabsForGroup,
-    });
-  }
-  return groups.sort((left, right) => left.rank - right.rank);
+  return buildVirtualBoardGroups({ windowId, tabs: eligible, settings: state.settings, rules: state.groupRules, ignoredSites: state.ignoredSites, customGroups: state.boardCustomGroups, assignments: state.boardAssignments })
+    .map((group) => ({ ...group, rank: boardRank(state, group.boardKey, group.rank) }))
+    .sort((left, right) => left.rank - right.rank);
 }
 
 async function boardState() {
@@ -405,29 +225,6 @@ async function boardState() {
   const state = await loadState();
   const groups = await boardLogicalGroups(windowId, state);
   return { user: { id: user.id, email: user.email }, loginRequired: false, windowId, groups: buildBoardCards(groups), layouts: state.boardLayouts };
-}
-
-async function reorderBoardTab(drop: NonNullable<ReturnType<typeof validateBoardTabDrop>>, destinationGroupId: number, windowId: number): Promise<void> {
-  const source = await chrome.tabs.get(drop.tabId);
-  if (source.windowId !== windowId || source.index == null) throw new Error("标签位置已变化，请刷新看板后重试");
-  let target: chrome.tabs.Tab | undefined;
-  let position: "before" | "after";
-  if (drop.position === "append") {
-    const destinationTabs = await chrome.tabs.query({ windowId, groupId: destinationGroupId });
-    target = destinationTabs.filter((tab) => tab.id !== drop.tabId).sort((left, right) => left.index - right.index).at(-1);
-    position = "after";
-  } else {
-    const targetTabId = drop.targetTabId;
-    if (targetTabId === undefined) throw new Error("目标标签无效");
-    const candidate = await chrome.tabs.get(targetTabId);
-    if (candidate.windowId !== windowId || candidate.groupId !== destinationGroupId || !boardTab(candidate)) throw new Error("目标标签已变化，请刷新看板后重试");
-    target = candidate;
-    position = drop.position;
-  }
-  if (!target || target.index == null) return;
-  const index = boardDropIndex(source.index, target.index, position);
-  if (index === null || index === source.index) return;
-  await chrome.tabs.move(drop.tabId, { index });
 }
 
 async function requireBoardUser() {
@@ -488,43 +285,22 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const tab = await chrome.tabs.get(drop.tabId);
       if (tab.windowId !== windowId || !boardTab(tab)) throw new Error("该标签页不能移动到看板");
       const state = await loadState();
-      const automaticGroupIds = new Set(Object.values(state.autoGroups).filter((record) => record.windowId === windowId).map((record) => record.groupId));
-      const customGroupIds = new Set(Object.values(state.customGroups).filter((record) => record.windowId === windowId).map((record) => record.groupId));
-      if (!isManagedBoardTabSource(tab.groupId, automaticGroupIds, customGroupIds)) throw new Error("不能移动非本扩展管理的原生分组标签页");
-
-      if (drop.targetBoardKey === "ungrouped") {
-        if (tab.groupId !== UNGROUPED) await chrome.tabs.ungroup([drop.tabId]);
-        await reorderBoardTab(drop, UNGROUPED, windowId);
-        scheduleReconcile(windowId);
-        return { ok: true };
-      }
       if (drop.targetBoardKey.startsWith("custom:")) {
         const id = drop.targetBoardKey.slice("custom:".length);
-        const durable = state.boardCustomGroups.find((group) => group.id === id);
-        if (!durable) throw new Error("目标自定义分组不存在");
-        let record = state.customGroups[id];
-        if (!record || record.windowId !== windowId) {
-          const groupId = await chrome.tabs.group({ tabIds: [drop.tabId], createProperties: { windowId } });
-          await chrome.tabGroups.update(groupId, { title: durable.title, color: durable.color });
-          record = { id, groupId, windowId, title: durable.title, color: durable.color };
-          state.customGroups[id] = record;
-        } else {
-          const existing = await existingGroupIds(windowId);
-          if (!existing.has(record.groupId)) throw new Error("目标自定义分组已失效，请刷新看板后重试");
-          await chrome.tabs.group({ tabIds: [drop.tabId], groupId: record.groupId });
-        }
-        await saveCustomGroups(state.customGroups);
-        await reorderBoardTab(drop, record.groupId, windowId);
-        scheduleReconcile(windowId);
+        if (!state.boardCustomGroups.some((group) => group.id === id)) throw new Error("目标自定义分组不存在");
+      }
+      if (drop.targetBoardKey === "ungrouped") {
+        state.boardAssignments = moveVirtualBoardAssignment(state.boardAssignments, windowId, drop.tabId, "ungrouped");
+        await saveBoardAssignments(state.boardAssignments);
         return { ok: true };
       }
-      const siteKey = drop.targetBoardKey.slice("auto:".length);
-      if (getSiteKey(tab.url) !== siteKey) throw new Error("标签页只能移动到同一网站的自动分组");
-      const target = Object.values(state.autoGroups).find((record) => record.windowId === windowId && record.siteKey === siteKey);
-      if (!target || !(await existingGroupIds(windowId)).has(target.groupId)) throw new Error("目标自动分组已失效，请刷新看板后重试");
-      await chrome.tabs.group({ tabIds: [drop.tabId], groupId: target.groupId });
-      await reorderBoardTab(drop, target.groupId, windowId);
-      scheduleReconcile(windowId);
+      const targetTabs = ((await boardLogicalGroups(windowId, state)).find((group) => group.boardKey === drop.targetBoardKey)?.tabs ?? []).filter((candidate) => candidate.id !== drop.tabId);
+      const targetIndex = drop.targetTabId === undefined ? targetTabs.length : targetTabs.findIndex((candidate) => candidate.id === drop.targetTabId);
+      if (targetIndex < 0) throw new Error("目标标签已变化，请刷新看板后重试");
+      const insertionIndex = drop.position === "before" ? targetIndex : drop.position === "after" ? targetIndex + 1 : targetTabs.length;
+      targetTabs.splice(insertionIndex, 0, boardTab(tab)!);
+      state.boardAssignments = targetTabs.reduce((assignments, candidate, order) => moveVirtualBoardAssignment(assignments, windowId, candidate.id, drop.targetBoardKey, order), state.boardAssignments);
+      await saveBoardAssignments(state.boardAssignments);
       return { ok: true };
     }
     if (message.type === "move-board-group") {
@@ -560,17 +336,11 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       if (!message.confirmed || !safeRecordId(message.id)) throw new Error("请确认删除自定义分组");
       const state = await loadState();
       if (!state.boardCustomGroups.some((group) => group.id === message.id)) throw new Error("自定义分组不存在");
-      const record = state.customGroups[message.id];
-      if (record) {
-        const tabs = await chrome.tabs.query({ groupId: record.groupId });
-        if (tabs.length) await chrome.tabs.ungroup(tabs.flatMap((tab) => tab.id == null ? [] : [tab.id]));
-        delete state.customGroups[message.id];
-      }
       const boardKey = customBoardKey(message.id);
       state.boardCustomGroups = state.boardCustomGroups.filter((group) => group.id !== message.id);
       state.boardLayouts = boardKey ? state.boardLayouts.filter((layout) => layout.boardKey !== boardKey) : state.boardLayouts;
-      await Promise.all([saveCustomGroups(state.customGroups), saveBoardCustomGroups(state.boardCustomGroups), saveBoardLayouts(state.boardLayouts)]);
-      if (record) scheduleReconcile(record.windowId);
+      if (boardKey) state.boardAssignments = Object.fromEntries(Object.entries(state.boardAssignments).filter(([, assignment]) => assignment.boardKey !== boardKey));
+      await Promise.all([saveBoardAssignments(state.boardAssignments), saveBoardCustomGroups(state.boardCustomGroups), saveBoardLayouts(state.boardLayouts)]);
       return { ok: true, ...(await syncBoardMutation(state, { groups: true, layouts: true })) };
     }
     if (message.type === "save-board-layout") {
@@ -592,7 +362,6 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       if (user) await restoreUserOptions(user.id);
       const state = await loadState();
       const synced = await synchronizeOptionsFromCloud(state);
-      await reconcileAllWindows();
       return { ok: true, synced, lastSuccessfulSyncAt: state.settings.lastSuccessfulSyncAt ?? null };
     }
     if (message.type === "save-options-settings") {
@@ -601,7 +370,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const state = await loadState();
       state.settings = { ...settings, lastSuccessfulSyncAt: null };
       await saveSettings(state.settings);
-      const synced = await reconcileOptionsMutation(state, { settings: true, rules: false, ignoredSites: false });
+      const synced = await synchronizeOptionsMutation(state, { settings: true, rules: false, ignoredSites: false });
       return { ok: true, synced, settings: state.settings };
     }
     if (message.type === "create-group-rule") {
@@ -614,7 +383,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       if (!rule) throw new Error("分组规则包含无效数据");
       state.groupRules = [...state.groupRules, rule];
       await saveOptionsData(state.settings, state.groupRules, state.ignoredSites);
-      const synced = await reconcileOptionsMutation(state, { settings: false, rules: true, ignoredSites: false });
+      const synced = await synchronizeOptionsMutation(state, { settings: false, rules: true, ignoredSites: false });
       return { ok: true, synced, rule };
     }
     if (message.type === "update-group-rule") {
@@ -629,7 +398,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       if (!rule) throw new Error("分组规则包含无效数据");
       state.groupRules = state.groupRules.map((item, itemIndex) => itemIndex === index ? rule : item);
       await saveOptionsData(state.settings, state.groupRules, state.ignoredSites);
-      const synced = await reconcileOptionsMutation(state, { settings: false, rules: true, ignoredSites: false });
+      const synced = await synchronizeOptionsMutation(state, { settings: false, rules: true, ignoredSites: false });
       return { ok: true, synced, rule };
     }
     if (message.type === "delete-group-rule") {
@@ -638,7 +407,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       if (!state.groupRules.some((rule) => rule.id === message.id)) throw new Error("找不到要删除的分组规则");
       state.groupRules = state.groupRules.filter((rule) => rule.id !== message.id);
       await saveOptionsData(state.settings, state.groupRules, state.ignoredSites);
-      const synced = await reconcileOptionsMutation(state, { settings: false, rules: true, ignoredSites: false });
+      const synced = await synchronizeOptionsMutation(state, { settings: false, rules: true, ignoredSites: false });
       return { ok: true, synced };
     }
     if (message.type === "create-ignored-site") {
@@ -652,7 +421,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       if (state.ignoredSites.some((item) => item.domain === site.domain && item.matchScope === site.matchScope)) throw new Error("该忽略站点已存在");
       state.ignoredSites = [...state.ignoredSites, site];
       await saveOptionsData(state.settings, state.groupRules, state.ignoredSites);
-      const synced = await reconcileOptionsMutation(state, { settings: false, rules: false, ignoredSites: true });
+      const synced = await synchronizeOptionsMutation(state, { settings: false, rules: false, ignoredSites: true });
       return { ok: true, synced, site };
     }
     if (message.type === "delete-ignored-site") {
@@ -661,7 +430,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       if (!state.ignoredSites.some((site) => site.id === message.id)) throw new Error("找不到要删除的忽略站点");
       state.ignoredSites = state.ignoredSites.filter((site) => site.id !== message.id);
       await saveOptionsData(state.settings, state.groupRules, state.ignoredSites);
-      const synced = await reconcileOptionsMutation(state, { settings: false, rules: false, ignoredSites: true });
+      const synced = await synchronizeOptionsMutation(state, { settings: false, rules: false, ignoredSites: true });
       return { ok: true, synced };
     }
     if (message.type === "import-options-data") {
@@ -688,7 +457,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const state = applyPortableImport(await loadState(), pendingOptionsImport.preview, true);
       pendingOptionsImport = null;
       await saveOptionsData(state.settings, state.groupRules, state.ignoredSites);
-      const synced = await reconcileOptionsMutation(state, { settings: true, rules: true, ignoredSites: true });
+      const synced = await synchronizeOptionsMutation(state, { settings: true, rules: true, ignoredSites: true });
       return { ok: true, synced, settings: state.settings };
     }
     if (message.type === "update-settings") {
@@ -697,57 +466,37 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const state = await loadState();
       state.settings = { ...settings, lastSuccessfulSyncAt: null };
       await saveSettings(state.settings);
-      const synced = await reconcileOptionsMutation(state, { settings: true, rules: false, ignoredSites: false });
+      const synced = await synchronizeOptionsMutation(state, { settings: true, rules: false, ignoredSites: false });
       return { ok: true, synced };
-    }
-    if (message.type === "reconcile-now") {
-      await reconcileAllWindows();
-      return { ok: true };
     }
     if (message.type === "create-custom-group") {
       if (!message.tabIds.length) throw new Error("请至少选择一个标签页");
-      const groupId = await chrome.tabs.group({ tabIds: message.tabIds });
-      await chrome.tabGroups.update(groupId, { title: message.title.trim() || "自定义分组", color: message.color });
-      const group = await chrome.tabGroups.get(groupId);
       const state = await loadState();
       const id = crypto.randomUUID();
-      state.customGroups[id] = { id, groupId, windowId: group.windowId, title: message.title.trim() || "自定义分组", color: message.color };
       state.boardCustomGroups = [...state.boardCustomGroups, {
         id,
         title: message.title.trim() || "自定义分组",
         color: message.color,
         sortOrder: state.boardCustomGroups.reduce((max, item) => Math.max(max, item.sortOrder), -1) + 1,
       }];
-      for (const [key, auto] of Object.entries(state.autoGroups)) {
-        if (auto.groupId === groupId) delete state.autoGroups[key];
-      }
-      await Promise.all([saveCustomGroups(state.customGroups), saveAutoGroups(state.autoGroups), saveBoardCustomGroups(state.boardCustomGroups)]);
-      scheduleReconcile(group.windowId);
+      const tabs = await Promise.all(message.tabIds.map((tabId) => chrome.tabs.get(tabId)));
+      const windowId = tabs[0]?.windowId;
+      if (windowId == null || tabs.some((tab) => tab.windowId !== windowId || !boardTab(tab))) throw new Error("请选择同一窗口中的普通网页标签页");
+      const boardKey = customBoardKey(id);
+      if (!boardKey) throw new Error("无法创建自定义分组");
+      state.boardAssignments = message.tabIds.reduce((assignments, tabId, order) => moveVirtualBoardAssignment(assignments, windowId, tabId, boardKey, order), state.boardAssignments);
+      await Promise.all([saveBoardAssignments(state.boardAssignments), saveBoardCustomGroups(state.boardCustomGroups)]);
       return { ok: true };
     }
     if (message.type === "delete-custom-group") {
       const state = await loadState();
-      const record = state.customGroups[message.id];
-      if (record) {
-        const tabs = await chrome.tabs.query({ groupId: record.groupId });
-        if (tabs.length) await chrome.tabs.ungroup(tabs.flatMap((tab) => tab.id == null ? [] : [tab.id]));
-        delete state.customGroups[message.id];
-        state.boardCustomGroups = state.boardCustomGroups.filter((group) => group.id !== message.id);
-        await Promise.all([saveCustomGroups(state.customGroups), saveBoardCustomGroups(state.boardCustomGroups)]);
-        scheduleReconcile(record.windowId);
-      }
+      const boardKey = customBoardKey(message.id);
+      state.boardCustomGroups = state.boardCustomGroups.filter((group) => group.id !== message.id);
+      if (boardKey) state.boardAssignments = Object.fromEntries(Object.entries(state.boardAssignments).filter(([, assignment]) => assignment.boardKey !== boardKey));
+      await Promise.all([saveBoardAssignments(state.boardAssignments), saveBoardCustomGroups(state.boardCustomGroups)]);
       return { ok: true };
     }
     return { ok: false };
   })().then(sendResponse, (error: unknown) => sendResponse({ error: error instanceof Error ? error.message : String(error) }));
   return true;
 });
-
-chrome.tabs.onCreated.addListener((tab) => scheduleReconcile(tab.windowId));
-chrome.tabs.onUpdated.addListener((_tabId, _change, tab) => scheduleReconcile(tab.windowId));
-chrome.tabs.onRemoved.addListener((_tabId, info) => scheduleReconcile(info.windowId));
-chrome.tabs.onAttached.addListener((_tabId, info) => scheduleReconcile(info.newWindowId));
-chrome.tabs.onDetached.addListener((_tabId, info) => scheduleReconcile(info.oldWindowId));
-chrome.tabGroups.onRemoved.addListener((group) => scheduleReconcile(group.windowId));
-chrome.runtime.onInstalled.addListener(() => void reconcileAllWindows());
-chrome.runtime.onStartup.addListener(() => void reconcileAllWindows());

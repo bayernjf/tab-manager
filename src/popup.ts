@@ -1,7 +1,7 @@
-import { DEFAULT_SETTINGS, UNGROUPED, type GroupColor, type Settings } from "./shared.js";
+import { DEFAULT_SETTINGS, type GroupColor, type Settings } from "./shared.js";
 
-interface PopupTab { id?: number; title: string; url?: string; favIconUrl?: string; groupId: number; pinned: boolean }
-interface PopupGroup { id: string; title: string; color: GroupColor; groupId: number }
+interface PopupTab { id?: number; title: string; url?: string; favIconUrl?: string; pinned: boolean }
+interface PopupGroup { id: string; title: string; color: GroupColor }
 interface PopupState { tabs: PopupTab[]; settings: Settings; customGroups: PopupGroup[] }
 
 const $ = <T extends Element>(selector: string): T => {
@@ -120,9 +120,7 @@ function renderTabs(tabs: PopupTab[]): void {
     const text = document.createElement("span");
     text.textContent = tab.title;
     text.title = tab.url || tab.title;
-    const badge = document.createElement("small");
-    badge.textContent = tab.groupId === UNGROUPED ? "" : "已分组";
-    label.append(checkbox, icon, text, badge);
+    label.append(checkbox, icon, text);
     tabsList.append(label);
   }
 }
@@ -188,14 +186,6 @@ $("#create-group").addEventListener("click", async () => {
     await load();
     showStatus("自定义分组已创建");
   } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); }
-});
-
-$("#reconcile").addEventListener("click", async () => {
-  try {
-    await send({ type: "reconcile-now" });
-    await load();
-    showStatus("已重新整理");
-  } catch (error) { showStatus(String(error), true); }
 });
 
 $("#open-board").addEventListener("click", async () => {
