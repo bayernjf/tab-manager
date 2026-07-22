@@ -34,6 +34,35 @@ export interface IgnoredSite {
   sortOrder: number;
 }
 
+export interface SettingsSyncRow {
+  user_id: string;
+  auto_group_enabled: boolean;
+  minimum_tabs: number;
+  default_group_color?: GroupColor;
+  cloud_sync_enabled?: boolean;
+  sync_rules_enabled?: boolean;
+  sync_ignore_list_enabled?: boolean;
+}
+
+export interface GroupRuleSyncRow {
+  id: string;
+  user_id: string;
+  title: string;
+  color: GroupColor;
+  domains: string[];
+  match_scope: MatchScope;
+  enabled: boolean;
+  sort_order: number;
+}
+
+export interface IgnoredSiteSyncRow {
+  id: string;
+  user_id: string;
+  domain: string;
+  match_scope: MatchScope;
+  sort_order: number;
+}
+
 interface PortableSettings {
   autoGroupEnabled: boolean;
   minimumTabs: number;
@@ -82,6 +111,36 @@ export const DEFAULT_SETTINGS: Settings = {
   syncIgnoreListEnabled: true,
   lastSuccessfulSyncAt: null,
 };
+
+export function settingsFromSyncRow(value: unknown, expectedUserId?: string): Settings | null {
+  if (!isPlainObject(value) || typeof value.user_id !== "string" || (expectedUserId !== undefined && value.user_id !== expectedUserId) || !isMinimumTabs(value.minimum_tabs) || typeof value.auto_group_enabled !== "boolean") return null;
+  const defaultGroupColor = value.default_group_color === undefined ? DEFAULT_SETTINGS.defaultGroupColor : value.default_group_color;
+  const cloudSyncEnabled = value.cloud_sync_enabled === undefined ? DEFAULT_SETTINGS.cloudSyncEnabled : value.cloud_sync_enabled;
+  const syncRulesEnabled = value.sync_rules_enabled === undefined ? DEFAULT_SETTINGS.syncRulesEnabled : value.sync_rules_enabled;
+  const syncIgnoreListEnabled = value.sync_ignore_list_enabled === undefined ? DEFAULT_SETTINGS.syncIgnoreListEnabled : value.sync_ignore_list_enabled;
+  if (!isGroupColor(defaultGroupColor) || typeof cloudSyncEnabled !== "boolean" || typeof syncRulesEnabled !== "boolean" || typeof syncIgnoreListEnabled !== "boolean") return null;
+  return {
+    autoGroupEnabled: value.auto_group_enabled,
+    minimumTabs: value.minimum_tabs,
+    defaultGroupColor,
+    cloudSyncEnabled,
+    syncRulesEnabled,
+    syncIgnoreListEnabled,
+  };
+}
+
+export function groupRuleFromSyncRow(value: unknown, expectedUserId?: string): GroupRule | null {
+  if (!isPlainObject(value) || typeof value.user_id !== "string" || (expectedUserId !== undefined && value.user_id !== expectedUserId) || !isRecordId(value.id) || typeof value.title !== "string" || !value.title.trim() || value.title.length > 40 || !isGroupColor(value.color) || !Array.isArray(value.domains) || value.domains.length === 0 || value.domains.length > 50 || !isMatchScope(value.match_scope) || typeof value.enabled !== "boolean" || !isSortOrder(value.sort_order)) return null;
+  const domains = value.domains.map((domain) => typeof domain === "string" ? normalizeDomainInput(domain) : null);
+  if (domains.some((domain) => !domain) || new Set(domains).size !== domains.length) return null;
+  return { id: value.id, title: value.title.trim(), color: value.color, domains: domains as string[], matchScope: value.match_scope, enabled: value.enabled, sortOrder: value.sort_order };
+}
+
+export function ignoredSiteFromSyncRow(value: unknown, expectedUserId?: string): IgnoredSite | null {
+  if (!isPlainObject(value) || typeof value.user_id !== "string" || (expectedUserId !== undefined && value.user_id !== expectedUserId) || !isRecordId(value.id) || typeof value.domain !== "string" || !isMatchScope(value.match_scope) || !isSortOrder(value.sort_order)) return null;
+  const domain = normalizeDomainInput(value.domain);
+  return domain ? { id: value.id, domain, matchScope: value.match_scope, sortOrder: value.sort_order } : null;
+}
 
 export function normalizeHostname(hostname: string): string {
   const normalized = hostname.trim().toLowerCase().replace(/\.$/, "");

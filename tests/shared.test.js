@@ -5,16 +5,94 @@ globalThis.chrome = { tabGroups: { TAB_GROUP_ID_NONE: -1 } };
 const {
   autoRecordKey,
   findMatchingRule,
+  groupRuleFromSyncRow,
   getSiteKey,
+  ignoredSiteFromSyncRow,
   isIgnoredSite,
   matchesDomain,
   normalizeDomainInput,
   normalizeHostname,
   parsePortableData,
   siteTitle,
+  settingsFromSyncRow,
   toPortableData,
   toPortableDataFromState,
 } = await import("../dist/shared.js");
+
+test("converts complete Supabase settings rows to concrete local settings", () => {
+  assert.deepEqual(settingsFromSyncRow({
+    user_id: "user-1",
+    auto_group_enabled: false,
+    minimum_tabs: 4,
+    default_group_color: "purple",
+    cloud_sync_enabled: false,
+    sync_rules_enabled: true,
+    sync_ignore_list_enabled: false,
+  }), {
+    autoGroupEnabled: false,
+    minimumTabs: 4,
+    defaultGroupColor: "purple",
+    cloudSyncEnabled: false,
+    syncRulesEnabled: true,
+    syncIgnoreListEnabled: false,
+  });
+});
+
+test("rejects malformed Supabase group-rule colors and match scopes", () => {
+  const row = {
+    id: "rule-1",
+    user_id: "user-1",
+    title: "Example",
+    color: "blue",
+    domains: ["example.com"],
+    match_scope: "exact",
+    enabled: true,
+    sort_order: 0,
+  };
+
+  assert.equal(groupRuleFromSyncRow({ ...row, color: "teal" }), null);
+  assert.equal(groupRuleFromSyncRow({ ...row, match_scope: "everywhere" }), null);
+  assert.equal(ignoredSiteFromSyncRow({
+    id: "site-1",
+    user_id: "user-1",
+    domain: "example.com",
+    match_scope: "everywhere",
+    sort_order: 0,
+  }), null);
+});
+
+test("rejects Supabase rows returned for a different user", () => {
+  const settingsRow = {
+    user_id: "other-user",
+    auto_group_enabled: true,
+    minimum_tabs: 2,
+    default_group_color: "blue",
+    cloud_sync_enabled: true,
+    sync_rules_enabled: true,
+    sync_ignore_list_enabled: true,
+  };
+  const groupRuleRow = {
+    id: "rule-1",
+    user_id: "other-user",
+    title: "Example",
+    color: "blue",
+    domains: ["example.com"],
+    match_scope: "exact",
+    enabled: true,
+    sort_order: 0,
+  };
+  const ignoredSiteRow = {
+    id: "site-1",
+    user_id: "other-user",
+    domain: "example.com",
+    match_scope: "exact",
+    sort_order: 0,
+  };
+
+  assert.equal(settingsFromSyncRow(settingsRow, "expected-user"), null);
+  assert.equal(groupRuleFromSyncRow(groupRuleRow, "expected-user"), null);
+  assert.equal(ignoredSiteFromSyncRow(ignoredSiteRow, "expected-user"), null);
+});
 
 test("normalizes hostnames and strips www", () => {
   assert.equal(normalizeHostname("WWW.Example.COM."), "example.com");
