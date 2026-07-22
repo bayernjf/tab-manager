@@ -1,0 +1,67 @@
+# Tab Garden Tab Board Design
+
+## Goal
+
+Add a dedicated tab-board page opened from the extension popup. It provides a sticky-note-like visual board for the current browser window, with draggable group cards, vertically arranged tabs, automatic/custom groups, and device-specific synchronized layout preferences.
+
+## Board Surface
+
+- The popup remains an entry point for quick actions and exposes an `Open tab board` action.
+- The board opens in an extension tab, not in the 390px popup.
+- Only the current browser window is managed in the first release.
+- Pinned tabs and browser-internal pages are not shown.
+- A fixed `Ungrouped` card displays every eligible ungrouped tab. Dragging a tab into it removes its native group.
+
+## Group Cards and Tabs
+
+- Each logical group is a fixed-width card with a colored header and a vertically arranged Edge-style tab list.
+- Cards show whether the group is automatic or custom.
+- An automatic group derives its stable identity from the normalized site key. A custom group uses a durable UUID; Chrome's transient group ID is never synchronized.
+- Moving a tab into a custom group transfers it out of automatic management. Moving it to an automatic group keeps it eligible for later automatic reconciliation.
+- Custom groups may remain as empty cards. Their title, color, logical order, and device-specific layout state synchronize across devices.
+
+## Height and Splitting
+
+- One layout height unit equals the visual height of five tab rows.
+- A card with one through five tabs uses one unit (five visible tab rows).
+- A card with six through ten tabs uses two units (ten visible tab rows).
+- Ten tabs is the maximum per card. The eleventh and later tabs create the second visual card for the same logical group; every additional ten tabs create another segment.
+- Segments share group name/color and display an ordinal suffix such as `Work · 2`. Group-level dragging changes the logical group's order; tab ordering remains continuous across segments.
+
+## Layout Algorithm
+
+- Board cards use a fixed-width grid. Desktop uses three lanes; tablet and phone definitions are persisted for future clients with two and one lane respectively.
+- Each card spans one or two five-row grid units according to its tab count.
+- When `autoFill` is enabled, cards are placed in synchronized logical rank order into the shortest lane that can accept the height; ties use the leftmost lane. This is a deterministic compact masonry layout.
+- Example: two two-unit cards plus three one-unit cards occupy a three-lane grid at lane heights `3 / 2 / 2` units. This is the minimal possible maximum lane height for seven units in three lanes.
+- Dragging a card displays an insertion target. Dropping it updates the logical group rank, synchronizes that rank, then recomputes compact placement for the active device class.
+- When `autoFill` is disabled, cards do not fill gaps after a drag or a height change. Positions are stored independently for `desktop`, `tablet`, and `mobile`; these coordinate layouts do not overwrite one another.
+- Even when auto-fill is enabled, every logical group rank is synchronized. Pixel coordinates are never synchronized in auto-fill mode.
+
+## Data and Synchronization
+
+- Add a later numbered migration; never modify previously executed migrations.
+- Persist durable custom board groups and board layout records under RLS, owned by `auth.uid() = user_id`.
+- Layout records include stable group key, device class, logical rank, auto-fill preference, and optional manual lane/order position.
+- Synchronize only durable group/layout metadata. Do not synchronize tab IDs, window IDs, native Chrome group IDs, tab URLs/titles, runtime automatic mappings, or sessions.
+- Existing privacy/global sync settings gate these board metadata writes. Offline failures preserve the local board state and return retryable status.
+
+## Drag Operations
+
+- Drag tab card: reorder within the destination group, move across groups, or drop into Ungrouped.
+- Drag logical group card: change group rank; in manual layout mode, change its device-specific position.
+- Automatic and custom card mutation operations are routed through the service worker, which is the only component calling Chrome grouping APIs or Supabase.
+- The board UI never accesses Supabase directly and renders all tab/group data through safe DOM APIs.
+
+## Error Handling and Validation
+
+- All board messages return `{ error: string }` on failure.
+- Invalid drops leave Chrome groups and local layout untouched and show concise Chinese status.
+- Destructive actions, including deleting a durable custom group, require confirmation.
+- Unauthenticated board access displays the existing login guidance and hides mutation controls.
+
+## Testing
+
+- Unit tests: segment calculation, height unit calculation, deterministic compact placement, rank changes, device-class isolation, and portable layout validation.
+- Manual checks: ungrouped tab movement, custom/automatic group behavior, card and tab drag/drop, ten-tab split, auto-fill on/off, desktop layout persistence, offline fallback, and a second account's isolation.
+- Delivery checks: `npm run typecheck`, `npm test`, `git diff --check`, `npm run build`.
