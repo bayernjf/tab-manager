@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { copyFile, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
@@ -39,3 +39,8 @@ output = output
   .replace('"https://YOUR_PROJECT.supabase.co"', JSON.stringify(url.replace(/\/$/, "")))
   .replace('"YOUR_SUPABASE_ANON_KEY"', JSON.stringify(anonKey));
 await writeFile(outputPath, output);
+
+await Promise.all([
+  copyFile(resolve(root, "src/options.html"), resolve(root, "dist/options.html")),
+  copyFile(resolve(root, "src/options.css"), resolve(root, "dist/options.css")),
+]);
