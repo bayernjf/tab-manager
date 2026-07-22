@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>标签看板 - Tab Garden</title>
+  <link rel="stylesheet" href="board.css">
+</head>
+<body>
+  <main class="board-shell">
+    <header class="board-header">
+      <div><span class="eyebrow">TAB GARDEN</span><h1>标签看板</h1></div>
+      <div class="board-actions">
+        <label class="auto-fill"><input id="auto-fill" type="checkbox" checked><span>自动填充</span></label>
+        <button id="refresh" class="button secondary" type="button">刷新</button>
+      </div>
+    </header>
+    <p id="board-status" class="status" aria-live="polite"></p>
+    <section id="login-required" class="login-required hidden" aria-labelledby="login-title">
+      <h2 id="login-title">需要登录</h2>
+      <p id="login-message">请先登录后使用标签看板。</p>
+    </section>
+    <section id="board-content" class="hidden" aria-label="标签看板">
+      <form id="new-group-form" class="new-group-form">
+        <label><span class="sr-only">新分组名称</span><input id="new-group-title" maxlength="40" required placeholder="新建自定义分组"></label>
+        <label><span class="sr-only">分组颜色</span><select id="new-group-color" aria-label="分组颜色"><option value="blue">蓝色</option><option value="green">绿色</option><option value="purple">紫色</option><option value="orange">橙色</option><option value="red">红色</option><option value="pink">粉色</option><option value="cyan">青色</option><option value="yellow">黄色</option><option value="grey">灰色</option></select></label>
+        <button class="button" type="submit">新建分组</button>
+      </form>
+      <div id="board-grid" class="board-grid" aria-live="polite"></div>
+    </section>
+  </main>
+  <script type="module" src="board.js"></script>
+</body>
+</html>

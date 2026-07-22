@@ -77,6 +77,8 @@ export interface BoardSegmentCard extends BoardLogicalGroup {
 export interface BoardTabDrop {
   tabId: number;
   targetBoardKey: BoardKey;
+  position: "before" | "after" | "append";
+  targetTabId?: number;
 }
 
 export interface BoardPlacement {
@@ -321,7 +323,16 @@ export function moveBoardGroupRank(groups: readonly BoardGroup[], boardKey: Boar
 
 export function validateBoardTabDrop(value: unknown): BoardTabDrop | null {
   if (!isPlainObject(value) || typeof value.tabId !== "number" || !Number.isInteger(value.tabId) || value.tabId <= 0 || !isBoardKey(value.targetBoardKey)) return null;
-  return { tabId: value.tabId, targetBoardKey: value.targetBoardKey };
+  if (value.position !== "before" && value.position !== "after" && value.position !== "append") return null;
+  if (value.position === "append") return value.targetTabId === undefined ? { tabId: value.tabId, targetBoardKey: value.targetBoardKey, position: value.position } : null;
+  if (typeof value.targetTabId !== "number" || !Number.isInteger(value.targetTabId) || value.targetTabId <= 0 || value.targetTabId === value.tabId) return null;
+  return { tabId: value.tabId, targetBoardKey: value.targetBoardKey, position: value.position, targetTabId: value.targetTabId };
+}
+
+export function boardDropIndex(sourceIndex: number, targetIndex: number, position: "before" | "after"): number | null {
+  if (!Number.isInteger(sourceIndex) || sourceIndex < 0 || !Number.isInteger(targetIndex) || targetIndex < 0) return null;
+  const insertionIndex = position === "before" ? targetIndex : targetIndex + 1;
+  return sourceIndex < insertionIndex ? insertionIndex - 1 : insertionIndex;
 }
 
 export function isManagedBoardTabSource(groupId: number, automaticGroupIds: ReadonlySet<number>, customGroupIds: ReadonlySet<number>): boolean {

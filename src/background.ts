@@ -1,5 +1,6 @@
 import {
   UNGROUPED,
+  boardDropIndex,
   autoRecordKey,
   automaticBoardKey,
   buildBoardCards,
@@ -406,6 +407,29 @@ async function boardState() {
   return { user: { id: user.id, email: user.email }, loginRequired: false, windowId, groups: buildBoardCards(groups), layouts: state.boardLayouts };
 }
 
+async function reorderBoardTab(drop: NonNullable<ReturnType<typeof validateBoardTabDrop>>, destinationGroupId: number, windowId: number): Promise<void> {
+  const source = await chrome.tabs.get(drop.tabId);
+  if (source.windowId !== windowId || source.index == null) throw new Error("标签位置已变化，请刷新看板后重试");
+  let target: chrome.tabs.Tab | undefined;
+  let position: "before" | "after";
+  if (drop.position === "append") {
+    const destinationTabs = await chrome.tabs.query({ windowId, groupId: destinationGroupId });
+    target = destinationTabs.filter((tab) => tab.id !== drop.tabId).sort((left, right) => left.index - right.index).at(-1);
+    position = "after";
+  } else {
+    const targetTabId = drop.targetTabId;
+    if (targetTabId === undefined) throw new Error("目标标签无效");
+    const candidate = await chrome.tabs.get(targetTabId);
+    if (candidate.windowId !== windowId || candidate.groupId !== destinationGroupId || !boardTab(candidate)) throw new Error("目标标签已变化，请刷新看板后重试");
+    target = candidate;
+    position = drop.position;
+  }
+  if (!target || target.index == null) return;
+  const index = boardDropIndex(source.index, target.index, position);
+  if (index === null || index === source.index) return;
+  await chrome.tabs.move(drop.tabId, { index });
+}
+
 async function requireBoardUser() {
   const user = await getCurrentUser();
   if (!user) throw new Error("请先登录后再修改标签看板");
@@ -470,6 +494,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
 
       if (drop.targetBoardKey === "ungrouped") {
         if (tab.groupId !== UNGROUPED) await chrome.tabs.ungroup([drop.tabId]);
+        await reorderBoardTab(drop, UNGROUPED, windowId);
         scheduleReconcile(windowId);
         return { ok: true };
       }
@@ -489,6 +514,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
           await chrome.tabs.group({ tabIds: [drop.tabId], groupId: record.groupId });
         }
         await saveCustomGroups(state.customGroups);
+        await reorderBoardTab(drop, record.groupId, windowId);
         scheduleReconcile(windowId);
         return { ok: true };
       }
@@ -497,6 +523,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const target = Object.values(state.autoGroups).find((record) => record.windowId === windowId && record.siteKey === siteKey);
       if (!target || !(await existingGroupIds(windowId)).has(target.groupId)) throw new Error("目标自动分组已失效，请刷新看板后重试");
       await chrome.tabs.group({ tabIds: [drop.tabId], groupId: target.groupId });
+      await reorderBoardTab(drop, target.groupId, windowId);
       scheduleReconcile(windowId);
       return { ok: true };
     }

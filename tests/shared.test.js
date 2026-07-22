@@ -5,6 +5,7 @@ globalThis.chrome = { tabGroups: { TAB_GROUP_ID_NONE: -1 } };
 const {
   autoRecordKey,
   automaticBoardKey,
+  boardDropIndex,
   boardCustomGroupFromSyncRow,
   boardLayoutFromSyncRow,
   buildBoardCards,
@@ -72,7 +73,23 @@ test("moves a logical board group to a new rank without moving Ungrouped", () =>
 test("rejects invalid board tab drops before Chrome state changes", () => {
   assert.equal(validateBoardTabDrop({ tabId: 1, targetBoardKey: "custom:not-a-uuid" }), null);
   assert.equal(validateBoardTabDrop({ tabId: -1, targetBoardKey: "ungrouped" }), null);
-  assert.deepEqual(validateBoardTabDrop({ tabId: 1, targetBoardKey: "ungrouped" }), { tabId: 1, targetBoardKey: "ungrouped" });
+  assert.equal(validateBoardTabDrop({ tabId: 1, targetBoardKey: "ungrouped" }), null);
+  assert.equal(validateBoardTabDrop({ tabId: 1, targetBoardKey: "ungrouped", position: "before" }), null);
+  assert.equal(validateBoardTabDrop({ tabId: 1, targetBoardKey: "ungrouped", position: "after", targetTabId: 1 }), null);
+  assert.deepEqual(validateBoardTabDrop({ tabId: 1, targetBoardKey: "ungrouped", position: "before", targetTabId: 2 }), {
+    tabId: 1, targetBoardKey: "ungrouped", position: "before", targetTabId: 2,
+  });
+  assert.deepEqual(validateBoardTabDrop({ tabId: 1, targetBoardKey: "ungrouped", position: "append" }), {
+    tabId: 1, targetBoardKey: "ungrouped", position: "append",
+  });
+});
+
+test("computes final tab-strip indices for before and after board drops", () => {
+  assert.equal(boardDropIndex(0, 1, "after"), 1);
+  assert.equal(boardDropIndex(2, 1, "after"), 2);
+  assert.equal(boardDropIndex(0, 1, "before"), 0);
+  assert.equal(boardDropIndex(2, 1, "before"), 1);
+  assert.equal(boardDropIndex(-1, 1, "before"), null);
 });
 
 test("permits board moves only from Ungrouped or extension-managed groups", () => {
@@ -223,6 +240,20 @@ test("auto-fills board cards into the leftmost shortest lane", () => {
 
   assert.deepEqual(placed.laneHeights, [3, 2, 2]);
   assert.deepEqual(placed.placements.map((placement) => placement.lane), [0, 1, 2, 2, 0]);
+});
+
+test("keeps manual card lane and order for device-specific rendering", () => {
+  const placed = placeBoardCards([
+    { boardKey: "auto:one.example", segmentIndex: 0, heightUnits: 1, manualLane: 1, manualOrder: 2 },
+    { boardKey: "auto:two.example", segmentIndex: 0, heightUnits: 1, manualLane: 0, manualOrder: 1 },
+    { boardKey: "auto:three.example", segmentIndex: 0, heightUnits: 2, manualLane: 1, manualOrder: 0 },
+  ], 2, false);
+
+  assert.deepEqual(placed.placements.map((placement) => [placement.boardKey, placement.lane, placement.order]), [
+    ["auto:one.example", 1, 2],
+    ["auto:two.example", 0, 1],
+    ["auto:three.example", 1, 0],
+  ]);
 });
 
 test("validates isolated manual board layouts for each device class", () => {

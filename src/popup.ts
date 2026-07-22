@@ -198,6 +198,13 @@ $("#reconcile").addEventListener("click", async () => {
   } catch (error) { showStatus(String(error), true); }
 });
 
+$("#open-board").addEventListener("click", async () => {
+  try {
+    await send({ type: "open-tab-board" });
+    window.close();
+  } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); }
+});
+
 void send<{ user: { id: string; email?: string } | null }>({ type: "auth-state" }).then(async ({ user }) => {
   showAuth(Boolean(user));
   if (user) await load();
