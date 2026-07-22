@@ -113,27 +113,22 @@ Popup 不直接管理认证会话或数据库访问。`popup.ts` 通过 `chrome.
 
 ### 数据同步策略
 
-当前只同步 `Settings`：
-
-- `autoGroupEnabled` ↔ `user_settings.auto_group_enabled`
-- `minimumTabs` ↔ `user_settings.minimum_tabs`
+当前同步扩展设置、稳定域名规则、忽略网站、看板自定义分组元数据和看板布局元数据；浏览器运行时标签归属不跨设备同步。
 
 同步规则：
 
-- 登录或恢复会话时查询远端设置。
-- 远端已有记录时以云端为准并写入本地。
-- 远端无记录时用当前本地设置初始化云端。
-- 用户修改设置时先保存本地，再 upsert 到 Supabase。
+- 登录、恢复会话或手动同步时，远端已有记录以云端为准；远端缺失时用当前本地稳定数据初始化云端。
+- 用户修改稳定设置或元数据时先保存本地，再按隐私开关写入 Supabase。
+- 云端失败时保留本地数据并返回可重试状态。
 
 以下是浏览器运行时状态，只保存在本地，禁止同步到 Supabase：
 
 - `tabId`
 - `windowId`
-- Chrome 原生 `groupId`
-- `autoGroups` 中的运行时映射
+- `boardAssignments` 中以 `windowId:tabId` 为键的虚拟看板归属
 - 当前打开标签页列表
 
-`group_rules` 表已经创建，但当前尚未接入扩展。未来跨设备同步自定义分组时，应保存稳定的域名规则、标题、颜色和顺序，不能上传浏览器临时 ID。
+浏览器标签必须保持未分组状态：不要使用 `chrome.tabs.group`、`chrome.tabs.ungroup`、`chrome.tabGroups` 或 `tabGroups` 权限。自动/自定义分组只存在于看板中；跨设备只能保存稳定的规则、标题、颜色、排序和布局，不能上传浏览器临时 ID 或标签内容。
 
 ## Supabase 数据库
 
