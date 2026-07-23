@@ -17,12 +17,14 @@ const autoToggle = $<HTMLInputElement>("#auto-toggle");
 const minimumTabs = $<HTMLSelectElement>("#minimum-tabs");
 const groupName = $<HTMLInputElement>("#group-name");
 const groupColor = $<HTMLSelectElement>("#group-color");
+const bootView = $("#boot-view");
 const authView = $("#auth-view");
 const appView = $("#app-view");
 const authForm = $<HTMLFormElement>("#auth-form");
 const authEmail = $<HTMLInputElement>("#auth-email");
 const authPassword = $<HTMLInputElement>("#auth-password");
 const authConfirm = $<HTMLInputElement>("#auth-confirm");
+const rememberDevice = $<HTMLInputElement>("#remember-device");
 const authStatus = $("#auth-status");
 const authSubmit = $<HTMLButtonElement>("#auth-submit");
 let authMode: "login" | "signup" = "login";
@@ -44,6 +46,7 @@ function setAuthMode(mode: "login" | "signup"): void {
   $("#login-tab").classList.toggle("active", mode === "login");
   $("#signup-tab").classList.toggle("active", mode === "signup");
   $("#confirm-field").classList.toggle("hidden", mode === "login");
+  $("#remember-device-row").classList.toggle("hidden", mode === "signup");
   authConfirm.required = mode === "signup";
   authPassword.autocomplete = mode === "login" ? "current-password" : "new-password";
   authSubmit.textContent = mode === "login" ? "登录" : "创建账户";
@@ -51,6 +54,8 @@ function setAuthMode(mode: "login" | "signup"): void {
 }
 
 function showAuth(authenticated: boolean): void {
+  bootView.classList.add("hidden");
+  bootView.setAttribute("aria-busy", "false");
   authView.classList.toggle("hidden", authenticated);
   appView.classList.toggle("hidden", !authenticated);
 }
@@ -69,7 +74,7 @@ authForm.addEventListener("submit", async (event) => {
   authSubmit.disabled = true;
   try {
     if (authMode === "login") {
-      await send({ type: "auth-sign-in", email: authEmail.value, password: authPassword.value });
+      await send({ type: "auth-sign-in", email: authEmail.value, password: authPassword.value, rememberForSevenDays: rememberDevice.checked });
       showAuth(true);
       await load();
     } else {
@@ -164,6 +169,17 @@ async function load(): Promise<void> {
   renderGroups(state.customGroups);
 }
 
+async function restoreSessionInBackground(): Promise<void> {
+  const result = await send<{ user: { id: string; email?: string } | null; sync: { state: "ready" | "error"; message?: string } }>({ type: "restore-session" });
+  if (!result.user) {
+    authPassword.value = "";
+    showAuth(false);
+    return;
+  }
+  await load();
+  if (result.sync.state === "error" && result.sync.message) showStatus(result.sync.message, true);
+}
+
 async function saveSettings(): Promise<void> {
   const settings = { ...DEFAULT_SETTINGS, autoGroupEnabled: autoToggle.checked, minimumTabs: Number(minimumTabs.value) };
   await send({ type: "update-settings", settings });
@@ -190,14 +206,19 @@ $("#create-group").addEventListener("click", async () => {
 
 $("#open-board").addEventListener("click", async () => {
   try {
-    await send({ type: "open-tab-board" });
+    const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (active?.windowId == null) throw new Error("找不到当前窗口");
+    await send({ type: "open-tab-board", windowId: active.windowId });
     window.close();
   } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); }
 });
 
 void send<{ user: { id: string; email?: string } | null }>({ type: "auth-state" }).then(async ({ user }) => {
   showAuth(Boolean(user));
-  if (user) await load();
+  if (user) {
+    await load();
+    void restoreSessionInBackground().catch((error) => showStatus(error instanceof Error ? error.message : String(error), true));
+  }
 }).catch((error) => {
   showAuth(false);
   authStatus.textContent = error instanceof Error ? error.message : String(error);
