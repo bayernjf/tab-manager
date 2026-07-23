@@ -17,6 +17,7 @@ import {
   buildVirtualBoardGroups,
   boardWindowLabel,
   findDuplicateBoardTabs,
+  validateWorkspaceTitle,
   validateWorkspaceSnapshot,
   workspaceRestorePreview,
   validateDeferredTab,
@@ -310,7 +311,7 @@ async function boardState(currentWindowId?: number) {
   if (!user) return { user: null, loginRequired: true, message: "请先登录后使用标签看板。", groups: [] };
   const state = await loadState();
   const groups = await boardLogicalGroups(state, currentWindowId);
-  return { user: { id: user.id, email: user.email }, loginRequired: false, groups: buildBoardCards(groups), layouts: state.boardLayouts };
+  return { user: { id: user.id, email: user.email }, loginRequired: false, groups: buildBoardCards(groups), layouts: state.boardLayouts, settings: state.settings };
 }
 
 async function requireBoardUser() {
@@ -408,10 +409,14 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
     }
     if (message.type === "save-workspace") {
       await requireBoardUser();
-      const title = typeof message.title === "string" ? message.title.trim() : "";
-      const snapshot = validateWorkspaceSnapshot({ id: crypto.randomUUID(), title, createdAt: new Date().toISOString(), tabs: message.tabs });
+      const storedWorkspaces = await loadWorkspaceSnapshots();
+      const title = validateWorkspaceTitle(message.title, storedWorkspaces.map((workspace) => workspace.title));
+      if (title.status === "empty") throw new Error("请输入工作区名称");
+      if (title.status === "duplicate") throw new Error("该工作区名称已存在");
+      if (title.status !== "valid") throw new Error("工作区名称或标签页无效");
+      const snapshot = validateWorkspaceSnapshot({ id: crypto.randomUUID(), title: title.title, createdAt: new Date().toISOString(), tabs: message.tabs });
       if (!snapshot) throw new Error("工作区名称或标签页无效");
-      const workspaces = [...await loadWorkspaceSnapshots(), snapshot];
+      const workspaces = [...storedWorkspaces, snapshot];
       await saveWorkspaceSnapshots(workspaces);
       return { workspace: snapshot };
     }
@@ -445,8 +450,8 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       await requireBoardUser();
       const tabs = await boardDuplicateTabs();
       const duplicateTabCount = findDuplicateBoardTabs(tabs).reduce((count, group) => count + group.tabs.length - 1, 0);
-      const dueDeferredCount = (await loadDeferredTabs()).filter((tab) => Date.parse(tab.dueAt) <= Date.now()).length;
-      return { eligibleTabCount: tabs.length, duplicateTabCount, dueDeferredCount };
+      const deferredTabCount = (await loadDeferredTabs()).length;
+      return { eligibleTabCount: tabs.length, duplicateTabCount, deferredTabCount, dueDeferredCount: deferredTabCount };
     }
     if (message.type === "defer-board-tab") {
       await requireBoardUser(); if (typeof message.tabId !== "number" || !Number.isInteger(message.tabId) || typeof message.dueAt !== "string" || Date.parse(message.dueAt) <= Date.now()) throw new Error("提醒时间无效");
@@ -455,7 +460,15 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       await saveDeferredTabs([...await loadDeferredTabs(), deferred]); await chrome.tabs.remove(message.tabId); return { ok: true, tab: deferred };
     }
     if (message.type === "open-deferred-tab") {
-      await requireBoardUser(); if (!safeRecordId(message.id) || typeof message.windowId !== "number" || !Number.isInteger(message.windowId)) throw new Error("提醒不存在"); const tab = (await loadDeferredTabs()).find((item) => item.id === message.id); const window = await chrome.windows.get(message.windowId); if (!tab || window.type !== "normal") throw new Error("提醒不存在"); await chrome.tabs.create({ windowId: message.windowId, url: tab.url }); return { ok: true };
+      await requireBoardUser();
+      if (!safeRecordId(message.id) || typeof message.windowId !== "number" || !Number.isInteger(message.windowId)) throw new Error("提醒不存在");
+      const deferredTabs = await loadDeferredTabs();
+      const tab = deferredTabs.find((item) => item.id === message.id);
+      const window = await chrome.windows.get(message.windowId);
+      if (!tab || window.type !== "normal") throw new Error("提醒不存在");
+      await chrome.tabs.create({ windowId: message.windowId, url: tab.url });
+      await saveDeferredTabs(deferredTabs.filter((item) => item.id !== message.id));
+      return { ok: true };
     }
     if (message.type === "reschedule-deferred-tab") { await requireBoardUser(); const dueAt = message.dueAt; if (!safeRecordId(message.id) || typeof dueAt !== "string" || Date.parse(dueAt) <= Date.now()) throw new Error("提醒时间无效"); const tabs = (await loadDeferredTabs()).map((tab) => tab.id === message.id ? { ...tab, dueAt } : tab); await saveDeferredTabs(tabs); return { ok: true }; }
     if (message.type === "delete-deferred-tab") { await requireBoardUser(); if (!safeRecordId(message.id)) throw new Error("提醒不存在"); await saveDeferredTabs((await loadDeferredTabs()).filter((tab) => tab.id !== message.id)); return { ok: true }; }
