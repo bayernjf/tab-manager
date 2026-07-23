@@ -62,9 +62,44 @@ export interface BoardCard {
 
 export interface BoardTab {
   id: number;
+  windowId?: number;
+  windowLabel?: string;
+  isCurrentWindow?: boolean;
   title: string;
   url?: string;
   favIconUrl?: string;
+}
+
+export interface DuplicateBoardTabGroup {
+  url: string;
+  retainedTabId: number;
+  tabs: BoardTab[];
+}
+
+export interface WorkspaceTab {
+  title: string;
+  url: string;
+}
+
+export interface WorkspaceSnapshot {
+  id: string;
+  title: string;
+  createdAt: string;
+  tabs: WorkspaceTab[];
+}
+
+export interface WorkspaceRestorePreview {
+  tabs: WorkspaceTab[];
+  unavailableCount: number;
+}
+
+export interface DeferredTab {
+  id: string;
+  title: string;
+  url: string;
+  favIconUrl?: string;
+  dueAt: string;
+  createdAt: string;
 }
 
 export interface BoardLogicalGroup extends BoardGroup {
@@ -110,6 +145,7 @@ const MAX_PORTABLE_RECORDS = 100;
 export interface Settings {
   autoGroupEnabled: boolean;
   minimumTabs: number;
+  openBoardOnNewTab: boolean;
   defaultGroupColor?: GroupColor;
   cloudSyncEnabled?: boolean;
   syncRulesEnabled?: boolean;
@@ -142,6 +178,7 @@ export interface SettingsSyncRow {
   user_id: string;
   auto_group_enabled: boolean;
   minimum_tabs: number;
+  open_board_on_new_tab?: boolean;
   default_group_color?: GroupColor;
   cloud_sync_enabled?: boolean;
   sync_rules_enabled?: boolean;
@@ -170,6 +207,7 @@ export interface IgnoredSiteSyncRow {
 interface PortableSettings {
   autoGroupEnabled: boolean;
   minimumTabs: number;
+  openBoardOnNewTab: boolean;
   defaultGroupColor: GroupColor;
   cloudSyncEnabled: boolean;
   syncRulesEnabled: boolean;
@@ -208,11 +246,12 @@ export interface VirtualBoardAssignment {
 }
 
 export interface VirtualBoardTab extends BoardTab {
-  id: number;
+  windowId?: number;
 }
 
 export interface VirtualBoardGroupInput {
-  windowId: number;
+  /** Retained for single-window callers while tabs migrate to carrying their own window. */
+  windowId?: number;
   tabs: readonly VirtualBoardTab[];
   settings: Settings;
   rules: readonly GroupRule[];
@@ -233,6 +272,7 @@ export interface StoredState {
 export const DEFAULT_SETTINGS: Settings = {
   autoGroupEnabled: true,
   minimumTabs: 2,
+  openBoardOnNewTab: false,
   defaultGroupColor: "blue",
   cloudSyncEnabled: true,
   syncRulesEnabled: true,
@@ -246,10 +286,12 @@ export function settingsFromSyncRow(value: unknown, expectedUserId?: string): Se
   const cloudSyncEnabled = value.cloud_sync_enabled === undefined ? DEFAULT_SETTINGS.cloudSyncEnabled : value.cloud_sync_enabled;
   const syncRulesEnabled = value.sync_rules_enabled === undefined ? DEFAULT_SETTINGS.syncRulesEnabled : value.sync_rules_enabled;
   const syncIgnoreListEnabled = value.sync_ignore_list_enabled === undefined ? DEFAULT_SETTINGS.syncIgnoreListEnabled : value.sync_ignore_list_enabled;
-  if (!isGroupColor(defaultGroupColor) || typeof cloudSyncEnabled !== "boolean" || typeof syncRulesEnabled !== "boolean" || typeof syncIgnoreListEnabled !== "boolean") return null;
+  const openBoardOnNewTab = value.open_board_on_new_tab === undefined ? DEFAULT_SETTINGS.openBoardOnNewTab : value.open_board_on_new_tab;
+  if (!isGroupColor(defaultGroupColor) || typeof cloudSyncEnabled !== "boolean" || typeof syncRulesEnabled !== "boolean" || typeof syncIgnoreListEnabled !== "boolean" || typeof openBoardOnNewTab !== "boolean") return null;
   return {
     autoGroupEnabled: value.auto_group_enabled,
     minimumTabs: value.minimum_tabs,
+    openBoardOnNewTab,
     defaultGroupColor,
     cloudSyncEnabled,
     syncRulesEnabled,
@@ -290,6 +332,68 @@ export function isBoardKey(value: unknown): value is BoardKey {
   if (value.startsWith("auto:")) return automaticBoardKey(value.slice("auto:".length)) === value;
   if (value.startsWith("custom:")) return customBoardKey(value.slice("custom:".length)) === value;
   return false;
+}
+
+export function boardWindowLabel(windowIndex: number): string | null {
+  return Number.isInteger(windowIndex) && windowIndex > 0 ? `窗口 ${windowIndex}` : null;
+}
+
+export function boardTabMatchesQuery(tab: BoardTab, query: string): boolean {
+  const needle = query.trim().toLocaleLowerCase();
+  if (!needle) return true;
+  return [tab.title, tab.url ?? "", getSiteKey(tab.url) ?? ""].some((value) => value.toLocaleLowerCase().includes(needle));
+}
+
+export function findDuplicateBoardTabs(tabs: readonly BoardTab[]): DuplicateBoardTabGroup[] {
+  const byUrl = new Map<string, BoardTab[]>();
+  for (const tab of tabs) {
+    if (!tab.url) continue;
+    try {
+      const url = new URL(tab.url);
+      if (url.protocol !== "http:" && url.protocol !== "https:") continue;
+      const group = byUrl.get(url.href) ?? [];
+      group.push(tab);
+      byUrl.set(url.href, group);
+    } catch {
+      // Ignore malformed runtime URLs.
+    }
+  }
+  return [...byUrl.entries()].flatMap(([url, group]) => {
+    const retained = group[0];
+    return retained && group.length > 1 ? [{ url, retainedTabId: retained.id, tabs: [...group] }] : [];
+  });
+}
+
+function workspaceTab(value: unknown): WorkspaceTab | null {
+  if (!isPlainObject(value) || typeof value.title !== "string" || !value.title.trim() || value.title.length > 160 || typeof value.url !== "string" || value.url.length > 4_000) return null;
+  try {
+    const url = new URL(value.url);
+    return url.protocol === "http:" || url.protocol === "https:" ? { title: value.title.trim(), url: url.href } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function validateWorkspaceSnapshot(value: unknown): WorkspaceSnapshot | null {
+  if (!isPlainObject(value) || !isRecordId(value.id) || typeof value.title !== "string" || !value.title.trim() || value.title.length > 80 || typeof value.createdAt !== "string" || !Number.isFinite(Date.parse(value.createdAt)) || !Array.isArray(value.tabs) || value.tabs.length < 1 || value.tabs.length > 200) return null;
+  const tabs = value.tabs.map(workspaceTab);
+  return tabs.every((tab): tab is WorkspaceTab => tab !== null) ? { id: value.id, title: value.title.trim(), createdAt: value.createdAt, tabs } : null;
+}
+
+export function workspaceRestorePreview(snapshot: WorkspaceSnapshot): WorkspaceRestorePreview {
+  const tabs = snapshot.tabs.flatMap((tab) => workspaceTab(tab) ?? []);
+  return { tabs, unavailableCount: snapshot.tabs.length - tabs.length };
+}
+
+export function validateDeferredTab(value: unknown): DeferredTab | null {
+  if (!isPlainObject(value) || !isRecordId(value.id) || typeof value.dueAt !== "string" || typeof value.createdAt !== "string" || !Number.isFinite(Date.parse(value.dueAt)) || !Number.isFinite(Date.parse(value.createdAt))) return null;
+  const tab = workspaceTab(value);
+  if (!tab || (value.favIconUrl !== undefined && (typeof value.favIconUrl !== "string" || value.favIconUrl.length > 4_000))) return null;
+  return { id: value.id, title: tab.title, url: tab.url, ...(typeof value.favIconUrl === "string" ? { favIconUrl: value.favIconUrl } : {}), dueAt: value.dueAt, createdAt: value.createdAt };
+}
+
+export function isDeferredTabDue(tab: DeferredTab, now = Date.now()): boolean {
+  return Date.parse(tab.dueAt) <= now;
 }
 
 export function heightUnitsForTabCount(tabCount: number): 1 | 2 {
@@ -368,13 +472,13 @@ export function buildVirtualBoardGroups(input: VirtualBoardGroupInput): BoardLog
     const key = customBoardKey(group.id);
     return key ? [[key, group] as const] : [];
   }));
-  const assigned = new Map<number, VirtualBoardAssignment>();
-  for (const assignment of Object.values(input.assignments)) {
-    if (assignment.windowId === input.windowId) assigned.set(assignment.tabId, assignment);
-  }
+  const assignmentFor = (tab: VirtualBoardTab): VirtualBoardAssignment | undefined => {
+    const windowId = tab.windowId ?? input.windowId;
+    return windowId === undefined ? undefined : input.assignments[virtualBoardAssignmentKey(windowId, tab.id)];
+  };
   const naturalBySite = new Map<string, VirtualBoardTab[]>();
   for (const tab of input.tabs) {
-    if (assigned.has(tab.id)) continue;
+    if (assignmentFor(tab)) continue;
     const siteKey = getSiteKey(tab.url);
     if (!siteKey || resolveAutoGroup(siteKey, input.settings, input.rules, input.ignoredSites).kind === "ignore") continue;
     const siteTabs = naturalBySite.get(siteKey) ?? [];
@@ -388,7 +492,7 @@ export function buildVirtualBoardGroups(input: VirtualBoardGroupInput): BoardLog
     tabsByKey.set(key, tabs);
   };
   for (const tab of input.tabs) {
-    const assignment = assigned.get(tab.id);
+    const assignment = assignmentFor(tab);
     if (assignment) {
       if (assignment.boardKey.startsWith("custom:") && !customByKey.has(assignment.boardKey)) continue;
       if (assignment.boardKey.startsWith("auto:")) {
@@ -625,6 +729,7 @@ export function toPortableData(settings: Settings, groupRules: readonly GroupRul
     settings: {
       autoGroupEnabled: settings.autoGroupEnabled,
       minimumTabs: settings.minimumTabs,
+      openBoardOnNewTab: settings.openBoardOnNewTab ?? DEFAULT_SETTINGS.openBoardOnNewTab,
       defaultGroupColor: settings.defaultGroupColor ?? DEFAULT_SETTINGS.defaultGroupColor!,
       cloudSyncEnabled: settings.cloudSyncEnabled ?? DEFAULT_SETTINGS.cloudSyncEnabled!,
       syncRulesEnabled: settings.syncRulesEnabled ?? DEFAULT_SETTINGS.syncRulesEnabled!,
@@ -708,11 +813,12 @@ export function canConfirmOptionsImport(previewUserId: string | null, currentUse
 
 export function validateOptionsSettings(value: unknown): Settings | null {
   if (!isPlainObject(value)) return null;
-  const allowedKeys = ["autoGroupEnabled", "minimumTabs", "defaultGroupColor", "cloudSyncEnabled", "syncRulesEnabled", "syncIgnoreListEnabled", "lastSuccessfulSyncAt"];
+  const allowedKeys = ["autoGroupEnabled", "minimumTabs", "openBoardOnNewTab", "defaultGroupColor", "cloudSyncEnabled", "syncRulesEnabled", "syncIgnoreListEnabled", "lastSuccessfulSyncAt"];
   if (Object.keys(value).some((key) => !allowedKeys.includes(key))) return null;
   const parsed = parsePortableSettings({
     autoGroupEnabled: value.autoGroupEnabled,
     minimumTabs: value.minimumTabs,
+    openBoardOnNewTab: value.openBoardOnNewTab,
     defaultGroupColor: value.defaultGroupColor,
     cloudSyncEnabled: value.cloudSyncEnabled,
     syncRulesEnabled: value.syncRulesEnabled,
@@ -810,9 +916,12 @@ function isSortOrder(value: unknown): value is number {
 }
 
 function parsePortableSettings(value: unknown): PortableSettings | null {
-  if (!isPlainObject(value) || !hasOnlyKeys(value, ["autoGroupEnabled", "minimumTabs", "defaultGroupColor", "cloudSyncEnabled", "syncRulesEnabled", "syncIgnoreListEnabled", "lastSuccessfulSyncAt"])) return null;
-  if (typeof value.autoGroupEnabled !== "boolean" || !isMinimumTabs(value.minimumTabs) || !isGroupColor(value.defaultGroupColor) || typeof value.cloudSyncEnabled !== "boolean" || typeof value.syncRulesEnabled !== "boolean" || typeof value.syncIgnoreListEnabled !== "boolean" || !isSyncTimestamp(value.lastSuccessfulSyncAt)) return null;
-  return { autoGroupEnabled: value.autoGroupEnabled, minimumTabs: value.minimumTabs, defaultGroupColor: value.defaultGroupColor, cloudSyncEnabled: value.cloudSyncEnabled, syncRulesEnabled: value.syncRulesEnabled, syncIgnoreListEnabled: value.syncIgnoreListEnabled, lastSuccessfulSyncAt: value.lastSuccessfulSyncAt };
+  const requiredKeys = ["autoGroupEnabled", "minimumTabs", "defaultGroupColor", "cloudSyncEnabled", "syncRulesEnabled", "syncIgnoreListEnabled", "lastSuccessfulSyncAt"];
+  const currentKeys = [...requiredKeys, "openBoardOnNewTab"];
+  if (!isPlainObject(value) || (!hasOnlyKeys(value, requiredKeys) && !hasOnlyKeys(value, currentKeys))) return null;
+  const openBoardOnNewTab = value.openBoardOnNewTab === undefined ? DEFAULT_SETTINGS.openBoardOnNewTab : value.openBoardOnNewTab;
+  if (typeof value.autoGroupEnabled !== "boolean" || !isMinimumTabs(value.minimumTabs) || !isGroupColor(value.defaultGroupColor) || typeof value.cloudSyncEnabled !== "boolean" || typeof value.syncRulesEnabled !== "boolean" || typeof value.syncIgnoreListEnabled !== "boolean" || typeof openBoardOnNewTab !== "boolean" || !isSyncTimestamp(value.lastSuccessfulSyncAt)) return null;
+  return { autoGroupEnabled: value.autoGroupEnabled, minimumTabs: value.minimumTabs, openBoardOnNewTab, defaultGroupColor: value.defaultGroupColor, cloudSyncEnabled: value.cloudSyncEnabled, syncRulesEnabled: value.syncRulesEnabled, syncIgnoreListEnabled: value.syncIgnoreListEnabled, lastSuccessfulSyncAt: value.lastSuccessfulSyncAt };
 }
 
 function parseGroupRules(value: unknown): GroupRule[] | null {
@@ -862,6 +971,10 @@ export function getSiteKey(url?: string): string | null {
   } catch {
     return null;
   }
+}
+
+export function isBrowserNewTabUrl(value: string | undefined): boolean {
+  return value === "chrome://newtab/" || value === "edge://newtab/";
 }
 
 export function siteTitle(siteKey: string): string {

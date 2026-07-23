@@ -8,6 +8,8 @@ import {
   type IgnoredSite,
   type Settings,
   type StoredState,
+  type WorkspaceSnapshot,
+  type DeferredTab,
 } from "./shared.js";
 
 const KEYS = ["settings", "boardAssignments", "groupRules", "ignoredSites", "boardCustomGroups", "boardLayouts", "optionsUserId"] as const;
@@ -47,6 +49,18 @@ export async function saveBoardCustomGroups(boardCustomGroups: BoardCustomGroup[
 export async function saveBoardLayouts(boardLayouts: BoardLayout[]): Promise<void> {
   await chrome.storage.local.set({ boardLayouts });
 }
+
+export async function loadWorkspaceSnapshots(): Promise<WorkspaceSnapshot[]> {
+  const data = await chrome.storage.local.get("workspaceSnapshots");
+  return (data.workspaceSnapshots as WorkspaceSnapshot[] | undefined) ?? [];
+}
+
+export async function saveWorkspaceSnapshots(workspaceSnapshots: readonly WorkspaceSnapshot[]): Promise<void> {
+  await chrome.storage.local.set({ workspaceSnapshots });
+}
+
+export async function loadDeferredTabs(): Promise<DeferredTab[]> { const data = await chrome.storage.local.get("deferredTabs"); return (data.deferredTabs as DeferredTab[] | undefined) ?? []; }
+export async function saveDeferredTabs(deferredTabs: readonly DeferredTab[]): Promise<void> { await chrome.storage.local.set({ deferredTabs }); }
 
 export async function saveOptionsData(settings: Settings, groupRules: GroupRule[], ignoredSites: IgnoredSite[]): Promise<void> {
   await chrome.storage.local.set({ settings, groupRules, ignoredSites });
