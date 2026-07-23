@@ -35,9 +35,11 @@ const {
   boardTabMatchesQuery,
   boardWindowLabel,
   findDuplicateBoardTabs,
+  validateWorkspaceTitle,
   validateWorkspaceSnapshot,
   validateDeferredTab,
   isDeferredTabDue,
+  normalizeDeferredShortcutMinutes,
   manualBoardGridRow,
   moveManualBoardCard,
   moveBoardGroupRank,
@@ -118,6 +120,13 @@ test("renders board tab open and close controls with focus-revealed close stylin
   assert.match(boardScript, /type: "close-board-tab", tabId/);
   assert.match(boardCss, /\.tab-row:hover \.tab-close/);
   assert.match(boardCss, /\.tab-row:focus-within \.tab-close/);
+});
+
+test("uses the page scroll instead of an inner scroll for board tab lists", async () => {
+  const boardCss = await readFile(new URL("../dist/board.css", import.meta.url), "utf8");
+
+  assert.match(boardCss, /\.tabs \{ overflow: visible; max-height: none; \}/);
+  assert.match(boardCss, /\.board-grid \{[^}]*overflow: visible;/);
 });
 
 test("styles the board as the header's primary action", async () => {
@@ -232,12 +241,90 @@ test("validates local workspace snapshots without unsupported URLs", () => {
   assert.equal(snapshot, null);
 });
 
+test("rejects workspace snapshots whose untrimmed title exceeds the limit", () => {
+  const snapshot = validateWorkspaceSnapshot({
+    id: "workspace-2", title: ` ${"x".repeat(80)}`, createdAt: "2026-07-23T00:00:00.000Z",
+    tabs: [{ title: "Docs", url: "https://example.com/docs" }],
+  });
+
+  assert.equal(snapshot, null);
+});
+
+test("normalizes unique workspace names and rejects empty or duplicate names", () => {
+  assert.deepEqual(validateWorkspaceTitle("  Research  ", []), { status: "valid", title: "Research" });
+  assert.deepEqual(validateWorkspaceTitle("x".repeat(80), []), { status: "valid", title: "x".repeat(80) });
+  assert.deepEqual(validateWorkspaceTitle(null, []), { status: "invalid" });
+  assert.deepEqual(validateWorkspaceTitle("   ", []), { status: "empty" });
+  assert.deepEqual(validateWorkspaceTitle(" research ", ["Research"]), { status: "duplicate" });
+  assert.deepEqual(validateWorkspaceTitle("Research", [null, "Research"]), { status: "duplicate" });
+  assert.deepEqual(validateWorkspaceTitle("Work", ["work"]), { status: "duplicate" });
+  assert.deepEqual(validateWorkspaceTitle("x".repeat(81), []), { status: "invalid" });
+});
+
 test("validates deferred web tabs and computes due state", () => {
   const tab = validateDeferredTab({ id: "deferred-1", title: "Read later", url: "https://example.com", dueAt: "2026-07-24T00:00:00.000Z", createdAt: "2026-07-23T00:00:00.000Z" });
   assert.equal(tab?.url, "https://example.com/");
   assert.ok(tab);
   assert.equal(isDeferredTabDue(tab, Date.parse("2026-07-24T00:00:00.000Z")), true);
   assert.equal(isDeferredTabDue(tab, Date.parse("2026-07-23T23:59:59.000Z")), false);
+});
+
+test("formats deferred times with a fixed local date-time pattern", async () => {
+  const shared = await import("../dist/shared.js");
+  assert.equal(typeof shared.formatDeferredDateTime, "function");
+  const localTime = new Date(2026, 6, 23, 17, 59).toISOString();
+  assert.equal(shared.formatDeferredDateTime(localTime), "2026-07-23 17:59");
+});
+
+test("keeps deferred tabs when a decorative favicon is too large", () => {
+  const tab = validateDeferredTab({
+    id: "deferred-2",
+    title: "Read later",
+    url: "https://example.com/article",
+    favIconUrl: `data:image/png;base64,${"a".repeat(5_000)}`,
+    dueAt: "2026-07-24T00:00:00.000Z",
+    createdAt: "2026-07-23T00:00:00.000Z",
+  });
+
+  assert.ok(tab);
+  assert.equal(tab.favIconUrl, undefined);
+});
+
+test("normalizes up to five unique deferred shortcut minutes", () => {
+  assert.deepEqual(normalizeDeferredShortcutMinutes(undefined), [1, 3, 5]);
+  assert.deepEqual(normalizeDeferredShortcutMinutes([5, 1, 5, 3]), [5, 1, 3]);
+  assert.equal(normalizeDeferredShortcutMinutes([0]), null);
+  assert.equal(normalizeDeferredShortcutMinutes([1, 2, 3, 4, 5, 6]), null);
+});
+
+test("renders a compact accessible deferred shortcut editor", async () => {
+  const [html, script, css] = await Promise.all([
+    readFile(new URL("../dist/options.html", import.meta.url), "utf8"),
+    readFile(new URL("../dist/options.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/options.css", import.meta.url), "utf8"),
+  ]);
+
+  const shortcutCardClasses = html.match(/<section class="([^"]*\bshortcut-card\b[^"]*)"/)?.[1]?.split(/\s+/);
+  assert.ok(shortcutCardClasses?.includes("card"));
+  assert.ok(shortcutCardClasses.includes("shortcut-card"));
+  assert.match(html, /<[^>]+(?=[^>]*\bid="deferred-shortcut-count")(?=[^>]*\baria-live="polite")[^>]*>/);
+  assert.match(html, /id="deferred-shortcut-note"/);
+  assert.match(script, /const MAX_DEFERRED_SHORTCUTS = 5/);
+  assert.match(script, /className = "deferred-shortcut"/);
+  assert.match(script, /input\.ariaLabel = "快捷提醒分钟数"/);
+  assert.match(script, /remove\.ariaLabel = "删除此快捷提醒时间"/);
+  assert.match(script, /input\.ariaLabel = `快捷提醒 \$\{index \+ 1\} 分钟数`;/);
+  assert.match(script, /remove\.ariaLabel = `删除第 \$\{index \+ 1\} 个快捷提醒`;/);
+  assert.match(script, /deferredShortcutCount\.textContent = `\$\{count\} \/ \$\{MAX_DEFERRED_SHORTCUTS\}`;/);
+  assert.match(script, /if \(count >= MAX_DEFERRED_SHORTCUTS\)\s*return;/);
+  assert.match(script, /addDeferredShortcut\.hidden = count >= MAX_DEFERRED_SHORTCUTS/);
+  assert.match(script, /remove\.disabled = count <= 1/);
+  assert.match(script, /focusTarget\?\.\s*focus\(\)/);
+  assert.match(script, /input\?\.focus\(\)/);
+  assert.match(css, /\.deferred-shortcuts\s*\{/);
+  assert.match(css, /\.deferred-shortcut-input\s*\{[^}]*width: calc\(5ch \+ 22px\);/);
+  assert.match(css, /\.deferred-shortcut:focus-within/);
+  assert.match(css, /\.deferred-shortcut-remove:hover/);
 });
 
 test("builds local deferred-tab handlers", async () => {
@@ -257,11 +344,64 @@ test("renders board-only deferred reminder controls", async () => {
   assert.match(css, /\.deferred-reminders/);
 });
 
+test("renders every scheduled reminder with clear status and actions", async () => {
+  const [script, css] = await Promise.all([
+    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.doesNotMatch(script, /\.filter\(\(tab\) => isDeferredTabDue\(tab\)\)/);
+  assert.match(script, /isDeferredTabDue\(tab\)/);
+  assert.match(script, /deferred-open/);
+  assert.match(script, /deferred-delete/);
+  assert.match(script, /deferred-status/);
+  assert.match(script, /deferred-icon/);
+  assert.match(script, /tab\.favIconUrl/);
+  assert.match(script, /github-tab-icon/);
+  assert.match(css, /\.deferred-open/);
+  assert.match(css, /\.deferred-delete/);
+  assert.match(css, /\.deferred-status/);
+  assert.match(css, /\.deferred-row \{[^}]*min-height: 40px/);
+  assert.match(css, /\.deferred-title \{[^}]*flex: 1/);
+  assert.match(css, /\.deferred-actions \{[^}]*flex: 0 0 auto/);
+  assert.doesNotMatch(css, /\.deferred-actions \{[^}]*(?:opacity: 0|display: none|visibility: hidden)/);
+});
+
+test("renders a configured deferred shortcut menu", async () => {
+  const [script, css] = await Promise.all([readFile(new URL("../dist/board.js", import.meta.url), "utf8"), readFile(new URL("../dist/board.css", import.meta.url), "utf8")]);
+  assert.match(script, /deferredShortcutMinutes/);
+  assert.match(script, /defer-menu/);
+  assert.match(script, /自定义时间/);
+  assert.match(css, /\.defer-menu/);
+});
+
+test("consumes a deferred reminder only after it opens successfully", async () => {
+  const [background, board] = await Promise.all([
+    readFile(new URL("../dist/background.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+  ]);
+  const openHandlerStart = background.indexOf('if (message.type === "open-deferred-tab")');
+  const openHandlerEnd = background.indexOf('if (message.type === "reschedule-deferred-tab")', openHandlerStart);
+  const openHandler = background.slice(openHandlerStart, openHandlerEnd);
+
+  assert.ok(openHandlerStart >= 0 && openHandlerEnd > openHandlerStart);
+  assert.match(openHandler, /await chrome\.tabs\.create/);
+  assert.match(openHandler, /await saveDeferredTabs/);
+  assert.ok(openHandler.indexOf("await chrome.tabs.create") < openHandler.indexOf("await saveDeferredTabs"));
+  assert.match(openHandler, /deferredTabs\.filter\(\(item\) => item\.id !== message\.id\)/);
+  assert.match(board, /type: "open-deferred-tab"[\s\S]*Promise\.all\(\[renderDeferredTabs\(\), renderBoardStatistics\(\)\]\)/);
+});
+
 test("builds a read-only board statistics handler", async () => {
-  const background = await readFile(new URL("../dist/background.js", import.meta.url), "utf8");
+  const [background, board] = await Promise.all([
+    readFile(new URL("../dist/background.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+  ]);
   assert.match(background, /message\.type === "get-board-statistics"/);
   assert.match(background, /duplicateTabCount/);
-  assert.match(background, /dueDeferredCount/);
+  assert.match(background, /deferredTabCount/);
+  assert.match(background, /dueDeferredCount: deferredTabCount/);
+  assert.match(board, /stats\.deferredTabCount \?\? stats\.dueDeferredCount \?\? 0/);
 });
 
 test("renders board statistics cards", async () => {
@@ -275,6 +415,9 @@ test("builds local workspace save, preview, restore, and delete handlers", async
   const background = await readFile(new URL("../dist/background.js", import.meta.url), "utf8");
 
   assert.match(background, /message\.type === "save-workspace"/);
+  assert.match(background, /validateWorkspaceTitle\(message\.title, storedWorkspaces\.map\(\(workspace\) => workspace\.title\)\)/);
+  assert.match(background, /请输入工作区名称/);
+  assert.match(background, /该工作区名称已存在/);
   assert.match(background, /message\.type === "get-workspace-restore-preview"/);
   assert.match(background, /message\.type === "restore-workspace"/);
   assert.match(background, /message\.confirmed !== true/);
@@ -291,10 +434,70 @@ test("renders local workspace selection and restore-preview dialogs", async () =
   assert.match(html, /id="open-workspaces"/);
   assert.match(html, /id="workspace-dialog"/);
   assert.match(html, /id="workspace-restore-dialog"/);
+  assert.match(html, /class="workspace-name-field"/);
+  assert.match(html, /<input\b(?=[^>]*\bid="workspace-name")(?=[^>]*\baria-describedby="workspace-name-error")(?=[^>]*\baria-invalid="false")[^>]*>/);
+  assert.match(html, /<p\b(?=[^>]*\bid="workspace-name-error")(?=[^>]*\bclass="workspace-name-toast")(?=[^>]*\brole="alert")(?=[^>]*\bhidden)[^>]*><\/p>/);
   assert.match(script, /type: "save-workspace"/);
+  assert.match(script, /validateWorkspaceTitle\(workspaceName\.value, workspaces\.map\(\(workspace\) => workspace\.title\)\)/);
+  assert.match(script, /showWorkspaceNameError\("请输入工作区名称"\)/);
+  assert.match(script, /showWorkspaceNameError\("该工作区名称已存在"\)/);
+  assert.match(script, /workspaceName\.addEventListener\("input", clearWorkspaceNameError\)/);
+  assert.match(script, /workspaceDialog\.addEventListener\("close", clearWorkspaceNameError\)/);
+
+  const saveStart = script.indexOf("async function saveCurrentWorkspace");
+  const saveEnd = script.indexOf("async function previewWorkspaceRestore", saveStart);
+  assert.ok(saveStart >= 0 && saveEnd > saveStart);
+  const saveCurrentWorkspace = script.slice(saveStart, saveEnd);
+  const validationCall = "validateWorkspaceTitle(workspaceName.value, workspaces.map((workspace) => workspace.title))";
+  const saveMessage = 'await send({ type: "save-workspace"';
+  assert.ok(saveCurrentWorkspace.indexOf(validationCall) < saveCurrentWorkspace.indexOf(saveMessage));
+  assert.match(saveCurrentWorkspace, /if \(title\.status === "empty"\) \{\s*showWorkspaceNameError\("请输入工作区名称"\);\s*return;\s*\}/);
+  assert.match(saveCurrentWorkspace, /if \(title\.status === "duplicate"\) \{\s*showWorkspaceNameError\("该工作区名称已存在"\);\s*return;\s*\}/);
+
+  const catchStart = /catch\s*\(error\)\s*\{/.exec(saveCurrentWorkspace)?.index ?? -1;
+  const catchEnd = saveCurrentWorkspace.indexOf("  workspaceName.value", catchStart);
+  assert.ok(catchStart >= 0 && catchEnd > catchStart);
+  const saveCatch = saveCurrentWorkspace.slice(catchStart, catchEnd);
+  assert.deepEqual([...saveCatch.matchAll(/error\.message === "([^"]+)"/g)].map((match) => match[1]), ["请输入工作区名称", "该工作区名称已存在"]);
+  assert.match(saveCatch, /showWorkspaceNameError\(error\.message\)/);
+  assert.match(saveCatch, /throw error;/);
+
+  const clearStart = script.indexOf("function clearWorkspaceNameError");
+  const showStart = script.indexOf("function showWorkspaceNameError", clearStart);
+  assert.ok(clearStart >= 0 && showStart > clearStart);
+  const clearWorkspaceNameError = script.slice(clearStart, showStart);
+  const showWorkspaceNameError = script.slice(showStart, saveStart);
+  assert.match(clearWorkspaceNameError, /workspaceNameError\.hidden = true;/);
+  assert.match(clearWorkspaceNameError, /workspaceNameError\.textContent = "";/);
+  assert.match(clearWorkspaceNameError, /workspaceName\.classList\.remove\("workspace-name-input-invalid"\)/);
+  assert.match(clearWorkspaceNameError, /workspaceName\.setAttribute\("aria-invalid", "false"\)/);
+  assert.match(showWorkspaceNameError, /workspaceNameError\.hidden = false;/);
+  assert.match(showWorkspaceNameError, /workspaceName\.classList\.add\("workspace-name-input-invalid"\)/);
+  assert.match(showWorkspaceNameError, /workspaceName\.setAttribute\("aria-invalid", "true"\)/);
+  assert.match(showWorkspaceNameError, /workspaceName\.focus\(\)/);
+
+  const successStatements = ["workspaceName.value = \"\";", "clearWorkspaceNameError();", "await loadWorkspaces();", "showStatus(\"工作区已保存\");"];
+  let priorStatement = -1;
+  for (const statement of successStatements) {
+    const statementIndex = saveCurrentWorkspace.indexOf(statement);
+    assert.ok(statementIndex > priorStatement, `Expected ${statement} after the prior success step`);
+    priorStatement = statementIndex;
+  }
+
   assert.match(script, /type: "get-workspace-restore-preview"/);
   assert.match(script, /type: "restore-workspace"/);
+  assert.match(script, /className = "deferred-actions"/);
+  assert.match(script, /makeButton\("恢复", "deferred-action deferred-open"/);
+  assert.match(script, /makeButton\("删除", "deferred-action deferred-delete"/);
   assert.match(css, /\.workspace-dialog/);
+  assert.match(css, /\.workspace-name-toast/);
+  assert.match(css, /\.workspace-name-input-invalid/);
+  assert.match(css, /\.workspace-name-toast\[hidden\]/);
+  const mobileStart = css.indexOf("@media (max-width: 640px)");
+  assert.ok(mobileStart >= 0);
+  const mobileCss = css.slice(mobileStart);
+  assert.match(mobileCss, /\.workspace-name-toast\s*\{[^}]*position: static;[^}]*width: 100%;[^}]*transform: none;/);
+  assert.match(mobileCss, /\.workspace-name-toast::before\s*\{[^}]*display: none;/);
 });
 
 test("builds duplicate preview and explicit batch-close handlers", async () => {
