@@ -1,4 +1,4 @@
-import { boardCardsForDevice, boardTabMatchesQuery, getSiteKey, isBoardKey, manualBoardGridRow, moveManualBoardCard, placeBoardCards, isDeferredTabDue, type BoardKey, type BoardLayout, type BoardSegmentCard, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type WorkspaceSnapshot, type WorkspaceTab } from "./shared.js";
+import { boardCardsForDevice, boardTabMatchesQuery, formatDeferredDateTime, getSiteKey, isBoardKey, manualBoardGridRow, moveManualBoardCard, placeBoardCards, isDeferredTabDue, validateWorkspaceTitle, type BoardKey, type BoardLayout, type BoardSegmentCard, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type Settings, type WorkspaceSnapshot, type WorkspaceTab } from "./shared.js";
 
 interface BoardState {
   user: { id: string; email?: string } | null;
@@ -6,6 +6,7 @@ interface BoardState {
   message?: string;
   groups: BoardSegmentCard[];
   layouts?: BoardLayout[];
+  settings?: Settings;
 }
 
 interface BoardResponse { error?: string }
@@ -43,7 +44,7 @@ const duplicateReviewList = $("#duplicate-review-list");
 const closeDuplicateReview = $<HTMLButtonElement>("#close-duplicate-review");
 const cancelDuplicateReview = $<HTMLButtonElement>("#cancel-duplicate-review");
 const confirmDuplicateReview = $<HTMLButtonElement>("#confirm-duplicate-review");
-const openWorkspaces = $<HTMLButtonElement>("#open-workspaces"), workspaceDialog = $<HTMLDialogElement>("#workspace-dialog"), workspaceName = $<HTMLInputElement>("#workspace-name"), workspaceTabs = $("#workspace-tabs"), saveWorkspace = $<HTMLButtonElement>("#save-workspace"), workspaceList = $("#workspace-list"), closeWorkspaceDialog = $<HTMLButtonElement>("#close-workspace-dialog"), workspaceRestoreDialog = $<HTMLDialogElement>("#workspace-restore-dialog"), workspaceRestoreSummary = $("#workspace-restore-summary"), workspaceRestoreList = $("#workspace-restore-list"), confirmWorkspaceRestore = $<HTMLButtonElement>("#confirm-workspace-restore"), cancelWorkspaceRestore = $<HTMLButtonElement>("#cancel-workspace-restore");
+const openWorkspaces = $<HTMLButtonElement>("#open-workspaces"), workspaceDialog = $<HTMLDialogElement>("#workspace-dialog"), workspaceName = $<HTMLInputElement>("#workspace-name"), workspaceNameError = $<HTMLElement>("#workspace-name-error"), workspaceTabs = $("#workspace-tabs"), saveWorkspace = $<HTMLButtonElement>("#save-workspace"), workspaceList = $("#workspace-list"), closeWorkspaceDialog = $<HTMLButtonElement>("#close-workspace-dialog"), workspaceRestoreDialog = $<HTMLDialogElement>("#workspace-restore-dialog"), workspaceRestoreSummary = $("#workspace-restore-summary"), workspaceRestoreList = $("#workspace-restore-list"), confirmWorkspaceRestore = $<HTMLButtonElement>("#confirm-workspace-restore"), cancelWorkspaceRestore = $<HTMLButtonElement>("#cancel-workspace-restore");
 const deferredReminders = $("#deferred-reminders"), deferredList = $("#deferred-list");
 const boardStatistics = $("#board-statistics");
 
@@ -64,11 +65,63 @@ function showStatus(message: string, error = false): void {
 
 async function loadWorkspaces(): Promise<void> { workspaces = (await send<{ workspaces: WorkspaceSnapshot[] }>({ type: "get-workspaces" })).workspaces; renderWorkspaces(); }
 function renderWorkspaces(): void {
-  workspaceList.replaceChildren(...workspaces.map((workspace) => { const row = document.createElement("div"); row.className = "workspace-row"; const name = document.createElement("span"); name.textContent = `${workspace.title} · ${workspace.tabs.length} 个标签`; const restore = makeButton("恢复", "button secondary", `恢复 ${workspace.title}`); restore.addEventListener("click", () => void previewWorkspaceRestore(workspace.id)); const remove = makeButton("删除", "icon-button danger", `删除 ${workspace.title}`); remove.addEventListener("click", () => void deleteWorkspace(workspace.id)); row.append(name, restore, remove); return row; }));
+  workspaceList.replaceChildren(...workspaces.map((workspace) => {
+    const row = document.createElement("div");
+    row.className = "workspace-row";
+    const name = document.createElement("span");
+    name.textContent = `${workspace.title} · ${workspace.tabs.length} 个标签`;
+    const actions = document.createElement("div");
+    actions.className = "deferred-actions";
+    const restore = makeButton("恢复", "deferred-action deferred-open", `恢复 ${workspace.title}`);
+    restore.addEventListener("click", () => void previewWorkspaceRestore(workspace.id));
+    const remove = makeButton("删除", "deferred-action deferred-delete", `删除 ${workspace.title}`);
+    remove.addEventListener("click", () => void deleteWorkspace(workspace.id));
+    actions.append(restore, remove);
+    row.append(name, actions);
+    return row;
+  }));
 }
 function renderWorkspaceTabs(): void { const tabs = currentState?.groups.flatMap((group) => group.tabs).filter((tab): tab is typeof tab & { url: string } => Boolean(tab.url)); workspaceTabs.replaceChildren(...(tabs ?? []).map((tab) => { const label = document.createElement("label"); const input = document.createElement("input"); input.type = "checkbox"; input.checked = true; input.value = String(tab.id); input.dataset.title = tab.title; input.dataset.url = tab.url; label.append(input, document.createTextNode(tab.title)); return label; })); }
 async function openWorkspaceDialog(): Promise<void> { renderWorkspaceTabs(); await loadWorkspaces(); workspaceDialog.showModal(); }
-async function saveCurrentWorkspace(): Promise<void> { const tabs: WorkspaceTab[] = Array.from(workspaceTabs.querySelectorAll<HTMLInputElement>("input:checked")).map((input) => ({ title: input.dataset.title ?? "未命名标签页", url: input.dataset.url ?? "" })); await send({ type: "save-workspace", title: workspaceName.value, tabs }); workspaceName.value = ""; await loadWorkspaces(); showStatus("工作区已保存"); }
+function clearWorkspaceNameError(): void {
+  workspaceNameError.hidden = true;
+  workspaceNameError.textContent = "";
+  workspaceName.classList.remove("workspace-name-input-invalid");
+  workspaceName.setAttribute("aria-invalid", "false");
+}
+function showWorkspaceNameError(message: string): void {
+  workspaceNameError.textContent = message;
+  workspaceNameError.hidden = false;
+  workspaceName.classList.add("workspace-name-input-invalid");
+  workspaceName.setAttribute("aria-invalid", "true");
+  workspaceName.focus();
+}
+async function saveCurrentWorkspace(): Promise<void> {
+  const title = validateWorkspaceTitle(workspaceName.value, workspaces.map((workspace) => workspace.title));
+  if (title.status === "empty") {
+    showWorkspaceNameError("请输入工作区名称");
+    return;
+  }
+  if (title.status === "duplicate") {
+    showWorkspaceNameError("该工作区名称已存在");
+    return;
+  }
+  if (title.status !== "valid") throw new Error("工作区名称无效");
+  const tabs: WorkspaceTab[] = Array.from(workspaceTabs.querySelectorAll<HTMLInputElement>("input:checked")).map((input) => ({ title: input.dataset.title ?? "未命名标签页", url: input.dataset.url ?? "" }));
+  try {
+    await send({ type: "save-workspace", title: title.title, tabs });
+  } catch (error) {
+    if (error instanceof Error && (error.message === "请输入工作区名称" || error.message === "该工作区名称已存在")) {
+      showWorkspaceNameError(error.message);
+      return;
+    }
+    throw error;
+  }
+  workspaceName.value = "";
+  clearWorkspaceNameError();
+  await loadWorkspaces();
+  showStatus("工作区已保存");
+}
 async function previewWorkspaceRestore(id: string): Promise<void> { const result = await send<{ preview: { tabs: WorkspaceTab[]; unavailableCount: number } }>({ type: "get-workspace-restore-preview", id }); restoreWorkspaceId = id; workspaceRestoreSummary.textContent = `将打开 ${result.preview.tabs.length} 个标签${result.preview.unavailableCount ? `，跳过 ${result.preview.unavailableCount} 个不可用页面` : ""}`; workspaceRestoreList.replaceChildren(...result.preview.tabs.map((tab) => { const item = document.createElement("p"); item.textContent = tab.title; return item; })); workspaceRestoreDialog.showModal(); }
 async function restoreWorkspace(): Promise<void> { if (!restoreWorkspaceId) return; const tab = await chrome.tabs.getCurrent(); const result = await send<{ created: number }>({ type: "restore-workspace", id: restoreWorkspaceId, windowId: tab?.windowId, confirmed: true }); workspaceRestoreDialog.close(); showStatus(`已打开 ${result.created} 个标签`); }
 async function deleteWorkspace(id: string): Promise<void> { await send({ type: "delete-workspace", id }); await loadWorkspaces(); }
@@ -152,7 +205,7 @@ function renderTab(tab: BoardSegmentCard["tabs"][number], targetBoardKey: BoardK
     event.stopPropagation();
   });
   const defer = makeButton("◷", "tab-defer", `稍后处理：${tab.title}`);
-  defer.addEventListener("click", (event) => { event.stopPropagation(); const dueAt = window.prompt("提醒时间（例如 2026-07-24T09:00）", ""); if (dueAt) void deferTab(tab.id, dueAt); });
+  defer.addEventListener("click", (event) => { event.stopPropagation(); const existing = row.querySelector(".defer-menu"); if (existing) { existing.remove(); return; } const menu = document.createElement("div"); menu.className = "defer-menu"; const minutes = currentState?.settings?.deferredShortcutMinutes ?? [1, 3, 5]; for (const minute of minutes) { const option = makeButton(`${minute} 分钟后`, "defer-option", `${minute} 分钟后提醒`); option.addEventListener("click", () => { menu.remove(); void deferTab(tab.id, new Date(Date.now() + minute * 60_000).toISOString()); }); menu.append(option); } const custom = document.createElement("input"); custom.type = "datetime-local"; custom.className = "defer-custom-time"; custom.setAttribute("aria-label", "自定义时间"); const confirm = makeButton("自定义时间", "defer-option", "按自定义时间提醒"); confirm.addEventListener("click", () => { if (custom.value) { menu.remove(); void deferTab(tab.id, new Date(custom.value).toISOString()); } }); menu.append(custom, confirm); row.append(menu); });
   row.append(defer, close, open);
   row.addEventListener("dragstart", (event) => {
     if (event.target instanceof Element && event.target.closest(".tab-close")) {
@@ -183,8 +236,49 @@ function renderTab(tab: BoardSegmentCard["tabs"][number], targetBoardKey: BoardK
 }
 
 async function deferTab(tabId: number, dueAt: string): Promise<void> { try { await send({ type: "defer-board-tab", tabId, dueAt: new Date(dueAt).toISOString() }); showStatus("已加入稍后处理"); await load(); } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); } }
-async function renderDeferredTabs(): Promise<void> { const tabs = (await send<{ tabs: DeferredTab[] }>({ type: "get-deferred-tabs" })).tabs.filter((tab) => isDeferredTabDue(tab)); deferredReminders.classList.toggle("hidden", tabs.length === 0); deferredList.replaceChildren(...tabs.map((tab) => { const row = document.createElement("div"); row.className = "deferred-row"; const title = document.createElement("span"); title.textContent = tab.title; const open = makeButton("打开", "button secondary", `打开 ${tab.title}`); open.addEventListener("click", async () => { const current = await chrome.tabs.getCurrent(); await send({ type: "open-deferred-tab", id: tab.id, windowId: current?.windowId }); }); const remove = makeButton("删除", "icon-button danger", `删除 ${tab.title}`); remove.addEventListener("click", async () => { await send({ type: "delete-deferred-tab", id: tab.id }); await renderDeferredTabs(); }); row.append(title, open, remove); return row; })); }
-async function renderBoardStatistics(): Promise<void> { const stats = await send<{ eligibleTabCount: number; duplicateTabCount: number; dueDeferredCount: number }>({ type: "get-board-statistics" }); boardStatistics.replaceChildren(...[["网页标签", stats.eligibleTabCount], ["重复页面", stats.duplicateTabCount], ["待恢复提醒", stats.dueDeferredCount]].map(([label, value]) => { const card = document.createElement("div"); const number = document.createElement("strong"); number.textContent = String(value); const text = document.createElement("span"); text.textContent = String(label); card.append(number, text); return card; })); }
+function renderDeferredRow(tab: DeferredTab): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "deferred-row";
+
+  const icon = document.createElement("img");
+  icon.className = "tab-icon deferred-icon";
+  icon.alt = "";
+  icon.src = tab.favIconUrl || "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
+  icon.classList.toggle("github-tab-icon", getSiteKey(tab.url) === "github.com");
+  const title = document.createElement("span");
+  title.className = "deferred-title";
+  title.textContent = tab.title;
+  const due = isDeferredTabDue(tab);
+  const reminderStatus = document.createElement("span");
+  reminderStatus.className = `deferred-status ${due ? "due" : "scheduled"}`;
+  reminderStatus.textContent = due ? `已到期 · ${formatDeferredDateTime(tab.dueAt)}` : `${formatDeferredDateTime(tab.dueAt)} 提醒`;
+
+  const actions = document.createElement("div");
+  actions.className = "deferred-actions";
+  const open = makeButton("打开", "deferred-action deferred-open", `打开 ${tab.title}`);
+  open.addEventListener("click", async () => {
+    const current = await chrome.tabs.getCurrent();
+    await send({ type: "open-deferred-tab", id: tab.id, windowId: current?.windowId });
+    await Promise.all([renderDeferredTabs(), renderBoardStatistics()]);
+  });
+  const remove = makeButton("删除", "deferred-action deferred-delete", `删除 ${tab.title}`);
+  remove.addEventListener("click", async () => {
+    await send({ type: "delete-deferred-tab", id: tab.id });
+    await Promise.all([renderDeferredTabs(), renderBoardStatistics()]);
+  });
+  actions.append(open, remove);
+  row.append(icon, title, reminderStatus, actions);
+  return row;
+}
+
+async function renderDeferredTabs(): Promise<void> {
+  const tabs = (await send<{ tabs: DeferredTab[] }>({ type: "get-deferred-tabs" })).tabs
+    .sort((first, second) => Date.parse(first.dueAt) - Date.parse(second.dueAt));
+  deferredReminders.classList.toggle("hidden", tabs.length === 0);
+  deferredList.replaceChildren(...tabs.map(renderDeferredRow));
+}
+
+async function renderBoardStatistics(): Promise<void> { const stats = await send<{ eligibleTabCount: number; duplicateTabCount: number; deferredTabCount?: number; dueDeferredCount?: number }>({ type: "get-board-statistics" }); const deferredTabCount = stats.deferredTabCount ?? stats.dueDeferredCount ?? 0; boardStatistics.replaceChildren(...[["网页标签", stats.eligibleTabCount], ["重复页面", stats.duplicateTabCount], ["待恢复提醒", deferredTabCount]].map(([label, value]) => { const card = document.createElement("div"); const number = document.createElement("strong"); number.textContent = String(value); const text = document.createElement("span"); text.textContent = String(label); card.append(number, text); return card; })); }
 
 function renderCard(card: BoardSegmentCard, rank: number, automatic: boolean, placement: { slot: number; compositeHeight: 1 | 2 }): HTMLElement {
   const article = document.createElement("article");
@@ -490,7 +584,7 @@ async function saveAutoFill(enabled: boolean): Promise<void> {
 $("#refresh").addEventListener("click", () => void load().catch((error) => showStatus(String(error), true)));
 reviewDuplicates.addEventListener("click", () => void openDuplicateReview());
 openWorkspaces.addEventListener("click", () => void openWorkspaceDialog().catch((error) => showStatus(String(error), true)));
-closeWorkspaceDialog.addEventListener("click", () => workspaceDialog.close()); saveWorkspace.addEventListener("click", () => void saveCurrentWorkspace().catch((error) => showStatus(String(error), true))); confirmWorkspaceRestore.addEventListener("click", () => void restoreWorkspace().catch((error) => showStatus(String(error), true))); cancelWorkspaceRestore.addEventListener("click", () => workspaceRestoreDialog.close());
+closeWorkspaceDialog.addEventListener("click", () => workspaceDialog.close()); saveWorkspace.addEventListener("click", () => void saveCurrentWorkspace().catch((error) => showStatus(String(error), true))); workspaceName.addEventListener("input", clearWorkspaceNameError); workspaceDialog.addEventListener("close", clearWorkspaceNameError); confirmWorkspaceRestore.addEventListener("click", () => void restoreWorkspace().catch((error) => showStatus(String(error), true))); cancelWorkspaceRestore.addEventListener("click", () => workspaceRestoreDialog.close());
 closeDuplicateReview.addEventListener("click", () => duplicateReviewDialog.close());
 cancelDuplicateReview.addEventListener("click", () => duplicateReviewDialog.close());
 confirmDuplicateReview.addEventListener("click", () => void closeReviewedDuplicates());
