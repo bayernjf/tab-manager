@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 
 globalThis.chrome = {};
 const {
@@ -16,6 +17,7 @@ const {
   groupRuleFromSyncRow,
   getSiteKey,
   ignoredSiteFromSyncRow,
+  isBrowserNewTabUrl,
   isIgnoredSite,
   matchesDomain,
   normalizeDomainInput,
@@ -30,11 +32,18 @@ const {
   segmentTabs,
   placeBoardCards,
   boardCardsForDevice,
+  boardTabMatchesQuery,
+  boardWindowLabel,
+  findDuplicateBoardTabs,
+  validateWorkspaceSnapshot,
+  validateDeferredTab,
+  isDeferredTabDue,
   manualBoardGridRow,
   moveManualBoardCard,
   moveBoardGroupRank,
   validateBoardTabDrop,
   validateBoardLayout,
+  validateOptionsSettings,
   settingsFromSyncRow,
   toPortableData,
   toPortableDataFromState,
@@ -42,7 +51,275 @@ const {
   buildVirtualBoardGroups,
   moveVirtualBoardAssignment,
 } = await import("../dist/shared.js");
-const { getCurrentUser, isExplicitAuthenticationFailure } = await import("../dist/auth.js");
+const { getCurrentUser, getStoredUser, isExplicitAuthenticationFailure, isRememberedSessionValid } = await import("../dist/auth.js");
+const { settingsSyncRow } = await import("../dist/sync.js");
+
+test("keeps authentication screens hidden until cached session lookup resolves", async () => {
+  const popupHtml = await readFile(new URL("../dist/popup.html", import.meta.url), "utf8");
+
+  assert.match(popupHtml, /<main id="boot-view" class="boot-view"[^>]*>/);
+  assert.match(popupHtml, /<main id="auth-view" class="auth-view hidden">/);
+  assert.match(popupHtml, /<main id="app-view" class="hidden">/);
+});
+
+test("renders a seven-day device remember checkbox for sign-in", async () => {
+  const [popupHtml, popupScript] = await Promise.all([
+    readFile(new URL("../dist/popup.html", import.meta.url), "utf8"),
+    readFile(new URL("../dist/popup.js", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(popupHtml, /<input id="remember-device" type="checkbox">/);
+  assert.match(popupHtml, /在此设备记住7天/);
+  assert.match(popupScript, /rememberForSevenDays: rememberDevice\.checked/);
+});
+
+test("invalidates remembered sessions at the seven-day deadline", () => {
+  const now = 1_700_000_000;
+
+  assert.equal(isRememberedSessionValid(now + 1, now), true);
+  assert.equal(isRememberedSessionValid(now, now), false);
+  assert.equal(isRememberedSessionValid(undefined, now), true);
+});
+
+test("includes the new-tab board setting in the built options page", async () => {
+  const optionsHtml = await readFile(new URL("../dist/options.html", import.meta.url), "utf8");
+
+  assert.match(optionsHtml, /<input id="new-tab-board" type="checkbox" aria-describedby="new-tab-board-description">/);
+  assert.match(optionsHtml, /新标签页打开看板/);
+  assert.match(optionsHtml, /<p id="new-tab-board-description" class="muted">启用后，点击 \+ 或按 Ctrl\/Cmd\+T 会打开 Tab Garden 看板；关闭后保持 Chrome\/Edge 原生新标签页不变。<\/p>/);
+});
+
+test("opens the board in the popup's current window", async () => {
+  const popupScript = await readFile(new URL("../dist/popup.js", import.meta.url), "utf8");
+
+  assert.match(popupScript, /chrome\.tabs\.query\(\{ active: true, currentWindow: true \}\)/);
+  assert.match(popupScript, /type: "open-tab-board", windowId/);
+});
+
+test("builds board tab activation and close message handlers", async () => {
+  const background = await readFile(new URL("../dist/background.js", import.meta.url), "utf8");
+
+  assert.match(background, /message\.type === "activate-board-tab"/);
+  assert.match(background, /chrome\.windows\.update\(tab\.windowId, \{ focused: true \}\)/);
+  assert.match(background, /chrome\.tabs\.update\(tabId, \{ active: true \}\)/);
+  assert.match(background, /message\.type === "close-board-tab"/);
+  assert.match(background, /chrome\.tabs\.remove\(message\.tabId\)/);
+});
+
+test("renders board tab open and close controls with focus-revealed close styling", async () => {
+  const [boardScript, boardCss] = await Promise.all([
+    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(boardScript, /className = "tab-open"/);
+  assert.match(boardScript, /"tab-close"/);
+  assert.match(boardScript, /type: "activate-board-tab", tabId/);
+  assert.match(boardScript, /type: "close-board-tab", tabId/);
+  assert.match(boardCss, /\.tab-row:hover \.tab-close/);
+  assert.match(boardCss, /\.tab-row:focus-within \.tab-close/);
+});
+
+test("styles the board as the header's primary action", async () => {
+  const [popupHtml, popupCss] = await Promise.all([
+    readFile(new URL("../dist/popup.html", import.meta.url), "utf8"),
+    readFile(new URL("../dist/popup.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(popupHtml, /id="open-board" class="header-action board-action"/);
+  assert.match(popupHtml, /id="logout" class="header-action logout-action"/);
+  assert.match(popupCss, /\.board-action \{[^}]*background: #386650/);
+  assert.match(popupCss, /\.logout-action \{[^}]*border: 1px solid #d9e2dc/);
+});
+
+test("positions board tab close controls on the right", async () => {
+  const boardCss = await readFile(new URL("../dist/board.css", import.meta.url), "utf8");
+
+  assert.match(boardCss, /\.tab-close \{[^}]*right: 8px/);
+  assert.doesNotMatch(boardCss, /\.tab-close \{[^}]*left: 10px/);
+  assert.match(boardCss, /\.tab-open \{[^}]*padding: 3px 4px/);
+  assert.match(boardCss, /\.tab-row:hover \.tab-open[^}]*padding-right: 72px/);
+  assert.match(boardCss, /\.tab-defer \{[^}]*color: #8b6518/);
+  assert.match(boardCss, /\.tab-row:hover \.tab-current/);
+  assert.match(boardCss, /\.tab-row:hover \.tab-window/);
+});
+
+test("gives GitHub's white favicon a contrasting background", async () => {
+  const [boardScript, boardCss] = await Promise.all([
+    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(boardScript, /getSiteKey\(tab\.url\) === "github\.com"/);
+  assert.match(boardScript, /github-tab-icon/);
+  assert.match(boardCss, /\.github-tab-icon \{[^}]*background: #24292f/);
+});
+
+test("identifies only Chrome's exact browser new-tab URL", () => {
+  assert.equal(isBrowserNewTabUrl("chrome://newtab/"), true);
+  assert.equal(isBrowserNewTabUrl("edge://newtab/"), true);
+  assert.equal(isBrowserNewTabUrl(undefined), false);
+  assert.equal(isBrowserNewTabUrl("chrome-extension://extension-id/board.html"), false);
+  assert.equal(isBrowserNewTabUrl("https://example.com/"), false);
+  assert.equal(isBrowserNewTabUrl("http://example.com/"), false);
+  assert.equal(isBrowserNewTabUrl("chrome://new-tab-page/"), false);
+  assert.equal(isBrowserNewTabUrl("chrome://newtab"), false);
+  assert.equal(isBrowserNewTabUrl("edge://newtab"), false);
+});
+
+test("matches board-tab search queries against title, URL, and hostname", () => {
+  const tab = { id: 1, windowId: 7, title: "GitHub pull request", url: "https://github.com/openai/tab-garden/pulls/1" };
+
+  assert.equal(boardTabMatchesQuery(tab, "github"), true);
+  assert.equal(boardTabMatchesQuery(tab, "openai/tab-garden"), true);
+  assert.equal(boardTabMatchesQuery(tab, "calendar"), false);
+  assert.equal(boardTabMatchesQuery(tab, ""), true);
+});
+
+test("creates readable runtime-only window labels", () => {
+  assert.equal(boardWindowLabel(1), "窗口 1");
+  assert.equal(boardWindowLabel(0), null);
+  assert.equal(boardWindowLabel(1.5), null);
+});
+
+test("renders board search and source-window filter controls", async () => {
+  const [boardHtml, boardScript, boardCss] = await Promise.all([
+    readFile(new URL("../dist/board.html", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(boardHtml, /id="board-search"/);
+  assert.match(boardHtml, /id="window-filter"/);
+  assert.match(boardScript, /boardTabMatchesQuery/);
+  assert.match(boardScript, /renderWindowFilter/);
+  assert.match(boardCss, /\.board-filters/);
+  assert.match(boardCss, /\.tab-window/);
+});
+
+test("marks tabs from the board window as current", async () => {
+  const [boardScript, boardCss] = await Promise.all([
+    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(boardScript, /tab-current/);
+  assert.match(boardScript, /isCurrentWindow/);
+  assert.match(boardScript, /if \(tab\.isCurrentWindow\)[\s\S]*if \(tab\.windowLabel\)/);
+  assert.match(boardCss, /\.tab-current/);
+});
+
+test("groups only duplicate normalized HTTP(S) URLs and retains the first tab", () => {
+  const groups = findDuplicateBoardTabs([
+    { id: 1, title: "One", url: "https://example.com" },
+    { id: 2, title: "Two", url: "https://example.com/" },
+    { id: 3, title: "Three", url: "https://example.com/docs" },
+    { id: 4, title: "Four", url: "https://example.com/" },
+    { id: 5, title: "Internal", url: "chrome://newtab/" },
+  ]);
+
+  assert.deepEqual(groups.map((group) => [group.url, group.retainedTabId, group.tabs.map((tab) => tab.id)]), [
+    ["https://example.com/", 1, [1, 2, 4]],
+  ]);
+});
+
+test("validates local workspace snapshots without unsupported URLs", () => {
+  const snapshot = validateWorkspaceSnapshot({
+    id: "workspace-1", title: "Research", createdAt: "2026-07-23T00:00:00.000Z",
+    tabs: [{ title: "Docs", url: "https://example.com/docs" }, { title: "Internal", url: "chrome://newtab/" }],
+  });
+
+  assert.equal(snapshot, null);
+});
+
+test("validates deferred web tabs and computes due state", () => {
+  const tab = validateDeferredTab({ id: "deferred-1", title: "Read later", url: "https://example.com", dueAt: "2026-07-24T00:00:00.000Z", createdAt: "2026-07-23T00:00:00.000Z" });
+  assert.equal(tab?.url, "https://example.com/");
+  assert.ok(tab);
+  assert.equal(isDeferredTabDue(tab, Date.parse("2026-07-24T00:00:00.000Z")), true);
+  assert.equal(isDeferredTabDue(tab, Date.parse("2026-07-23T23:59:59.000Z")), false);
+});
+
+test("builds local deferred-tab handlers", async () => {
+  const background = await readFile(new URL("../dist/background.js", import.meta.url), "utf8");
+  assert.match(background, /message\.type === "defer-board-tab"/);
+  assert.match(background, /message\.type === "get-deferred-tabs"/);
+  assert.match(background, /message\.type === "open-deferred-tab"/);
+  assert.match(background, /message\.type === "reschedule-deferred-tab"/);
+  assert.match(background, /message\.type === "delete-deferred-tab"/);
+});
+
+test("renders board-only deferred reminder controls", async () => {
+  const [html, script, css] = await Promise.all([readFile(new URL("../dist/board.html", import.meta.url), "utf8"), readFile(new URL("../dist/board.js", import.meta.url), "utf8"), readFile(new URL("../dist/board.css", import.meta.url), "utf8")]);
+  assert.match(html, /id="deferred-reminders"/);
+  assert.match(script, /type: "defer-board-tab"/);
+  assert.match(script, /type: "get-deferred-tabs"/);
+  assert.match(css, /\.deferred-reminders/);
+});
+
+test("builds a read-only board statistics handler", async () => {
+  const background = await readFile(new URL("../dist/background.js", import.meta.url), "utf8");
+  assert.match(background, /message\.type === "get-board-statistics"/);
+  assert.match(background, /duplicateTabCount/);
+  assert.match(background, /dueDeferredCount/);
+});
+
+test("renders board statistics cards", async () => {
+  const [html, script, css] = await Promise.all([readFile(new URL("../dist/board.html", import.meta.url), "utf8"), readFile(new URL("../dist/board.js", import.meta.url), "utf8"), readFile(new URL("../dist/board.css", import.meta.url), "utf8")]);
+  assert.match(html, /id="board-statistics"/);
+  assert.match(script, /type: "get-board-statistics"/);
+  assert.match(css, /\.board-statistics/);
+});
+
+test("builds local workspace save, preview, restore, and delete handlers", async () => {
+  const background = await readFile(new URL("../dist/background.js", import.meta.url), "utf8");
+
+  assert.match(background, /message\.type === "save-workspace"/);
+  assert.match(background, /message\.type === "get-workspace-restore-preview"/);
+  assert.match(background, /message\.type === "restore-workspace"/);
+  assert.match(background, /message\.confirmed !== true/);
+  assert.match(background, /chrome\.tabs\.create/);
+  assert.match(background, /message\.type === "delete-workspace"/);
+});
+
+test("renders local workspace selection and restore-preview dialogs", async () => {
+  const [html, script, css] = await Promise.all([
+    readFile(new URL("../dist/board.html", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
+  ]);
+  assert.match(html, /id="open-workspaces"/);
+  assert.match(html, /id="workspace-dialog"/);
+  assert.match(html, /id="workspace-restore-dialog"/);
+  assert.match(script, /type: "save-workspace"/);
+  assert.match(script, /type: "get-workspace-restore-preview"/);
+  assert.match(script, /type: "restore-workspace"/);
+  assert.match(css, /\.workspace-dialog/);
+});
+
+test("builds duplicate preview and explicit batch-close handlers", async () => {
+  const background = await readFile(new URL("../dist/background.js", import.meta.url), "utf8");
+
+  assert.match(background, /message\.type === "get-board-duplicate-preview"/);
+  assert.match(background, /findDuplicateBoardTabs/);
+  assert.match(background, /message\.type === "close-board-duplicates"/);
+  assert.match(background, /message\.confirmed !== true/);
+  assert.match(background, /chrome\.tabs\.remove/);
+});
+
+test("renders a duplicate review dialog before batch closure", async () => {
+  const [html, script, css] = await Promise.all([
+    readFile(new URL("../dist/board.html", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(html, /id="review-duplicates"/);
+  assert.match(html, /id="duplicate-review-dialog"/);
+  assert.match(script, /type: "get-board-duplicate-preview"/);
+  assert.match(script, /type: "close-board-duplicates"/);
+  assert.match(css, /\.duplicate-review/);
+});
 
 test("builds board cards from ten-tab segments and retains an empty custom card", () => {
   const tabs = Array.from({ length: 11 }, (_value, index) => ({ id: index + 1, title: `Tab ${index + 1}` }));
@@ -129,11 +406,55 @@ test("builds virtual automatic groups by site while custom assignments take prec
   ]);
 });
 
+test("aggregates sites across windows while retaining each tab's custom assignment", () => {
+  const customId = "7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573";
+  const groups = buildVirtualBoardGroups({
+    windowId: 7,
+    tabs: [
+      { id: 1, windowId: 7, title: "First", url: "https://example.com/first" },
+      { id: 2, windowId: 8, title: "Second", url: "https://example.com/second" },
+    ],
+    settings: { autoGroupEnabled: true, minimumTabs: 2, defaultGroupColor: "blue" },
+    rules: [],
+    ignoredSites: [],
+    customGroups: [{ id: customId, title: "Research", color: "purple", sortOrder: 0 }],
+    assignments: { "8:2": { windowId: 8, tabId: 2, boardKey: `custom:${customId}`, order: 0 } },
+  });
+
+  assert.deepEqual(groups.map((group) => [group.boardKey, group.tabs.map((tab) => tab.id)]), [
+    ["ungrouped", [1]],
+    [`custom:${customId}`, [2]],
+  ]);
+});
+
 test("treats only explicit authentication responses as session-invalidating", () => {
   assert.equal(isExplicitAuthenticationFailure({ status: 401 }), true);
   assert.equal(isExplicitAuthenticationFailure({ status: 403 }), true);
   assert.equal(isExplicitAuthenticationFailure({ status: 500 }), false);
   assert.equal(isExplicitAuthenticationFailure(new TypeError("Failed to fetch")), false);
+});
+
+test("returns the cached user without waiting for an authentication request", async () => {
+  const values = {
+    supabaseSession: {
+      access_token: "access-token",
+      refresh_token: "refresh-token",
+      expires_at: Math.floor(Date.now() / 1000) + 3600,
+      user: { id: "user-1", email: "user@example.com" },
+    },
+  };
+  globalThis.chrome.storage = {
+    local: {
+      get: async (key) => key in values ? { [key]: values[key] } : {},
+    },
+  };
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => { throw new Error("The popup must not wait for this request"); };
+    assert.deepEqual(await getStoredUser(), values.supabaseSession.user);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("keeps the cached user through a transient auth network failure but clears an explicit rejection", async () => {
@@ -482,6 +803,7 @@ test("converts complete Supabase settings rows to concrete local settings", () =
     cloud_sync_enabled: false,
     sync_rules_enabled: true,
     sync_ignore_list_enabled: false,
+    open_board_on_new_tab: true,
   }), {
     autoGroupEnabled: false,
     minimumTabs: 4,
@@ -489,6 +811,49 @@ test("converts complete Supabase settings rows to concrete local settings", () =
     cloudSyncEnabled: false,
     syncRulesEnabled: true,
     syncIgnoreListEnabled: false,
+    openBoardOnNewTab: true,
+  });
+});
+
+test("defaults a missing new-tab board setting from older Supabase rows", () => {
+  assert.equal(settingsFromSyncRow({
+    user_id: "user-1",
+    auto_group_enabled: true,
+    minimum_tabs: 2,
+  })?.openBoardOnNewTab, false);
+});
+
+test("validates the new-tab board setting in options payloads", () => {
+  const settings = {
+    autoGroupEnabled: true,
+    minimumTabs: 2,
+    defaultGroupColor: "blue",
+    cloudSyncEnabled: true,
+    syncRulesEnabled: true,
+    syncIgnoreListEnabled: true,
+    openBoardOnNewTab: true,
+  };
+  const { openBoardOnNewTab: _openBoardOnNewTab, ...legacySettings } = settings;
+
+  assert.equal(validateOptionsSettings(settings)?.openBoardOnNewTab, true);
+  assert.equal(validateOptionsSettings(legacySettings)?.openBoardOnNewTab, false);
+  assert.equal(validateOptionsSettings({ ...settings, openBoardOnNewTab: "true" }), null);
+});
+
+test("includes the new-tab board setting in sync payloads", () => {
+  assert.deepEqual(settingsSyncRow("user-1", {
+    autoGroupEnabled: true,
+    minimumTabs: 2,
+    openBoardOnNewTab: true,
+  }), {
+    user_id: "user-1",
+    auto_group_enabled: true,
+    minimum_tabs: 2,
+    open_board_on_new_tab: true,
+    default_group_color: undefined,
+    cloud_sync_enabled: undefined,
+    sync_rules_enabled: undefined,
+    sync_ignore_list_enabled: undefined,
   });
 });
 
@@ -719,11 +1084,38 @@ test("parses only valid portable data and rejects sensitive unknown keys", () =>
     ignoredSites: [{ id: "ignore-1", domain: "ads.example.com", matchScope: "exact", sortOrder: 0 }],
   };
 
-  assert.deepEqual(parsePortableData(valid), valid);
+  assert.deepEqual(parsePortableData(valid), {
+    ...valid,
+    settings: { ...valid.settings, openBoardOnNewTab: false },
+  });
   assert.equal(parsePortableData({ ...valid, settings: { ...valid.settings, minimumTabs: 0 } }), null);
   assert.equal(parsePortableData({ ...valid, accessToken: "secret" }), null);
   assert.equal(parsePortableData({ ...valid, groupRules: [{ ...valid.groupRules[0], color: "teal" }] }), null);
   assert.equal(parsePortableData({ ...valid, groupRules: [{ ...valid.groupRules[0], domains: ["example.com", "example.com"] }] }), null);
+});
+
+test("preserves and defaults the new-tab board setting in portable data", () => {
+  const current = {
+    version: 1,
+    settings: {
+      autoGroupEnabled: true,
+      minimumTabs: 2,
+      defaultGroupColor: "blue",
+      cloudSyncEnabled: true,
+      syncRulesEnabled: true,
+      syncIgnoreListEnabled: true,
+      lastSuccessfulSyncAt: null,
+      openBoardOnNewTab: true,
+    },
+    groupRules: [],
+    ignoredSites: [],
+  };
+  const legacy = structuredClone(current);
+  delete legacy.settings.openBoardOnNewTab;
+
+  assert.equal(parsePortableData(current)?.settings.openBoardOnNewTab, true);
+  assert.equal(parsePortableData(legacy)?.settings.openBoardOnNewTab, false);
+  assert.equal(parsePortableData({ ...current, settings: { ...current.settings, openBoardOnNewTab: "true" } }), null);
 });
 
 test("rejects portable data whose required fields are inherited", () => {
@@ -755,6 +1147,7 @@ test("maps portable data explicitly without runtime-only fields", () => {
       syncRulesEnabled: true,
       syncIgnoreListEnabled: false,
       lastSuccessfulSyncAt: "2026-07-22T00:00:00.000Z",
+      openBoardOnNewTab: false,
     },
     [{ id: "rule-1", title: "Example", color: "blue", domains: ["example.com"], matchScope: "exact", enabled: true, sortOrder: 1, accessToken: "secret" }],
     [{ id: "ignore-1", domain: "ads.example.com", matchScope: "exact", sortOrder: 1, accessToken: "secret" }],
@@ -770,6 +1163,7 @@ test("maps portable data explicitly without runtime-only fields", () => {
       syncRulesEnabled: true,
       syncIgnoreListEnabled: false,
       lastSuccessfulSyncAt: "2026-07-22T00:00:00.000Z",
+      openBoardOnNewTab: false,
     },
     groupRules: [{ id: "rule-1", title: "Example", color: "blue", domains: ["example.com"], matchScope: "exact", enabled: true, sortOrder: 1 }],
     ignoredSites: [{ id: "ignore-1", domain: "ads.example.com", matchScope: "exact", sortOrder: 1 }],
@@ -805,6 +1199,7 @@ test("converts stored state without runtime group mappings", () => {
       syncRulesEnabled: true,
       syncIgnoreListEnabled: true,
       lastSuccessfulSyncAt: null,
+      openBoardOnNewTab: false,
     },
     groupRules: [{
       id: "rule-1",
