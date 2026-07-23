@@ -50,7 +50,20 @@
         </section>
         <section id="privacy" class="panel" tabindex="-1" hidden>
           <h1>高级同步与隐私</h1>
-          <form id="settings-form"><section class="card"><h2>同步范围</h2><label class="switch"><input id="cloud-sync" type="checkbox"> 启用云端同步</label><label class="switch"><input id="rules-sync" type="checkbox"> 同步分组规则</label><label class="switch"><input id="ignore-sync" type="checkbox"> 同步忽略网站</label></section><section class="card"><h2>新标签页</h2><label class="switch"><input id="new-tab-board" type="checkbox" aria-describedby="new-tab-board-description"> 新标签页打开看板</label><p id="new-tab-board-description" class="muted">启用后，点击 + 或按 Ctrl/Cmd+T 会打开 Tab Garden 看板；关闭后保持 Chrome/Edge 原生新标签页不变。</p></section><button type="submit">保存同步设置</button></form>
+          <form id="settings-form"><section class="card"><h2>同步范围</h2><label class="switch"><input id="cloud-sync" type="checkbox"> 启用云端同步</label><label class="switch"><input id="rules-sync" type="checkbox"> 同步分组规则</label><label class="switch"><input id="ignore-sync" type="checkbox"> 同步忽略网站</label></section><section class="card"><h2>新标签页</h2><label class="switch"><input id="new-tab-board" type="checkbox" aria-describedby="new-tab-board-description"> 新标签页打开看板</label><p id="new-tab-board-description" class="muted">启用后，点击 + 或按 Ctrl/Cmd+T 会打开 Tab Garden 看板；关闭后保持 Chrome/Edge 原生新标签页不变。</p></section><section class="card shortcut-card">
+            <div class="shortcut-card-header">
+              <div>
+                <h2>快捷提醒时间</h2>
+                <p class="muted">在“稍后处理”菜单中显示这些常用时间。</p>
+              </div>
+              <span id="deferred-shortcut-count" class="shortcut-count" aria-live="polite">0 / 5</span>
+            </div>
+            <div class="shortcut-editor">
+              <div id="deferred-shortcuts" class="deferred-shortcuts"></div>
+              <button id="add-deferred-shortcut" class="shortcut-add" type="button">＋ 添加时间</button>
+            </div>
+            <p id="deferred-shortcut-note" class="shortcut-note">支持 1–10080 分钟，保存时自动去重。</p>
+          </section><button type="submit">保存同步设置</button></form>
         </section>
       </section>
     </main>
