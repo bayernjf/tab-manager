@@ -1,11 +1,12 @@
 import { SUPABASE_ANON_KEY, SUPABASE_URL, assertSupabaseConfigured } from "./supabase-config.js";
 
 export interface AuthUser { id: string; email?: string }
-interface AuthSession { access_token: string; refresh_token: string; expires_at: number; user: AuthUser }
+interface AuthSession { access_token: string; refresh_token: string; expires_at: number; rememberUntil?: number; user: AuthUser }
 
 interface AuthRequestError extends Error { status: number }
 
 const SESSION_KEY = "supabaseSession";
+const REMEMBER_DEVICE_DURATION_SECONDS = 7 * 24 * 60 * 60;
 
 function endpoint(path: string): string {
   assertSupabaseConfigured();
@@ -36,8 +37,12 @@ export function isExplicitAuthenticationFailure(error: unknown): boolean {
     && (error.status === 400 || error.status === 401 || error.status === 403);
 }
 
-function toSession(data: { access_token: string; refresh_token: string; expires_in: number; user: AuthUser }): AuthSession {
-  return { ...data, expires_at: Math.floor(Date.now() / 1000) + data.expires_in };
+function toSession(data: { access_token: string; refresh_token: string; expires_in: number; user: AuthUser }, rememberUntil?: number): AuthSession {
+  return { ...data, expires_at: Math.floor(Date.now() / 1000) + data.expires_in, ...(rememberUntil === undefined ? {} : { rememberUntil }) };
+}
+
+export function isRememberedSessionValid(rememberUntil: number | undefined, now = Math.floor(Date.now() / 1000)): boolean {
+  return rememberUntil === undefined || rememberUntil > now;
 }
 
 async function saveSession(session: AuthSession | null): Promise<void> {
@@ -50,6 +55,11 @@ async function storedSession(): Promise<AuthSession | null> {
   return (data[SESSION_KEY] as AuthSession | undefined) ?? null;
 }
 
+/** Returns the locally cached account without making an authentication request. */
+export async function getStoredUser(): Promise<AuthUser | null> {
+  return (await storedSession())?.user ?? null;
+}
+
 export async function signUp(email: string, password: string): Promise<{ user: AuthUser | null; requiresEmailConfirmation: boolean }> {
   const data = await request<{ access_token?: string; refresh_token?: string; expires_in?: number; user: AuthUser | null }>("/signup", {
     method: "POST", body: JSON.stringify({ email, password }),
@@ -60,11 +70,12 @@ export async function signUp(email: string, password: string): Promise<{ user: A
   return { user: data.user, requiresEmailConfirmation: !data.access_token };
 }
 
-export async function signIn(email: string, password: string): Promise<AuthUser> {
+export async function signIn(email: string, password: string, rememberForSevenDays = false): Promise<AuthUser> {
   const data = await request<{ access_token: string; refresh_token: string; expires_in: number; user: AuthUser }>("/token?grant_type=password", {
     method: "POST", body: JSON.stringify({ email, password }),
   });
-  await saveSession(toSession(data));
+  const rememberUntil = rememberForSevenDays ? Math.floor(Date.now() / 1000) + REMEMBER_DEVICE_DURATION_SECONDS : undefined;
+  await saveSession(toSession(data, rememberUntil));
   return data.user;
 }
 
@@ -85,12 +96,16 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
 async function getValidSession(): Promise<AuthSession | null> {
   let session = await storedSession();
   if (!session) return null;
+  if (!isRememberedSessionValid(session.rememberUntil)) {
+    await saveSession(null);
+    return null;
+  }
   if (session.expires_at <= Math.floor(Date.now() / 1000) + 60) {
     try {
       const data = await request<{ access_token: string; refresh_token: string; expires_in: number; user: AuthUser }>("/token?grant_type=refresh_token", {
         method: "POST", body: JSON.stringify({ refresh_token: session.refresh_token }),
       });
-      session = toSession(data);
+      session = toSession(data, session.rememberUntil);
       await saveSession(session);
     } catch (error) {
       if (isExplicitAuthenticationFailure(error)) {
