@@ -146,6 +146,7 @@ export interface Settings {
   autoGroupEnabled: boolean;
   minimumTabs: number;
   openBoardOnNewTab: boolean;
+  deferredShortcutMinutes?: number[];
   defaultGroupColor?: GroupColor;
   cloudSyncEnabled?: boolean;
   syncRulesEnabled?: boolean;
@@ -273,6 +274,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoGroupEnabled: true,
   minimumTabs: 2,
   openBoardOnNewTab: false,
+  deferredShortcutMinutes: [1, 3, 5],
   defaultGroupColor: "blue",
   cloudSyncEnabled: true,
   syncRulesEnabled: true,
@@ -374,10 +376,27 @@ function workspaceTab(value: unknown): WorkspaceTab | null {
   }
 }
 
+export type WorkspaceTitleValidation =
+  | { status: "valid"; title: string }
+  | { status: "empty" | "duplicate" | "invalid" };
+
+export function validateWorkspaceTitle(value: unknown, existingTitles: readonly string[]): WorkspaceTitleValidation {
+  if (typeof value !== "string") return { status: "invalid" };
+  const title = value.trim();
+  if (!title) return { status: "empty" };
+  if (title.length > 80) return { status: "invalid" };
+  const key = title.toLowerCase();
+  return existingTitles.some((existingTitle) => typeof existingTitle === "string" && existingTitle.trim().toLowerCase() === key)
+    ? { status: "duplicate" }
+    : { status: "valid", title };
+}
+
 export function validateWorkspaceSnapshot(value: unknown): WorkspaceSnapshot | null {
-  if (!isPlainObject(value) || !isRecordId(value.id) || typeof value.title !== "string" || !value.title.trim() || value.title.length > 80 || typeof value.createdAt !== "string" || !Number.isFinite(Date.parse(value.createdAt)) || !Array.isArray(value.tabs) || value.tabs.length < 1 || value.tabs.length > 200) return null;
+  if (!isPlainObject(value) || !isRecordId(value.id) || typeof value.title !== "string" || value.title.length > 80 || typeof value.createdAt !== "string" || !Number.isFinite(Date.parse(value.createdAt)) || !Array.isArray(value.tabs) || value.tabs.length < 1 || value.tabs.length > 200) return null;
+  const title = validateWorkspaceTitle(value.title, []);
+  if (title.status !== "valid") return null;
   const tabs = value.tabs.map(workspaceTab);
-  return tabs.every((tab): tab is WorkspaceTab => tab !== null) ? { id: value.id, title: value.title.trim(), createdAt: value.createdAt, tabs } : null;
+  return tabs.every((tab): tab is WorkspaceTab => tab !== null) ? { id: value.id, title: title.title, createdAt: value.createdAt, tabs } : null;
 }
 
 export function workspaceRestorePreview(snapshot: WorkspaceSnapshot): WorkspaceRestorePreview {
@@ -388,12 +407,26 @@ export function workspaceRestorePreview(snapshot: WorkspaceSnapshot): WorkspaceR
 export function validateDeferredTab(value: unknown): DeferredTab | null {
   if (!isPlainObject(value) || !isRecordId(value.id) || typeof value.dueAt !== "string" || typeof value.createdAt !== "string" || !Number.isFinite(Date.parse(value.dueAt)) || !Number.isFinite(Date.parse(value.createdAt))) return null;
   const tab = workspaceTab(value);
-  if (!tab || (value.favIconUrl !== undefined && (typeof value.favIconUrl !== "string" || value.favIconUrl.length > 4_000))) return null;
-  return { id: value.id, title: tab.title, url: tab.url, ...(typeof value.favIconUrl === "string" ? { favIconUrl: value.favIconUrl } : {}), dueAt: value.dueAt, createdAt: value.createdAt };
+  if (!tab) return null;
+  const favIconUrl = typeof value.favIconUrl === "string" && value.favIconUrl.length <= 4_000 ? value.favIconUrl : undefined;
+  return { id: value.id, title: tab.title, url: tab.url, ...(favIconUrl ? { favIconUrl } : {}), dueAt: value.dueAt, createdAt: value.createdAt };
 }
 
 export function isDeferredTabDue(tab: DeferredTab, now = Date.now()): boolean {
   return Date.parse(tab.dueAt) <= now;
+}
+
+export function formatDeferredDateTime(value: string): string {
+  const date = new Date(value);
+  const pad = (part: number): string => String(part).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+export function normalizeDeferredShortcutMinutes(value: unknown): number[] | null {
+  if (value === undefined) return [1, 3, 5];
+  if (!Array.isArray(value) || value.length < 1 || value.length > 5 || value.some((item) => typeof item !== "number" || !Number.isInteger(item) || item < 1 || item > 10_080)) return null;
+  const unique = [...new Set(value)];
+  return unique.length ? unique : null;
 }
 
 export function heightUnitsForTabCount(tabCount: number): 1 | 2 {
@@ -813,7 +846,7 @@ export function canConfirmOptionsImport(previewUserId: string | null, currentUse
 
 export function validateOptionsSettings(value: unknown): Settings | null {
   if (!isPlainObject(value)) return null;
-  const allowedKeys = ["autoGroupEnabled", "minimumTabs", "openBoardOnNewTab", "defaultGroupColor", "cloudSyncEnabled", "syncRulesEnabled", "syncIgnoreListEnabled", "lastSuccessfulSyncAt"];
+  const allowedKeys = ["autoGroupEnabled", "minimumTabs", "openBoardOnNewTab", "deferredShortcutMinutes", "defaultGroupColor", "cloudSyncEnabled", "syncRulesEnabled", "syncIgnoreListEnabled", "lastSuccessfulSyncAt"];
   if (Object.keys(value).some((key) => !allowedKeys.includes(key))) return null;
   const parsed = parsePortableSettings({
     autoGroupEnabled: value.autoGroupEnabled,
@@ -825,7 +858,8 @@ export function validateOptionsSettings(value: unknown): Settings | null {
     syncIgnoreListEnabled: value.syncIgnoreListEnabled,
     lastSuccessfulSyncAt: null,
   });
-  return parsed ? { ...parsed, lastSuccessfulSyncAt: null } : null;
+  const deferredShortcutMinutes = normalizeDeferredShortcutMinutes(value.deferredShortcutMinutes);
+  return parsed && deferredShortcutMinutes ? { ...parsed, deferredShortcutMinutes, lastSuccessfulSyncAt: null } : null;
 }
 
 export function createGroupRuleFromInput(value: unknown, id: string, sortOrder: number): GroupRule | null {
