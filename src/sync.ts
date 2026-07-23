@@ -46,16 +46,21 @@ async function databaseRequest<T>(path: string, init: RequestInit = {}): Promise
   }
 }
 
-export async function pushSettings(userId: string, settings: Settings): Promise<void> {
-  const concreteSettings = settingsFromSyncRow({
+export function settingsSyncRow(userId: string, settings: Settings): SettingsSyncRow {
+  return {
     user_id: userId,
     auto_group_enabled: settings.autoGroupEnabled,
     minimum_tabs: settings.minimumTabs,
+    open_board_on_new_tab: settings.openBoardOnNewTab,
     default_group_color: settings.defaultGroupColor,
     cloud_sync_enabled: settings.cloudSyncEnabled,
     sync_rules_enabled: settings.syncRulesEnabled,
     sync_ignore_list_enabled: settings.syncIgnoreListEnabled,
-  });
+  };
+}
+
+export async function pushSettings(userId: string, settings: Settings): Promise<void> {
+  const concreteSettings = settingsFromSyncRow(settingsSyncRow(userId, settings));
   if (!concreteSettings) throw new Error("设置包含无效数据");
   await databaseRequest<unknown>("/user_settings?on_conflict=user_id", {
     method: "POST",
@@ -64,6 +69,7 @@ export async function pushSettings(userId: string, settings: Settings): Promise<
       user_id: userId,
       auto_group_enabled: concreteSettings.autoGroupEnabled,
       minimum_tabs: concreteSettings.minimumTabs,
+      open_board_on_new_tab: concreteSettings.openBoardOnNewTab,
       default_group_color: concreteSettings.defaultGroupColor,
       cloud_sync_enabled: concreteSettings.cloudSyncEnabled,
       sync_rules_enabled: concreteSettings.syncRulesEnabled,
@@ -74,7 +80,7 @@ export async function pushSettings(userId: string, settings: Settings): Promise<
 
 export async function syncSettings(userId: string): Promise<Settings> {
   const rows = await databaseRequest<SettingsSyncRow[]>(
-    `/user_settings?user_id=eq.${encodeURIComponent(userId)}&select=user_id,auto_group_enabled,minimum_tabs,default_group_color,cloud_sync_enabled,sync_rules_enabled,sync_ignore_list_enabled&limit=1`,
+    `/user_settings?user_id=eq.${encodeURIComponent(userId)}&select=user_id,auto_group_enabled,minimum_tabs,open_board_on_new_tab,default_group_color,cloud_sync_enabled,sync_rules_enabled,sync_ignore_list_enabled&limit=1`,
   );
   if (rows[0]) {
     const remoteSettings = settingsFromSyncRow(rows[0], userId);
@@ -242,15 +248,7 @@ export async function restoreOptionalSyncData(
 }
 
 export async function fetchOptionalSyncData(userId: string, settings: Settings): Promise<OptionalSyncData> {
-  const concreteSettings = settingsFromSyncRow({
-    user_id: userId,
-    auto_group_enabled: settings.autoGroupEnabled,
-    minimum_tabs: settings.minimumTabs,
-    default_group_color: settings.defaultGroupColor,
-    cloud_sync_enabled: settings.cloudSyncEnabled,
-    sync_rules_enabled: settings.syncRulesEnabled,
-    sync_ignore_list_enabled: settings.syncIgnoreListEnabled,
-  });
+  const concreteSettings = settingsFromSyncRow(settingsSyncRow(userId, settings));
   if (!concreteSettings) throw new Error("设置包含无效数据");
   if (!concreteSettings.cloudSyncEnabled) return {};
   const data: OptionalSyncData = {};
@@ -260,15 +258,7 @@ export async function fetchOptionalSyncData(userId: string, settings: Settings):
 }
 
 export async function replaceOptionalSyncData(userId: string, settings: Settings, data: OptionalSyncData): Promise<void> {
-  const concreteSettings = settingsFromSyncRow({
-    user_id: userId,
-    auto_group_enabled: settings.autoGroupEnabled,
-    minimum_tabs: settings.minimumTabs,
-    default_group_color: settings.defaultGroupColor,
-    cloud_sync_enabled: settings.cloudSyncEnabled,
-    sync_rules_enabled: settings.syncRulesEnabled,
-    sync_ignore_list_enabled: settings.syncIgnoreListEnabled,
-  });
+  const concreteSettings = settingsFromSyncRow(settingsSyncRow(userId, settings));
   if (!concreteSettings) throw new Error("设置包含无效数据");
   if (!concreteSettings.cloudSyncEnabled) return;
   if (concreteSettings.syncRulesEnabled && data.groupRules) await replaceGroupRules(userId, data.groupRules);
@@ -276,15 +266,7 @@ export async function replaceOptionalSyncData(userId: string, settings: Settings
 }
 
 function isCloudSyncEnabled(userId: string, settings: Settings): boolean {
-  const concreteSettings = settingsFromSyncRow({
-    user_id: userId,
-    auto_group_enabled: settings.autoGroupEnabled,
-    minimum_tabs: settings.minimumTabs,
-    default_group_color: settings.defaultGroupColor,
-    cloud_sync_enabled: settings.cloudSyncEnabled,
-    sync_rules_enabled: settings.syncRulesEnabled,
-    sync_ignore_list_enabled: settings.syncIgnoreListEnabled,
-  });
+  const concreteSettings = settingsFromSyncRow(settingsSyncRow(userId, settings));
   if (!concreteSettings) throw new Error("设置包含无效数据");
   return concreteSettings.cloudSyncEnabled === true;
 }
