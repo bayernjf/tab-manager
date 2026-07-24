@@ -44,13 +44,15 @@ const duplicateReviewList = $("#duplicate-review-list");
 const closeDuplicateReview = $<HTMLButtonElement>("#close-duplicate-review");
 const cancelDuplicateReview = $<HTMLButtonElement>("#cancel-duplicate-review");
 const confirmDuplicateReview = $<HTMLButtonElement>("#confirm-duplicate-review");
-const openWorkspaces = $<HTMLButtonElement>("#open-workspaces"), workspaceDialog = $<HTMLDialogElement>("#workspace-dialog"), workspaceName = $<HTMLInputElement>("#workspace-name"), workspaceNameError = $<HTMLElement>("#workspace-name-error"), workspaceTabs = $("#workspace-tabs"), saveWorkspace = $<HTMLButtonElement>("#save-workspace"), workspaceList = $("#workspace-list"), closeWorkspaceDialog = $<HTMLButtonElement>("#close-workspace-dialog"), workspaceRestoreDialog = $<HTMLDialogElement>("#workspace-restore-dialog"), workspaceRestoreSummary = $("#workspace-restore-summary"), workspaceRestoreList = $("#workspace-restore-list"), confirmWorkspaceRestore = $<HTMLButtonElement>("#confirm-workspace-restore"), cancelWorkspaceRestore = $<HTMLButtonElement>("#cancel-workspace-restore");
+const openWorkspaces = $<HTMLButtonElement>("#open-workspaces"), workspaceDialog = $<HTMLDialogElement>("#workspace-dialog"), workspaceName = $<HTMLInputElement>("#workspace-name"), workspaceNameError = $<HTMLElement>("#workspace-name-error"), workspaceSelectAll = $<HTMLInputElement>("#workspace-select-all"), workspaceTabs = $("#workspace-tabs"), saveWorkspace = $<HTMLButtonElement>("#save-workspace"), workspaceList = $("#workspace-list"), closeWorkspaceDialog = $<HTMLButtonElement>("#close-workspace-dialog"), workspaceRestoreDialog = $<HTMLDialogElement>("#workspace-restore-dialog"), workspaceRestoreSummary = $("#workspace-restore-summary"), workspaceRestoreList = $("#workspace-restore-list"), confirmWorkspaceRestore = $<HTMLButtonElement>("#confirm-workspace-restore"), cancelWorkspaceRestore = $<HTMLButtonElement>("#cancel-workspace-restore");
 const deferredReminders = $("#deferred-reminders"), deferredList = $("#deferred-list");
 const boardStatistics = $("#board-statistics");
 
 let currentState: BoardState | null = null;
 let duplicateGroups: DuplicateBoardTabGroup[] = [];
 let workspaces: WorkspaceSnapshot[] = [], restoreWorkspaceId: string | null = null;
+const WORKSPACE_DIALOG_VIEWPORT_MARGIN = 16;
+const WORKSPACE_DIALOG_MOBILE_MAX_WIDTH = 640;
 
 async function send<T>(message: unknown): Promise<T> {
   const response = await chrome.runtime.sendMessage(message) as T & BoardResponse;
@@ -81,8 +83,57 @@ function renderWorkspaces(): void {
     return row;
   }));
 }
-function renderWorkspaceTabs(): void { const tabs = currentState?.groups.flatMap((group) => group.tabs).filter((tab): tab is typeof tab & { url: string } => Boolean(tab.url)); workspaceTabs.replaceChildren(...(tabs ?? []).map((tab) => { const label = document.createElement("label"); const input = document.createElement("input"); input.type = "checkbox"; input.checked = true; input.value = String(tab.id); input.dataset.title = tab.title; input.dataset.url = tab.url; label.append(input, document.createTextNode(tab.title)); return label; })); }
-async function openWorkspaceDialog(): Promise<void> { renderWorkspaceTabs(); await loadWorkspaces(); workspaceDialog.showModal(); }
+function workspaceTabInputs(): HTMLInputElement[] {
+  return Array.from(workspaceTabs.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'));
+}
+function syncWorkspaceSelectAll(): void {
+  const inputs = workspaceTabInputs();
+  const checkedCount = inputs.filter((input) => input.checked).length;
+  workspaceSelectAll.disabled = inputs.length === 0;
+  workspaceSelectAll.checked = inputs.length > 0 && checkedCount === inputs.length;
+  workspaceSelectAll.indeterminate = checkedCount > 0 && checkedCount < inputs.length;
+}
+function renderWorkspaceTabs(): void {
+  const tabs = currentState?.groups.flatMap((group) => group.tabs).filter((tab): tab is typeof tab & { url: string } => Boolean(tab.url));
+  workspaceTabs.replaceChildren(...(tabs ?? []).map((tab) => {
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = true;
+    input.value = String(tab.id);
+    input.dataset.title = tab.title;
+    input.dataset.url = tab.url;
+    label.append(input, document.createTextNode(tab.title));
+    return label;
+  }));
+  syncWorkspaceSelectAll();
+}
+function syncWorkspaceDialogResizeAnchor(): void {
+  if (window.innerWidth <= WORKSPACE_DIALOG_MOBILE_MAX_WIDTH) {
+    workspaceDialog.classList.remove("workspace-dialog-resize-anchored");
+    workspaceDialog.style.removeProperty("--workspace-dialog-left");
+    workspaceDialog.style.removeProperty("--workspace-dialog-top");
+    return;
+  }
+  if (!workspaceDialog.open) return;
+  const rect = workspaceDialog.getBoundingClientRect();
+  const availableWidth = Math.max(0, window.innerWidth - WORKSPACE_DIALOG_VIEWPORT_MARGIN * 2);
+  const availableHeight = Math.max(0, window.innerHeight - WORKSPACE_DIALOG_VIEWPORT_MARGIN * 2);
+  const width = Math.min(rect.width, availableWidth);
+  const height = Math.min(rect.height, availableHeight);
+  const left = Math.min(
+    Math.max(WORKSPACE_DIALOG_VIEWPORT_MARGIN, rect.left),
+    Math.max(WORKSPACE_DIALOG_VIEWPORT_MARGIN, window.innerWidth - WORKSPACE_DIALOG_VIEWPORT_MARGIN - width),
+  );
+  const top = Math.min(
+    Math.max(WORKSPACE_DIALOG_VIEWPORT_MARGIN, rect.top),
+    Math.max(WORKSPACE_DIALOG_VIEWPORT_MARGIN, window.innerHeight - WORKSPACE_DIALOG_VIEWPORT_MARGIN - height),
+  );
+  workspaceDialog.style.setProperty("--workspace-dialog-left", `${Math.round(left)}px`);
+  workspaceDialog.style.setProperty("--workspace-dialog-top", `${Math.round(top)}px`);
+  workspaceDialog.classList.add("workspace-dialog-resize-anchored");
+}
+async function openWorkspaceDialog(): Promise<void> { renderWorkspaceTabs(); await loadWorkspaces(); workspaceDialog.showModal(); syncWorkspaceDialogResizeAnchor(); }
 function clearWorkspaceNameError(): void {
   workspaceNameError.hidden = true;
   workspaceNameError.textContent = "";
@@ -584,6 +635,13 @@ async function saveAutoFill(enabled: boolean): Promise<void> {
 $("#refresh").addEventListener("click", () => void load().catch((error) => showStatus(String(error), true)));
 reviewDuplicates.addEventListener("click", () => void openDuplicateReview());
 openWorkspaces.addEventListener("click", () => void openWorkspaceDialog().catch((error) => showStatus(String(error), true)));
+workspaceSelectAll.addEventListener("change", () => {
+  for (const input of workspaceTabInputs()) input.checked = workspaceSelectAll.checked;
+  syncWorkspaceSelectAll();
+});
+workspaceTabs.addEventListener("change", (event) => {
+  if (event.target instanceof HTMLInputElement && event.target.type === "checkbox") syncWorkspaceSelectAll();
+});
 closeWorkspaceDialog.addEventListener("click", () => workspaceDialog.close()); saveWorkspace.addEventListener("click", () => void saveCurrentWorkspace().catch((error) => showStatus(String(error), true))); workspaceName.addEventListener("input", clearWorkspaceNameError); workspaceDialog.addEventListener("close", clearWorkspaceNameError); confirmWorkspaceRestore.addEventListener("click", () => void restoreWorkspace().catch((error) => showStatus(String(error), true))); cancelWorkspaceRestore.addEventListener("click", () => workspaceRestoreDialog.close());
 closeDuplicateReview.addEventListener("click", () => duplicateReviewDialog.close());
 cancelDuplicateReview.addEventListener("click", () => duplicateReviewDialog.close());
@@ -604,6 +662,7 @@ newGroupForm.addEventListener("submit", (event) => {
 });
 
 window.addEventListener("resize", () => {
+  syncWorkspaceDialogResizeAnchor();
   if (currentState && !currentState.loginRequired) renderBoard(currentState);
 });
 
