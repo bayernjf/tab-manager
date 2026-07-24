@@ -7,13 +7,20 @@
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <main id="auth-view" class="auth-view">
+  <main id="boot-view" class="boot-view" aria-live="polite" aria-busy="true">
+    <span class="brand-mark" aria-hidden="true">TG</span>
+    <span class="boot-spinner" aria-hidden="true"></span>
+    <p>正在恢复账户状态…</p>
+  </main>
+
+  <main id="auth-view" class="auth-view hidden">
     <div class="auth-brand"><span class="brand-mark">TG</span><span class="eyebrow">TAB GARDEN</span><h1>欢迎来到标签花园</h1><p>登录后开始整理你的浏览空间</p></div>
     <form id="auth-form" class="auth-card">
       <div class="auth-tabs" role="tablist"><button id="login-tab" class="auth-tab active" type="button">登录</button><button id="signup-tab" class="auth-tab" type="button">注册</button></div>
       <label class="field"><span>邮箱</span><input id="auth-email" type="email" autocomplete="email" placeholder="you@example.com" required></label>
       <label class="field"><span>密码</span><input id="auth-password" type="password" autocomplete="current-password" placeholder="至少 6 位" minlength="6" required></label>
       <label id="confirm-field" class="field hidden"><span>确认密码</span><input id="auth-confirm" type="password" autocomplete="new-password" placeholder="再次输入密码" minlength="6"></label>
+      <label id="remember-device-row" class="remember-device"><input id="remember-device" type="checkbox"><span>在此设备记住7天</span></label>
       <button id="auth-submit" class="primary auth-submit" type="submit">登录</button>
       <p id="auth-status" class="auth-message" aria-live="polite"></p>
     </form>
@@ -22,12 +29,12 @@
   <main id="app-view" class="hidden">
   <header>
     <div><span class="eyebrow">TAB GARDEN</span><h1>标签花园</h1></div>
-    <div class="header-actions"><button id="reconcile" class="ghost" title="立即重新整理">整理</button><button id="logout" class="ghost" title="退出登录">退出</button></div>
+    <div class="header-actions"><button id="open-board" class="header-action board-action" title="打开标签看板"><span aria-hidden="true">▦</span>看板</button><button id="logout" class="header-action logout-action" title="退出登录"><span aria-hidden="true">↗</span>退出</button></div>
   </header>
 
   <section class="settings-card">
-    <label class="switch-row"><span><strong>自动分组</strong><small>同网站标签页自动聚合</small></span><input id="auto-toggle" type="checkbox"><i></i></label>
-    <label class="threshold"><span>达到</span><select id="minimum-tabs"><option value="2">2</option><option value="3">3</option><option value="4">4</option></select><span>个标签页时分组</span></label>
+    <label class="switch-row"><span><strong>看板自动分组</strong><small>仅在扩展看板中按网站聚合，不修改浏览器标签</small></span><input id="auto-toggle" type="checkbox"><i></i></label>
+    <label class="threshold"><span>达到</span><select id="minimum-tabs"><option value="2">2</option><option value="3">3</option><option value="4">4</option></select><span>个标签页时在看板中聚合</span></label>
   </section>
 
   <section>

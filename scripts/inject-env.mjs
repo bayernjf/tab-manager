@@ -43,4 +43,6 @@ await writeFile(outputPath, output);
 await Promise.all([
   copyFile(resolve(root, "src/options.html"), resolve(root, "dist/options.html")),
   copyFile(resolve(root, "src/options.css"), resolve(root, "dist/options.css")),
+  copyFile(resolve(root, "src/board.html"), resolve(root, "dist/board.html")),
+  copyFile(resolve(root, "src/board.css"), resolve(root, "dist/board.css")),
 ]);
