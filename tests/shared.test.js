@@ -56,6 +56,50 @@ const {
 const { getCurrentUser, getStoredUser, isExplicitAuthenticationFailure, isRememberedSessionValid } = await import("../dist/auth.js");
 const { settingsSyncRow } = await import("../dist/sync.js");
 
+function cssBlocks(css) {
+  const blocks = [];
+  let cursor = 0;
+
+  while (cursor < css.length) {
+    const openBrace = css.indexOf("{", cursor);
+    if (openBrace < 0) break;
+
+    let braceDepth = 0;
+    let closeBrace = -1;
+    for (let index = openBrace; index < css.length; index += 1) {
+      if (css[index] === "{") braceDepth += 1;
+      if (css[index] === "}") braceDepth -= 1;
+      if (braceDepth === 0) {
+        closeBrace = index;
+        break;
+      }
+    }
+    if (closeBrace < 0) break;
+
+    blocks.push({
+      selector: css.slice(cursor, openBrace).trim(),
+      body: css.slice(openBrace + 1, closeBrace),
+    });
+    cursor = closeBrace + 1;
+  }
+
+  return blocks;
+}
+
+function normalizedCssSelector(selector) {
+  return selector.trim().replace(/\s+/g, " ");
+}
+
+function cssRule(css, selector) {
+  const normalizedSelector = normalizedCssSelector(selector);
+  return cssBlocks(css).find((block) => !block.selector.startsWith("@") && normalizedCssSelector(block.selector) === normalizedSelector)?.body ?? "";
+}
+
+function cssMediaBlock(css, mediaQuery) {
+  const mediaPattern = new RegExp(`^@media\\s*\\(\\s*${mediaQuery}\\s*\\)$`);
+  return cssBlocks(css).find((block) => mediaPattern.test(block.selector))?.body ?? "";
+}
+
 test("keeps authentication screens hidden until cached session lookup resolves", async () => {
   const popupHtml = await readFile(new URL("../dist/popup.html", import.meta.url), "utf8");
 
@@ -435,6 +479,8 @@ test("renders local workspace selection and restore-preview dialogs", async () =
   assert.match(html, /id="workspace-dialog"/);
   assert.match(html, /id="workspace-restore-dialog"/);
   assert.match(html, /class="workspace-name-field"/);
+  assert.match(html, /class="workspace-controls"/);
+  assert.match(html, /<label\b(?=[^>]*\bclass="workspace-select-all")[^>]*>\s*<input\b(?=[^>]*\bid="workspace-select-all")(?=[^>]*\btype="checkbox")(?=[^>]*\bchecked)[^>]*>\s*全选\s*<\/label>/);
   assert.match(html, /<input\b(?=[^>]*\bid="workspace-name")(?=[^>]*\baria-describedby="workspace-name-error")(?=[^>]*\baria-invalid="false")[^>]*>/);
   assert.match(html, /<p\b(?=[^>]*\bid="workspace-name-error")(?=[^>]*\bclass="workspace-name-toast")(?=[^>]*\brole="alert")(?=[^>]*\bhidden)[^>]*><\/p>/);
   assert.match(script, /type: "save-workspace"/);
@@ -443,6 +489,14 @@ test("renders local workspace selection and restore-preview dialogs", async () =
   assert.match(script, /showWorkspaceNameError\("该工作区名称已存在"\)/);
   assert.match(script, /workspaceName\.addEventListener\("input", clearWorkspaceNameError\)/);
   assert.match(script, /workspaceDialog\.addEventListener\("close", clearWorkspaceNameError\)/);
+  assert.match(script, /function workspaceTabInputs\(\)/);
+  assert.match(script, /function syncWorkspaceSelectAll\(\)/);
+  assert.match(script, /workspaceSelectAll\.disabled = inputs\.length === 0/);
+  assert.match(script, /workspaceSelectAll\.indeterminate = checkedCount > 0 && checkedCount < inputs\.length/);
+  assert.match(script, /workspaceSelectAll\.addEventListener\("change"/);
+  assert.match(script, /input\.checked = workspaceSelectAll\.checked/);
+  assert.match(script, /workspaceTabs\.addEventListener\("change"/);
+  assert.match(script, /event\.target instanceof HTMLInputElement && event\.target\.type === "checkbox"/);
 
   const saveStart = script.indexOf("async function saveCurrentWorkspace");
   const saveEnd = script.indexOf("async function previewWorkspaceRestore", saveStart);
@@ -491,6 +545,8 @@ test("renders local workspace selection and restore-preview dialogs", async () =
   assert.match(script, /makeButton\("删除", "deferred-action deferred-delete"/);
   assert.match(css, /\.workspace-dialog/);
   assert.match(css, /\.workspace-name-toast/);
+  assert.match(css, /\.workspace-controls\s*\{[^}]*display: flex;[^}]*flex-wrap: wrap;/);
+  assert.match(css, /\.workspace-select-all\s*\{[^}]*display: inline-flex;/);
   assert.match(css, /\.workspace-name-input-invalid/);
   assert.match(css, /\.workspace-name-toast\[hidden\]/);
   const mobileStart = css.indexOf("@media (max-width: 640px)");
@@ -498,6 +554,95 @@ test("renders local workspace selection and restore-preview dialogs", async () =
   const mobileCss = css.slice(mobileStart);
   assert.match(mobileCss, /\.workspace-name-toast\s*\{[^}]*position: static;[^}]*width: 100%;[^}]*transform: none;/);
   assert.match(mobileCss, /\.workspace-name-toast::before\s*\{[^}]*display: none;/);
+});
+
+test("makes only the workspace manager dialog resizable", async () => {
+  const [html, css, script] = await Promise.all([
+    readFile(new URL("../dist/board.html", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+  ]);
+
+  const managerDialog = html.match(/<dialog[^>]*id="workspace-dialog"[^>]*>/)?.[0] ?? "";
+  assert.match(managerDialog, /class="[^"]*\bworkspace-dialog-resizable\b[^"]*"/);
+  const resizableDialogs = [...html.matchAll(/<dialog\b[^>]*>/g)]
+    .map((match) => match[0])
+    .filter((dialog) => /class="[^"]*\bworkspace-dialog-resizable\b[^"]*"/.test(dialog));
+  assert.deepEqual(resizableDialogs, [managerDialog]);
+
+  const resizableRule = cssRule(css, ".workspace-dialog-resizable");
+  assert.match(resizableRule, /\bcontainer\s*:\s*workspace-dialog\s*\/\s*inline-size\s*;/);
+  assert.match(resizableRule, /\bresize\s*:\s*both\s*;/);
+  assert.match(resizableRule, /\boverflow\s*:\s*auto\s*;/);
+  assert.match(resizableRule, /\bmin-width\s*:\s*[^;}]+\s*;/);
+  assert.match(resizableRule, /\bmin-height\s*:\s*[^;}]+\s*;/);
+  assert.match(resizableRule, /\bmax-width\s*:\s*[^;}]+\s*;/);
+  assert.match(resizableRule, /\bmax-height\s*:\s*[^;}]+\s*;/);
+  const resizableOpenRule = cssRule(css, ".workspace-dialog-resizable[open]");
+  assert.match(resizableOpenRule, /\bdisplay\s*:\s*flex\s*;/);
+  assert.match(resizableOpenRule, /\bflex-direction\s*:\s*column\s*;/);
+  const anchoredRule = cssRule(css, ".workspace-dialog-resize-anchored");
+  assert.match(anchoredRule, /\bposition\s*:\s*fixed\s*;/);
+  assert.match(anchoredRule, /\binset\s*:\s*var\(--workspace-dialog-top\)\s+auto\s+auto\s+var\(--workspace-dialog-left\)\s*;/);
+  assert.match(anchoredRule, /\bmargin\s*:\s*0\s*;/);
+  assert.match(anchoredRule, /\bmax-width\s*:\s*calc\(100vw\s*-\s*var\(--workspace-dialog-left\)\s*-\s*16px\)\s*;/);
+  assert.match(anchoredRule, /\bmax-height\s*:\s*calc\(100vh\s*-\s*var\(--workspace-dialog-top\)\s*-\s*16px\)\s*;/);
+  const workspaceTabsRule = cssRule(css, ".workspace-dialog-resizable .workspace-tabs");
+  assert.match(workspaceTabsRule, /\bflex\s*:\s*[^;}]+\s*;/);
+  assert.match(workspaceTabsRule, /\bmax-height\s*:\s*none\s*;/);
+  const workspaceListRule = cssRule(css, ".workspace-dialog-resizable .workspace-list");
+  assert.match(workspaceListRule, /\bmax-height\s*:\s*none\s*;/);
+  assert.match(workspaceListRule, /\bflex\s*:\s*0\s+0\s+auto\s*;/);
+  assert.match(workspaceListRule, /\boverflow\s*:\s*visible\s*;/);
+
+  const narrowDialogCss = cssBlocks(css)
+    .find((block) => normalizedCssSelector(block.selector) === "@container workspace-dialog (max-width: 520px)")?.body ?? "";
+  assert.notEqual(narrowDialogCss, "");
+  const narrowToastRule = cssRule(narrowDialogCss, ".workspace-dialog-resizable .workspace-name-toast");
+  assert.match(narrowToastRule, /\bposition\s*:\s*static\s*;/);
+  assert.match(narrowToastRule, /\bmargin-top\s*:\s*8px\s*;/);
+  assert.match(narrowToastRule, /\bwidth\s*:\s*100%\s*;/);
+  assert.match(narrowToastRule, /\bmax-width\s*:\s*none\s*;/);
+  const narrowToastArrowRule = cssRule(narrowDialogCss, ".workspace-dialog-resizable .workspace-name-toast::before");
+  assert.match(narrowToastArrowRule, /\bdisplay\s*:\s*none\s*;/);
+
+  const mobileCss = cssMediaBlock(css, "max-width\\s*:\\s*640px");
+  assert.notEqual(mobileCss, "");
+  const mobileResizableRule = cssRule(mobileCss, ".workspace-dialog-resizable");
+  assert.match(mobileResizableRule, /\bheight\s*:\s*auto\s*;/);
+  assert.match(mobileResizableRule, /\bresize\s*:\s*none\s*;/);
+  const mobileAnchoredRule = cssRule(mobileCss, ".workspace-dialog-resize-anchored");
+  assert.match(mobileAnchoredRule, /\binset\s*:\s*0\s*;/);
+  assert.match(mobileAnchoredRule, /\bmargin\s*:\s*auto\s*;/);
+  const mobileResizableOpenRule = cssRule(mobileCss, ".workspace-dialog-resizable[open]");
+  assert.match(mobileResizableOpenRule, /\bdisplay\s*:\s*block\s*;/);
+  const mobileWorkspaceTabsRule = cssRule(mobileCss, ".workspace-dialog-resizable .workspace-tabs");
+  assert.match(mobileWorkspaceTabsRule, /\bmax-height\s*:\s*300px\s*;/);
+  const mobileToastRule = cssRule(mobileCss, ".workspace-dialog-resizable .workspace-name-toast");
+  assert.match(mobileToastRule, /\bmargin-top\s*:\s*6px\s*;/);
+  const mobileWorkspaceListRule = cssRule(mobileCss, ".workspace-dialog-resizable .workspace-list");
+  assert.match(mobileWorkspaceListRule, /\bwidth\s*:\s*auto\s*;/);
+  assert.match(mobileWorkspaceListRule, /\bmax-height\s*:\s*none\s*;/);
+  assert.match(mobileWorkspaceListRule, /\boverflow\s*:\s*visible\s*;/);
+
+  const anchorStart = script.indexOf("function syncWorkspaceDialogResizeAnchor");
+  const openStart = script.indexOf("async function openWorkspaceDialog", anchorStart);
+  assert.ok(anchorStart >= 0 && openStart > anchorStart);
+  const anchorFunction = script.slice(anchorStart, openStart);
+  assert.match(anchorFunction, /workspaceDialog\.getBoundingClientRect\(\)/);
+  assert.match(script, /WORKSPACE_DIALOG_MOBILE_MAX_WIDTH\s*=\s*640/);
+  assert.match(anchorFunction, /window\.innerWidth <= WORKSPACE_DIALOG_MOBILE_MAX_WIDTH/);
+  assert.match(anchorFunction, /workspaceDialog\.classList\.remove\("workspace-dialog-resize-anchored"\)/);
+  assert.match(anchorFunction, /workspaceDialog\.style\.setProperty\("--workspace-dialog-left"/);
+  assert.match(anchorFunction, /workspaceDialog\.style\.setProperty\("--workspace-dialog-top"/);
+  assert.match(anchorFunction, /workspaceDialog\.classList\.add\("workspace-dialog-resize-anchored"\)/);
+
+  const openEnd = script.indexOf("function clearWorkspaceNameError", openStart);
+  const openFunction = script.slice(openStart, openEnd);
+  const showModalIndex = openFunction.indexOf("workspaceDialog.showModal()");
+  const anchorIndex = openFunction.indexOf("syncWorkspaceDialogResizeAnchor()");
+  assert.ok(showModalIndex >= 0 && anchorIndex > showModalIndex);
+  assert.match(script, /window\.addEventListener\("resize", \(\) => \{\s*syncWorkspaceDialogResizeAnchor\(\);/);
 });
 
 test("builds duplicate preview and explicit batch-close handlers", async () => {
