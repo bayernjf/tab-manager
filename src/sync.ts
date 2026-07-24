@@ -1,6 +1,8 @@
 import { getAccessToken } from "./auth.js";
 import { SUPABASE_ANON_KEY, SUPABASE_URL, assertSupabaseConfigured } from "./supabase-config.js";
 import {
+  boardCustomGroupFromSyncRow,
+  boardLayoutFromSyncRow,
   groupRuleFromSyncRow,
   ignoredSiteFromSyncRow,
   resolveCloudCollection,
@@ -11,6 +13,10 @@ import {
   type IgnoredSiteSyncRow,
   type Settings,
   type SettingsSyncRow,
+  type BoardCustomGroup,
+  type BoardCustomGroupSyncRow,
+  type BoardLayout,
+  type BoardLayoutSyncRow,
 } from "./shared.js";
 import { loadState, saveSettings } from "./storage.js";
 
@@ -40,16 +46,21 @@ async function databaseRequest<T>(path: string, init: RequestInit = {}): Promise
   }
 }
 
-export async function pushSettings(userId: string, settings: Settings): Promise<void> {
-  const concreteSettings = settingsFromSyncRow({
+export function settingsSyncRow(userId: string, settings: Settings): SettingsSyncRow {
+  return {
     user_id: userId,
     auto_group_enabled: settings.autoGroupEnabled,
     minimum_tabs: settings.minimumTabs,
+    open_board_on_new_tab: settings.openBoardOnNewTab,
     default_group_color: settings.defaultGroupColor,
     cloud_sync_enabled: settings.cloudSyncEnabled,
     sync_rules_enabled: settings.syncRulesEnabled,
     sync_ignore_list_enabled: settings.syncIgnoreListEnabled,
-  });
+  };
+}
+
+export async function pushSettings(userId: string, settings: Settings): Promise<void> {
+  const concreteSettings = settingsFromSyncRow(settingsSyncRow(userId, settings));
   if (!concreteSettings) throw new Error("设置包含无效数据");
   await databaseRequest<unknown>("/user_settings?on_conflict=user_id", {
     method: "POST",
@@ -58,6 +69,7 @@ export async function pushSettings(userId: string, settings: Settings): Promise<
       user_id: userId,
       auto_group_enabled: concreteSettings.autoGroupEnabled,
       minimum_tabs: concreteSettings.minimumTabs,
+      open_board_on_new_tab: concreteSettings.openBoardOnNewTab,
       default_group_color: concreteSettings.defaultGroupColor,
       cloud_sync_enabled: concreteSettings.cloudSyncEnabled,
       sync_rules_enabled: concreteSettings.syncRulesEnabled,
@@ -68,7 +80,7 @@ export async function pushSettings(userId: string, settings: Settings): Promise<
 
 export async function syncSettings(userId: string): Promise<Settings> {
   const rows = await databaseRequest<SettingsSyncRow[]>(
-    `/user_settings?user_id=eq.${encodeURIComponent(userId)}&select=user_id,auto_group_enabled,minimum_tabs,default_group_color,cloud_sync_enabled,sync_rules_enabled,sync_ignore_list_enabled&limit=1`,
+    `/user_settings?user_id=eq.${encodeURIComponent(userId)}&select=user_id,auto_group_enabled,minimum_tabs,open_board_on_new_tab,default_group_color,cloud_sync_enabled,sync_rules_enabled,sync_ignore_list_enabled&limit=1`,
   );
   if (rows[0]) {
     const remoteSettings = settingsFromSyncRow(rows[0], userId);
@@ -129,6 +141,81 @@ export async function replaceIgnoredSites(userId: string, sites: readonly Ignore
   }
 }
 
+export async function fetchBoardCustomGroups(userId: string): Promise<BoardCustomGroup[]> {
+  const rows = await databaseRequest<BoardCustomGroupSyncRow[]>(
+    `/board_custom_groups?user_id=eq.${encodeURIComponent(userId)}&select=id,user_id,title,color,sort_order&order=sort_order.asc,id.asc`,
+  );
+  const groups = rows.map((row) => boardCustomGroupFromSyncRow(row, userId));
+  if (groups.some((group) => !group)) throw new Error("Supabase 返回了无效的看板分组数据");
+  return groups as BoardCustomGroup[];
+}
+
+export async function replaceBoardCustomGroups(userId: string, groups: readonly BoardCustomGroup[]): Promise<void> {
+  const rows = groups.map((group): BoardCustomGroupSyncRow => ({ id: group.id, user_id: userId, title: group.title, color: group.color, sort_order: group.sortOrder }));
+  if (rows.some((row) => !boardCustomGroupFromSyncRow(row, userId))) throw new Error("看板分组包含无效数据");
+  await databaseRequest<unknown>(`/board_custom_groups?user_id=eq.${encodeURIComponent(userId)}`, { method: "DELETE" });
+  if (rows.length) await databaseRequest<unknown>("/board_custom_groups", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(rows) });
+}
+
+export async function fetchBoardLayouts(userId: string): Promise<BoardLayout[]> {
+  const rows = await databaseRequest<BoardLayoutSyncRow[]>(
+    `/board_layouts?user_id=eq.${encodeURIComponent(userId)}&select=user_id,board_key,device_class,rank,auto_fill,manual_lane,manual_slot,manual_order&order=device_class.asc,rank.asc,board_key.asc`,
+  );
+  const layouts = rows.map((row) => boardLayoutFromSyncRow(row, userId));
+  if (layouts.some((layout) => !layout)) throw new Error("Supabase 返回了无效的看板布局数据");
+  return layouts as BoardLayout[];
+}
+
+export async function replaceBoardLayouts(userId: string, layouts: readonly BoardLayout[]): Promise<void> {
+  const rows = layouts.map((layout): BoardLayoutSyncRow => ({ user_id: userId, board_key: layout.boardKey, device_class: layout.deviceClass, rank: layout.rank, auto_fill: layout.autoFill, manual_lane: layout.manualLane ?? null, manual_slot: layout.manualSlot ?? null, manual_order: null }));
+  if (rows.some((row) => !boardLayoutFromSyncRow(row, userId))) throw new Error("看板布局包含无效数据");
+  await databaseRequest<unknown>(`/board_layouts?user_id=eq.${encodeURIComponent(userId)}`, { method: "DELETE" });
+  if (rows.length) await databaseRequest<unknown>("/board_layouts", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(rows) });
+}
+
+export interface BoardSyncData {
+  boardCustomGroups?: BoardCustomGroup[];
+  boardLayouts?: BoardLayout[];
+}
+
+export async function fetchBoardSyncData(userId: string, settings: Settings): Promise<BoardSyncData> {
+  if (!isCloudSyncEnabled(userId, settings)) return {};
+  const [boardCustomGroups, boardLayouts] = await Promise.all([fetchBoardCustomGroups(userId), fetchBoardLayouts(userId)]);
+  return { boardCustomGroups, boardLayouts };
+}
+
+export async function replaceBoardSyncData(userId: string, settings: Settings, data: BoardSyncData): Promise<void> {
+  if (!isCloudSyncEnabled(userId, settings)) return;
+  if (data.boardCustomGroups !== undefined) await replaceBoardCustomGroups(userId, data.boardCustomGroups);
+  if (data.boardLayouts !== undefined) await replaceBoardLayouts(userId, data.boardLayouts);
+}
+
+export async function restoreBoardSyncData(
+  userId: string,
+  settings: Settings,
+  localData: Required<BoardSyncData>,
+): Promise<BoardSyncData> {
+  const remoteData = await fetchBoardSyncData(userId, settings);
+  const restoredData: BoardSyncData = {};
+  const initialData: BoardSyncData = {};
+
+  if (remoteData.boardCustomGroups !== undefined) {
+    const resolution = resolveCloudCollection(localData.boardCustomGroups, remoteData.boardCustomGroups);
+    restoredData.boardCustomGroups = resolution.local;
+    if (resolution.initializeRemote) initialData.boardCustomGroups = resolution.local;
+  }
+  if (remoteData.boardLayouts !== undefined) {
+    const resolution = resolveCloudCollection(localData.boardLayouts, remoteData.boardLayouts);
+    restoredData.boardLayouts = resolution.local;
+    if (resolution.initializeRemote) initialData.boardLayouts = resolution.local;
+  }
+
+  if (initialData.boardCustomGroups !== undefined || initialData.boardLayouts !== undefined) {
+    await replaceBoardSyncData(userId, settings, initialData);
+  }
+  return restoredData;
+}
+
 export interface OptionalSyncData {
   groupRules?: GroupRule[];
   ignoredSites?: IgnoredSite[];
@@ -161,15 +248,7 @@ export async function restoreOptionalSyncData(
 }
 
 export async function fetchOptionalSyncData(userId: string, settings: Settings): Promise<OptionalSyncData> {
-  const concreteSettings = settingsFromSyncRow({
-    user_id: userId,
-    auto_group_enabled: settings.autoGroupEnabled,
-    minimum_tabs: settings.minimumTabs,
-    default_group_color: settings.defaultGroupColor,
-    cloud_sync_enabled: settings.cloudSyncEnabled,
-    sync_rules_enabled: settings.syncRulesEnabled,
-    sync_ignore_list_enabled: settings.syncIgnoreListEnabled,
-  });
+  const concreteSettings = settingsFromSyncRow(settingsSyncRow(userId, settings));
   if (!concreteSettings) throw new Error("设置包含无效数据");
   if (!concreteSettings.cloudSyncEnabled) return {};
   const data: OptionalSyncData = {};
@@ -179,17 +258,15 @@ export async function fetchOptionalSyncData(userId: string, settings: Settings):
 }
 
 export async function replaceOptionalSyncData(userId: string, settings: Settings, data: OptionalSyncData): Promise<void> {
-  const concreteSettings = settingsFromSyncRow({
-    user_id: userId,
-    auto_group_enabled: settings.autoGroupEnabled,
-    minimum_tabs: settings.minimumTabs,
-    default_group_color: settings.defaultGroupColor,
-    cloud_sync_enabled: settings.cloudSyncEnabled,
-    sync_rules_enabled: settings.syncRulesEnabled,
-    sync_ignore_list_enabled: settings.syncIgnoreListEnabled,
-  });
+  const concreteSettings = settingsFromSyncRow(settingsSyncRow(userId, settings));
   if (!concreteSettings) throw new Error("设置包含无效数据");
   if (!concreteSettings.cloudSyncEnabled) return;
   if (concreteSettings.syncRulesEnabled && data.groupRules) await replaceGroupRules(userId, data.groupRules);
   if (concreteSettings.syncIgnoreListEnabled && data.ignoredSites) await replaceIgnoredSites(userId, data.ignoredSites);
+}
+
+function isCloudSyncEnabled(userId: string, settings: Settings): boolean {
+  const concreteSettings = settingsFromSyncRow(settingsSyncRow(userId, settings));
+  if (!concreteSettings) throw new Error("设置包含无效数据");
+  return concreteSettings.cloudSyncEnabled === true;
 }

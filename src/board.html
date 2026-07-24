@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>标签看板 - Tab Garden</title>
+  <link rel="stylesheet" href="board.css">
+</head>
+<body>
+  <main class="board-shell">
+    <header class="board-header">
+      <div><span class="eyebrow">TAB GARDEN</span><h1>标签看板</h1></div>
+      <div class="board-actions">
+        <label class="auto-fill"><input id="auto-fill" type="checkbox" checked><span>自动填充</span></label>
+        <button id="open-workspaces" class="button secondary" type="button">工作区</button>
+        <button id="review-duplicates" class="button secondary" type="button">检查重复</button>
+        <button id="refresh" class="button secondary" type="button">刷新</button>
+      </div>
+    </header>
+    <p id="board-status" class="status" aria-live="polite"></p>
+    <section id="login-required" class="login-required hidden" aria-labelledby="login-title">
+      <h2 id="login-title">需要登录</h2>
+      <p id="login-message">请先登录后使用标签看板。</p>
+    </section>
+    <section id="board-content" class="hidden" aria-label="标签看板">
+      <section id="board-statistics" class="board-statistics" aria-label="看板统计"></section>
+      <section id="deferred-reminders" class="deferred-reminders hidden" aria-labelledby="deferred-title"><h2 id="deferred-title">待恢复提醒</h2><div id="deferred-list"></div></section>
+      <div class="board-filters" role="search">
+        <label><span class="sr-only">搜索标签</span><input id="board-search" type="search" placeholder="搜索标题、网址或域名" autocomplete="off"></label>
+        <label><span class="sr-only">来源窗口</span><select id="window-filter" aria-label="来源窗口"><option value="">全部窗口</option></select></label>
+      </div>
+      <form id="new-group-form" class="new-group-form">
+        <label><span class="sr-only">新分组名称</span><input id="new-group-title" maxlength="40" required placeholder="新建自定义分组"></label>
+        <label><span class="sr-only">分组颜色</span><select id="new-group-color" aria-label="分组颜色"><option value="blue">蓝色</option><option value="green">绿色</option><option value="purple">紫色</option><option value="orange">橙色</option><option value="red">红色</option><option value="pink">粉色</option><option value="cyan">青色</option><option value="yellow">黄色</option><option value="grey">灰色</option></select></label>
+        <button class="button" type="submit">新建分组</button>
+      </form>
+      <div id="board-grid" class="board-grid" aria-live="polite"></div>
+    </section>
+  </main>
+  <dialog id="workspace-dialog" class="workspace-dialog workspace-dialog-resizable" aria-labelledby="workspace-title">
+    <h2 id="workspace-title">本地工作区</h2>
+    <div class="workspace-controls">
+      <div class="workspace-name-field">
+        <input id="workspace-name" maxlength="80" placeholder="工作区名称" aria-describedby="workspace-name-error" aria-invalid="false">
+        <p id="workspace-name-error" class="workspace-name-toast" role="alert" hidden></p>
+      </div>
+      <label class="workspace-select-all"><input id="workspace-select-all" type="checkbox" checked>全选</label>
+    </div>
+    <div id="workspace-tabs" class="workspace-tabs"></div>
+    <button id="save-workspace" class="button" type="button">保存选中标签</button>
+    <div id="workspace-list" class="workspace-list"></div>
+    <button id="close-workspace-dialog" class="button secondary" type="button">关闭</button>
+  </dialog>
+  <dialog id="workspace-restore-dialog" class="workspace-dialog" aria-labelledby="workspace-restore-title">
+    <h2 id="workspace-restore-title">恢复工作区</h2><p id="workspace-restore-summary"></p><div id="workspace-restore-list" class="workspace-tabs"></div>
+    <button id="confirm-workspace-restore" class="button" type="button">确认打开标签</button><button id="cancel-workspace-restore" class="button secondary" type="button">取消</button>
+  </dialog>
+  <dialog id="duplicate-review-dialog" class="duplicate-review" aria-labelledby="duplicate-review-title">
+    <header class="duplicate-review-header">
+      <div><span class="eyebrow">TAB GARDEN</span><h2 id="duplicate-review-title">重复标签预览</h2></div>
+      <button id="close-duplicate-review" class="icon-button" type="button" aria-label="关闭重复标签预览">×</button>
+    </header>
+    <p id="duplicate-review-summary" class="duplicate-review-summary"></p>
+    <div id="duplicate-review-list" class="duplicate-review-list"></div>
+    <footer class="duplicate-review-actions">
+      <button id="cancel-duplicate-review" class="button secondary" type="button">取消</button>
+      <button id="confirm-duplicate-review" class="button" type="button" disabled>关闭重复标签</button>
+    </footer>
+  </dialog>
+  <script type="module" src="board.js"></script>
+</body>
+</html>

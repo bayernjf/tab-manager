@@ -1,15 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 
-globalThis.chrome = { tabGroups: { TAB_GROUP_ID_NONE: -1 } };
+globalThis.chrome = {};
 const {
-  autoRecordKey,
+  automaticBoardKey,
+  boardDropIndex,
+  boardCustomGroupFromSyncRow,
+  boardLayoutFromSyncRow,
+  buildBoardCards,
+  heightUnitsForTabCount,
   applyPortableImport,
   canConfirmOptionsImport,
+  customBoardKey,
   findMatchingRule,
   groupRuleFromSyncRow,
   getSiteKey,
   ignoredSiteFromSyncRow,
+  isBrowserNewTabUrl,
   isIgnoredSite,
   matchesDomain,
   normalizeDomainInput,
@@ -21,11 +29,1111 @@ const {
   resolveCloudCollection,
   syncFailureStatus,
   siteTitle,
+  segmentTabs,
+  placeBoardCards,
+  boardCardsForDevice,
+  boardTabMatchesQuery,
+  boardWindowLabel,
+  findDuplicateBoardTabs,
+  validateWorkspaceTitle,
+  validateWorkspaceSnapshot,
+  validateDeferredTab,
+  isDeferredTabDue,
+  normalizeDeferredShortcutMinutes,
+  manualBoardGridRow,
+  moveManualBoardCard,
+  moveBoardGroupRank,
+  validateBoardTabDrop,
+  validateBoardLayout,
+  validateOptionsSettings,
   settingsFromSyncRow,
   toPortableData,
   toPortableDataFromState,
   updateGroupRuleFromInput,
+  buildVirtualBoardGroups,
+  moveVirtualBoardAssignment,
 } = await import("../dist/shared.js");
+const { getCurrentUser, getStoredUser, isExplicitAuthenticationFailure, isRememberedSessionValid } = await import("../dist/auth.js");
+const { settingsSyncRow } = await import("../dist/sync.js");
+
+function cssBlocks(css) {
+  const blocks = [];
+  let cursor = 0;
+
+  while (cursor < css.length) {
+    const openBrace = css.indexOf("{", cursor);
+    if (openBrace < 0) break;
+
+    let braceDepth = 0;
+    let closeBrace = -1;
+    for (let index = openBrace; index < css.length; index += 1) {
+      if (css[index] === "{") braceDepth += 1;
+      if (css[index] === "}") braceDepth -= 1;
+      if (braceDepth === 0) {
+        closeBrace = index;
+        break;
+      }
+    }
+    if (closeBrace < 0) break;
+
+    blocks.push({
+      selector: css.slice(cursor, openBrace).trim(),
+      body: css.slice(openBrace + 1, closeBrace),
+    });
+    cursor = closeBrace + 1;
+  }
+
+  return blocks;
+}
+
+function normalizedCssSelector(selector) {
+  return selector.trim().replace(/\s+/g, " ");
+}
+
+function cssRule(css, selector) {
+  const normalizedSelector = normalizedCssSelector(selector);
+  return cssBlocks(css).find((block) => !block.selector.startsWith("@") && normalizedCssSelector(block.selector) === normalizedSelector)?.body ?? "";
+}
+
+function cssMediaBlock(css, mediaQuery) {
+  const mediaPattern = new RegExp(`^@media\\s*\\(\\s*${mediaQuery}\\s*\\)$`);
+  return cssBlocks(css).find((block) => mediaPattern.test(block.selector))?.body ?? "";
+}
+
+test("keeps authentication screens hidden until cached session lookup resolves", async () => {
+  const popupHtml = await readFile(new URL("../dist/popup.html", import.meta.url), "utf8");
+
+  assert.match(popupHtml, /<main id="boot-view" class="boot-view"[^>]*>/);
+  assert.match(popupHtml, /<main id="auth-view" class="auth-view hidden">/);
+  assert.match(popupHtml, /<main id="app-view" class="hidden">/);
+});
+
+test("renders a seven-day device remember checkbox for sign-in", async () => {
+  const [popupHtml, popupScript] = await Promise.all([
+    readFile(new URL("../dist/popup.html", import.meta.url), "utf8"),
+    readFile(new URL("../dist/popup.js", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(popupHtml, /<input id="remember-device" type="checkbox">/);
+  assert.match(popupHtml, /在此设备记住7天/);
+  assert.match(popupScript, /rememberForSevenDays: rememberDevice\.checked/);
+});
+
+test("invalidates remembered sessions at the seven-day deadline", () => {
+  const now = 1_700_000_000;
+
+  assert.equal(isRememberedSessionValid(now + 1, now), true);
+  assert.equal(isRememberedSessionValid(now, now), false);
+  assert.equal(isRememberedSessionValid(undefined, now), true);
+});
+
+test("includes the new-tab board setting in the built options page", async () => {
+  const optionsHtml = await readFile(new URL("../dist/options.html", import.meta.url), "utf8");
+
+  assert.match(optionsHtml, /<input id="new-tab-board" type="checkbox" aria-describedby="new-tab-board-description">/);
+  assert.match(optionsHtml, /新标签页打开看板/);
+  assert.match(optionsHtml, /<p id="new-tab-board-description" class="muted">启用后，点击 \+ 或按 Ctrl\/Cmd\+T 会打开 Tab Garden 看板；关闭后保持 Chrome\/Edge 原生新标签页不变。<\/p>/);
+});
+
+test("opens the board in the popup's current window", async () => {
+  const popupScript = await readFile(new URL("../dist/popup.js", import.meta.url), "utf8");
+
+  assert.match(popupScript, /chrome\.tabs\.query\(\{ active: true, currentWindow: true \}\)/);
+  assert.match(popupScript, /type: "open-tab-board", windowId/);
+});
+
+test("builds board tab activation and close message handlers", async () => {
+  const background = await readFile(new URL("../dist/background.js", import.meta.url), "utf8");
+
+  assert.match(background, /message\.type === "activate-board-tab"/);
+  assert.match(background, /chrome\.windows\.update\(tab\.windowId, \{ focused: true \}\)/);
+  assert.match(background, /chrome\.tabs\.update\(tabId, \{ active: true \}\)/);
+  assert.match(background, /message\.type === "close-board-tab"/);
+  assert.match(background, /chrome\.tabs\.remove\(message\.tabId\)/);
+});
+
+test("renders board tab open and close controls with focus-revealed close styling", async () => {
+  const [boardScript, boardCss] = await Promise.all([
+    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(boardScript, /className = "tab-open"/);
+  assert.match(boardScript, /"tab-close"/);
+  assert.match(boardScript, /type: "activate-board-tab", tabId/);
+  assert.match(boardScript, /type: "close-board-tab", tabId/);
+  assert.match(boardCss, /\.tab-row:hover \.tab-close/);
+  assert.match(boardCss, /\.tab-row:focus-within \.tab-close/);
+});
+
+test("uses the page scroll instead of an inner scroll for board tab lists", async () => {
+  const boardCss = await readFile(new URL("../dist/board.css", import.meta.url), "utf8");
+
+  assert.match(boardCss, /\.tabs \{ overflow: visible; max-height: none; \}/);
+  assert.match(boardCss, /\.board-grid \{[^}]*overflow: visible;/);
+});
+
+test("styles the board as the header's primary action", async () => {
+  const [popupHtml, popupCss] = await Promise.all([
+    readFile(new URL("../dist/popup.html", import.meta.url), "utf8"),
+    readFile(new URL("../dist/popup.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(popupHtml, /id="open-board" class="header-action board-action"/);
+  assert.match(popupHtml, /id="logout" class="header-action logout-action"/);
+  assert.match(popupCss, /\.board-action \{[^}]*background: #386650/);
+  assert.match(popupCss, /\.logout-action \{[^}]*border: 1px solid #d9e2dc/);
+});
+
+test("positions board tab close controls on the right", async () => {
+  const boardCss = await readFile(new URL("../dist/board.css", import.meta.url), "utf8");
+
+  assert.match(boardCss, /\.tab-close \{[^}]*right: 8px/);
+  assert.doesNotMatch(boardCss, /\.tab-close \{[^}]*left: 10px/);
+  assert.match(boardCss, /\.tab-open \{[^}]*padding: 3px 4px/);
+  assert.match(boardCss, /\.tab-row:hover \.tab-open[^}]*padding-right: 72px/);
+  assert.match(boardCss, /\.tab-defer \{[^}]*color: #8b6518/);
+  assert.match(boardCss, /\.tab-row:hover \.tab-current/);
+  assert.match(boardCss, /\.tab-row:hover \.tab-window/);
+});
+
+test("gives GitHub's white favicon a contrasting background", async () => {
+  const [boardScript, boardCss] = await Promise.all([
+    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(boardScript, /getSiteKey\(tab\.url\) === "github\.com"/);
+  assert.match(boardScript, /github-tab-icon/);
+  assert.match(boardCss, /\.github-tab-icon \{[^}]*background: #24292f/);
+});
+
+test("identifies only Chrome's exact browser new-tab URL", () => {
+  assert.equal(isBrowserNewTabUrl("chrome://newtab/"), true);
+  assert.equal(isBrowserNewTabUrl("edge://newtab/"), true);
+  assert.equal(isBrowserNewTabUrl(undefined), false);
+  assert.equal(isBrowserNewTabUrl("chrome-extension://extension-id/board.html"), false);
+  assert.equal(isBrowserNewTabUrl("https://example.com/"), false);
+  assert.equal(isBrowserNewTabUrl("http://example.com/"), false);
+  assert.equal(isBrowserNewTabUrl("chrome://new-tab-page/"), false);
+  assert.equal(isBrowserNewTabUrl("chrome://newtab"), false);
+  assert.equal(isBrowserNewTabUrl("edge://newtab"), false);
+});
+
+test("matches board-tab search queries against title, URL, and hostname", () => {
+  const tab = { id: 1, windowId: 7, title: "GitHub pull request", url: "https://github.com/openai/tab-garden/pulls/1" };
+
+  assert.equal(boardTabMatchesQuery(tab, "github"), true);
+  assert.equal(boardTabMatchesQuery(tab, "openai/tab-garden"), true);
+  assert.equal(boardTabMatchesQuery(tab, "calendar"), false);
+  assert.equal(boardTabMatchesQuery(tab, ""), true);
+});
+
+test("creates readable runtime-only window labels", () => {
+  assert.equal(boardWindowLabel(1), "窗口 1");
+  assert.equal(boardWindowLabel(0), null);
+  assert.equal(boardWindowLabel(1.5), null);
+});
+
+test("renders board search and source-window filter controls", async () => {
+  const [boardHtml, boardScript, boardCss] = await Promise.all([
+    readFile(new URL("../dist/board.html", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(boardHtml, /id="board-search"/);
+  assert.match(boardHtml, /id="window-filter"/);
+  assert.match(boardScript, /boardTabMatchesQuery/);
+  assert.match(boardScript, /renderWindowFilter/);
+  assert.match(boardCss, /\.board-filters/);
+  assert.match(boardCss, /\.tab-window/);
+});
+
+test("marks tabs from the board window as current", async () => {
+  const [boardScript, boardCss] = await Promise.all([
+    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(boardScript, /tab-current/);
+  assert.match(boardScript, /isCurrentWindow/);
+  assert.match(boardScript, /if \(tab\.isCurrentWindow\)[\s\S]*if \(tab\.windowLabel\)/);
+  assert.match(boardCss, /\.tab-current/);
+});
+
+test("groups only duplicate normalized HTTP(S) URLs and retains the first tab", () => {
+  const groups = findDuplicateBoardTabs([
+    { id: 1, title: "One", url: "https://example.com" },
+    { id: 2, title: "Two", url: "https://example.com/" },
+    { id: 3, title: "Three", url: "https://example.com/docs" },
+    { id: 4, title: "Four", url: "https://example.com/" },
+    { id: 5, title: "Internal", url: "chrome://newtab/" },
+  ]);
+
+  assert.deepEqual(groups.map((group) => [group.url, group.retainedTabId, group.tabs.map((tab) => tab.id)]), [
+    ["https://example.com/", 1, [1, 2, 4]],
+  ]);
+});
+
+test("validates local workspace snapshots without unsupported URLs", () => {
+  const snapshot = validateWorkspaceSnapshot({
+    id: "workspace-1", title: "Research", createdAt: "2026-07-23T00:00:00.000Z",
+    tabs: [{ title: "Docs", url: "https://example.com/docs" }, { title: "Internal", url: "chrome://newtab/" }],
+  });
+
+  assert.equal(snapshot, null);
+});
+
+test("rejects workspace snapshots whose untrimmed title exceeds the limit", () => {
+  const snapshot = validateWorkspaceSnapshot({
+    id: "workspace-2", title: ` ${"x".repeat(80)}`, createdAt: "2026-07-23T00:00:00.000Z",
+    tabs: [{ title: "Docs", url: "https://example.com/docs" }],
+  });
+
+  assert.equal(snapshot, null);
+});
+
+test("normalizes unique workspace names and rejects empty or duplicate names", () => {
+  assert.deepEqual(validateWorkspaceTitle("  Research  ", []), { status: "valid", title: "Research" });
+  assert.deepEqual(validateWorkspaceTitle("x".repeat(80), []), { status: "valid", title: "x".repeat(80) });
+  assert.deepEqual(validateWorkspaceTitle(null, []), { status: "invalid" });
+  assert.deepEqual(validateWorkspaceTitle("   ", []), { status: "empty" });
+  assert.deepEqual(validateWorkspaceTitle(" research ", ["Research"]), { status: "duplicate" });
+  assert.deepEqual(validateWorkspaceTitle("Research", [null, "Research"]), { status: "duplicate" });
+  assert.deepEqual(validateWorkspaceTitle("Work", ["work"]), { status: "duplicate" });
+  assert.deepEqual(validateWorkspaceTitle("x".repeat(81), []), { status: "invalid" });
+});
+
+test("validates deferred web tabs and computes due state", () => {
+  const tab = validateDeferredTab({ id: "deferred-1", title: "Read later", url: "https://example.com", dueAt: "2026-07-24T00:00:00.000Z", createdAt: "2026-07-23T00:00:00.000Z" });
+  assert.equal(tab?.url, "https://example.com/");
+  assert.ok(tab);
+  assert.equal(isDeferredTabDue(tab, Date.parse("2026-07-24T00:00:00.000Z")), true);
+  assert.equal(isDeferredTabDue(tab, Date.parse("2026-07-23T23:59:59.000Z")), false);
+});
+
+test("formats deferred times with a fixed local date-time pattern", async () => {
+  const shared = await import("../dist/shared.js");
+  assert.equal(typeof shared.formatDeferredDateTime, "function");
+  const localTime = new Date(2026, 6, 23, 17, 59).toISOString();
+  assert.equal(shared.formatDeferredDateTime(localTime), "2026-07-23 17:59");
+});
+
+test("keeps deferred tabs when a decorative favicon is too large", () => {
+  const tab = validateDeferredTab({
+    id: "deferred-2",
+    title: "Read later",
+    url: "https://example.com/article",
+    favIconUrl: `data:image/png;base64,${"a".repeat(5_000)}`,
+    dueAt: "2026-07-24T00:00:00.000Z",
+    createdAt: "2026-07-23T00:00:00.000Z",
+  });
+
+  assert.ok(tab);
+  assert.equal(tab.favIconUrl, undefined);
+});
+
+test("normalizes up to five unique deferred shortcut minutes", () => {
+  assert.deepEqual(normalizeDeferredShortcutMinutes(undefined), [1, 3, 5]);
+  assert.deepEqual(normalizeDeferredShortcutMinutes([5, 1, 5, 3]), [5, 1, 3]);
+  assert.equal(normalizeDeferredShortcutMinutes([0]), null);
+  assert.equal(normalizeDeferredShortcutMinutes([1, 2, 3, 4, 5, 6]), null);
+});
+
+test("renders a compact accessible deferred shortcut editor", async () => {
+  const [html, script, css] = await Promise.all([
+    readFile(new URL("../dist/options.html", import.meta.url), "utf8"),
+    readFile(new URL("../dist/options.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/options.css", import.meta.url), "utf8"),
+  ]);
+
+  const shortcutCardClasses = html.match(/<section class="([^"]*\bshortcut-card\b[^"]*)"/)?.[1]?.split(/\s+/);
+  assert.ok(shortcutCardClasses?.includes("card"));
+  assert.ok(shortcutCardClasses.includes("shortcut-card"));
+  assert.match(html, /<[^>]+(?=[^>]*\bid="deferred-shortcut-count")(?=[^>]*\baria-live="polite")[^>]*>/);
+  assert.match(html, /id="deferred-shortcut-note"/);
+  assert.match(script, /const MAX_DEFERRED_SHORTCUTS = 5/);
+  assert.match(script, /className = "deferred-shortcut"/);
+  assert.match(script, /input\.ariaLabel = "快捷提醒分钟数"/);
+  assert.match(script, /remove\.ariaLabel = "删除此快捷提醒时间"/);
+  assert.match(script, /input\.ariaLabel = `快捷提醒 \$\{index \+ 1\} 分钟数`;/);
+  assert.match(script, /remove\.ariaLabel = `删除第 \$\{index \+ 1\} 个快捷提醒`;/);
+  assert.match(script, /deferredShortcutCount\.textContent = `\$\{count\} \/ \$\{MAX_DEFERRED_SHORTCUTS\}`;/);
+  assert.match(script, /if \(count >= MAX_DEFERRED_SHORTCUTS\)\s*return;/);
+  assert.match(script, /addDeferredShortcut\.hidden = count >= MAX_DEFERRED_SHORTCUTS/);
+  assert.match(script, /remove\.disabled = count <= 1/);
+  assert.match(script, /focusTarget\?\.\s*focus\(\)/);
+  assert.match(script, /input\?\.focus\(\)/);
+  assert.match(css, /\.deferred-shortcuts\s*\{/);
+  assert.match(css, /\.deferred-shortcut-input\s*\{[^}]*width: calc\(5ch \+ 22px\);/);
+  assert.match(css, /\.deferred-shortcut:focus-within/);
+  assert.match(css, /\.deferred-shortcut-remove:hover/);
+});
+
+test("builds local deferred-tab handlers", async () => {
+  const background = await readFile(new URL("../dist/background.js", import.meta.url), "utf8");
+  assert.match(background, /message\.type === "defer-board-tab"/);
+  assert.match(background, /message\.type === "get-deferred-tabs"/);
+  assert.match(background, /message\.type === "open-deferred-tab"/);
+  assert.match(background, /message\.type === "reschedule-deferred-tab"/);
+  assert.match(background, /message\.type === "delete-deferred-tab"/);
+});
+
+test("renders board-only deferred reminder controls", async () => {
+  const [html, script, css] = await Promise.all([readFile(new URL("../dist/board.html", import.meta.url), "utf8"), readFile(new URL("../dist/board.js", import.meta.url), "utf8"), readFile(new URL("../dist/board.css", import.meta.url), "utf8")]);
+  assert.match(html, /id="deferred-reminders"/);
+  assert.match(script, /type: "defer-board-tab"/);
+  assert.match(script, /type: "get-deferred-tabs"/);
+  assert.match(css, /\.deferred-reminders/);
+});
+
+test("renders every scheduled reminder with clear status and actions", async () => {
+  const [script, css] = await Promise.all([
+    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.doesNotMatch(script, /\.filter\(\(tab\) => isDeferredTabDue\(tab\)\)/);
+  assert.match(script, /isDeferredTabDue\(tab\)/);
+  assert.match(script, /deferred-open/);
+  assert.match(script, /deferred-delete/);
+  assert.match(script, /deferred-status/);
+  assert.match(script, /deferred-icon/);
+  assert.match(script, /tab\.favIconUrl/);
+  assert.match(script, /github-tab-icon/);
+  assert.match(css, /\.deferred-open/);
+  assert.match(css, /\.deferred-delete/);
+  assert.match(css, /\.deferred-status/);
+  assert.match(css, /\.deferred-row \{[^}]*min-height: 40px/);
+  assert.match(css, /\.deferred-title \{[^}]*flex: 1/);
+  assert.match(css, /\.deferred-actions \{[^}]*flex: 0 0 auto/);
+  assert.doesNotMatch(css, /\.deferred-actions \{[^}]*(?:opacity: 0|display: none|visibility: hidden)/);
+});
+
+test("renders a configured deferred shortcut menu", async () => {
+  const [script, css] = await Promise.all([readFile(new URL("../dist/board.js", import.meta.url), "utf8"), readFile(new URL("../dist/board.css", import.meta.url), "utf8")]);
+  assert.match(script, /deferredShortcutMinutes/);
+  assert.match(script, /defer-menu/);
+  assert.match(script, /自定义时间/);
+  assert.match(css, /\.defer-menu/);
+});
+
+test("consumes a deferred reminder only after it opens successfully", async () => {
+  const [background, board] = await Promise.all([
+    readFile(new URL("../dist/background.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+  ]);
+  const openHandlerStart = background.indexOf('if (message.type === "open-deferred-tab")');
+  const openHandlerEnd = background.indexOf('if (message.type === "reschedule-deferred-tab")', openHandlerStart);
+  const openHandler = background.slice(openHandlerStart, openHandlerEnd);
+
+  assert.ok(openHandlerStart >= 0 && openHandlerEnd > openHandlerStart);
+  assert.match(openHandler, /await chrome\.tabs\.create/);
+  assert.match(openHandler, /await saveDeferredTabs/);
+  assert.ok(openHandler.indexOf("await chrome.tabs.create") < openHandler.indexOf("await saveDeferredTabs"));
+  assert.match(openHandler, /deferredTabs\.filter\(\(item\) => item\.id !== message\.id\)/);
+  assert.match(board, /type: "open-deferred-tab"[\s\S]*Promise\.all\(\[renderDeferredTabs\(\), renderBoardStatistics\(\)\]\)/);
+});
+
+test("builds a read-only board statistics handler", async () => {
+  const [background, board] = await Promise.all([
+    readFile(new URL("../dist/background.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+  ]);
+  assert.match(background, /message\.type === "get-board-statistics"/);
+  assert.match(background, /duplicateTabCount/);
+  assert.match(background, /deferredTabCount/);
+  assert.match(background, /dueDeferredCount: deferredTabCount/);
+  assert.match(board, /stats\.deferredTabCount \?\? stats\.dueDeferredCount \?\? 0/);
+});
+
+test("renders board statistics cards", async () => {
+  const [html, script, css] = await Promise.all([readFile(new URL("../dist/board.html", import.meta.url), "utf8"), readFile(new URL("../dist/board.js", import.meta.url), "utf8"), readFile(new URL("../dist/board.css", import.meta.url), "utf8")]);
+  assert.match(html, /id="board-statistics"/);
+  assert.match(script, /type: "get-board-statistics"/);
+  assert.match(css, /\.board-statistics/);
+});
+
+test("builds local workspace save, preview, restore, and delete handlers", async () => {
+  const background = await readFile(new URL("../dist/background.js", import.meta.url), "utf8");
+
+  assert.match(background, /message\.type === "save-workspace"/);
+  assert.match(background, /validateWorkspaceTitle\(message\.title, storedWorkspaces\.map\(\(workspace\) => workspace\.title\)\)/);
+  assert.match(background, /请输入工作区名称/);
+  assert.match(background, /该工作区名称已存在/);
+  assert.match(background, /message\.type === "get-workspace-restore-preview"/);
+  assert.match(background, /message\.type === "restore-workspace"/);
+  assert.match(background, /message\.confirmed !== true/);
+  assert.match(background, /chrome\.tabs\.create/);
+  assert.match(background, /message\.type === "delete-workspace"/);
+});
+
+test("renders local workspace selection and restore-preview dialogs", async () => {
+  const [html, script, css] = await Promise.all([
+    readFile(new URL("../dist/board.html", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
+  ]);
+  assert.match(html, /id="open-workspaces"/);
+  assert.match(html, /id="workspace-dialog"/);
+  assert.match(html, /id="workspace-restore-dialog"/);
+  assert.match(html, /class="workspace-name-field"/);
+  assert.match(html, /class="workspace-controls"/);
+  assert.match(html, /<label\b(?=[^>]*\bclass="workspace-select-all")[^>]*>\s*<input\b(?=[^>]*\bid="workspace-select-all")(?=[^>]*\btype="checkbox")(?=[^>]*\bchecked)[^>]*>\s*全选\s*<\/label>/);
+  assert.match(html, /<input\b(?=[^>]*\bid="workspace-name")(?=[^>]*\baria-describedby="workspace-name-error")(?=[^>]*\baria-invalid="false")[^>]*>/);
+  assert.match(html, /<p\b(?=[^>]*\bid="workspace-name-error")(?=[^>]*\bclass="workspace-name-toast")(?=[^>]*\brole="alert")(?=[^>]*\bhidden)[^>]*><\/p>/);
+  assert.match(script, /type: "save-workspace"/);
+  assert.match(script, /validateWorkspaceTitle\(workspaceName\.value, workspaces\.map\(\(workspace\) => workspace\.title\)\)/);
+  assert.match(script, /showWorkspaceNameError\("请输入工作区名称"\)/);
+  assert.match(script, /showWorkspaceNameError\("该工作区名称已存在"\)/);
+  assert.match(script, /workspaceName\.addEventListener\("input", clearWorkspaceNameError\)/);
+  assert.match(script, /workspaceDialog\.addEventListener\("close", clearWorkspaceNameError\)/);
+  assert.match(script, /function workspaceTabInputs\(\)/);
+  assert.match(script, /function syncWorkspaceSelectAll\(\)/);
+  assert.match(script, /workspaceSelectAll\.disabled = inputs\.length === 0/);
+  assert.match(script, /workspaceSelectAll\.indeterminate = checkedCount > 0 && checkedCount < inputs\.length/);
+  assert.match(script, /workspaceSelectAll\.addEventListener\("change"/);
+  assert.match(script, /input\.checked = workspaceSelectAll\.checked/);
+  assert.match(script, /workspaceTabs\.addEventListener\("change"/);
+  assert.match(script, /event\.target instanceof HTMLInputElement && event\.target\.type === "checkbox"/);
+
+  const saveStart = script.indexOf("async function saveCurrentWorkspace");
+  const saveEnd = script.indexOf("async function previewWorkspaceRestore", saveStart);
+  assert.ok(saveStart >= 0 && saveEnd > saveStart);
+  const saveCurrentWorkspace = script.slice(saveStart, saveEnd);
+  const validationCall = "validateWorkspaceTitle(workspaceName.value, workspaces.map((workspace) => workspace.title))";
+  const saveMessage = 'await send({ type: "save-workspace"';
+  assert.ok(saveCurrentWorkspace.indexOf(validationCall) < saveCurrentWorkspace.indexOf(saveMessage));
+  assert.match(saveCurrentWorkspace, /if \(title\.status === "empty"\) \{\s*showWorkspaceNameError\("请输入工作区名称"\);\s*return;\s*\}/);
+  assert.match(saveCurrentWorkspace, /if \(title\.status === "duplicate"\) \{\s*showWorkspaceNameError\("该工作区名称已存在"\);\s*return;\s*\}/);
+
+  const catchStart = /catch\s*\(error\)\s*\{/.exec(saveCurrentWorkspace)?.index ?? -1;
+  const catchEnd = saveCurrentWorkspace.indexOf("  workspaceName.value", catchStart);
+  assert.ok(catchStart >= 0 && catchEnd > catchStart);
+  const saveCatch = saveCurrentWorkspace.slice(catchStart, catchEnd);
+  assert.deepEqual([...saveCatch.matchAll(/error\.message === "([^"]+)"/g)].map((match) => match[1]), ["请输入工作区名称", "该工作区名称已存在"]);
+  assert.match(saveCatch, /showWorkspaceNameError\(error\.message\)/);
+  assert.match(saveCatch, /throw error;/);
+
+  const clearStart = script.indexOf("function clearWorkspaceNameError");
+  const showStart = script.indexOf("function showWorkspaceNameError", clearStart);
+  assert.ok(clearStart >= 0 && showStart > clearStart);
+  const clearWorkspaceNameError = script.slice(clearStart, showStart);
+  const showWorkspaceNameError = script.slice(showStart, saveStart);
+  assert.match(clearWorkspaceNameError, /workspaceNameError\.hidden = true;/);
+  assert.match(clearWorkspaceNameError, /workspaceNameError\.textContent = "";/);
+  assert.match(clearWorkspaceNameError, /workspaceName\.classList\.remove\("workspace-name-input-invalid"\)/);
+  assert.match(clearWorkspaceNameError, /workspaceName\.setAttribute\("aria-invalid", "false"\)/);
+  assert.match(showWorkspaceNameError, /workspaceNameError\.hidden = false;/);
+  assert.match(showWorkspaceNameError, /workspaceName\.classList\.add\("workspace-name-input-invalid"\)/);
+  assert.match(showWorkspaceNameError, /workspaceName\.setAttribute\("aria-invalid", "true"\)/);
+  assert.match(showWorkspaceNameError, /workspaceName\.focus\(\)/);
+
+  const successStatements = ["workspaceName.value = \"\";", "clearWorkspaceNameError();", "await loadWorkspaces();", "showStatus(\"工作区已保存\");"];
+  let priorStatement = -1;
+  for (const statement of successStatements) {
+    const statementIndex = saveCurrentWorkspace.indexOf(statement);
+    assert.ok(statementIndex > priorStatement, `Expected ${statement} after the prior success step`);
+    priorStatement = statementIndex;
+  }
+
+  assert.match(script, /type: "get-workspace-restore-preview"/);
+  assert.match(script, /type: "restore-workspace"/);
+  assert.match(script, /className = "deferred-actions"/);
+  assert.match(script, /makeButton\("恢复", "deferred-action deferred-open"/);
+  assert.match(script, /makeButton\("删除", "deferred-action deferred-delete"/);
+  assert.match(css, /\.workspace-dialog/);
+  assert.match(css, /\.workspace-name-toast/);
+  assert.match(css, /\.workspace-controls\s*\{[^}]*display: flex;[^}]*flex-wrap: wrap;/);
+  assert.match(css, /\.workspace-select-all\s*\{[^}]*display: inline-flex;/);
+  assert.match(css, /\.workspace-name-input-invalid/);
+  assert.match(css, /\.workspace-name-toast\[hidden\]/);
+  const mobileStart = css.indexOf("@media (max-width: 640px)");
+  assert.ok(mobileStart >= 0);
+  const mobileCss = css.slice(mobileStart);
+  assert.match(mobileCss, /\.workspace-name-toast\s*\{[^}]*position: static;[^}]*width: 100%;[^}]*transform: none;/);
+  assert.match(mobileCss, /\.workspace-name-toast::before\s*\{[^}]*display: none;/);
+});
+
+test("makes only the workspace manager dialog resizable", async () => {
+  const [html, css, script] = await Promise.all([
+    readFile(new URL("../dist/board.html", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+  ]);
+
+  const managerDialog = html.match(/<dialog[^>]*id="workspace-dialog"[^>]*>/)?.[0] ?? "";
+  assert.match(managerDialog, /class="[^"]*\bworkspace-dialog-resizable\b[^"]*"/);
+  const resizableDialogs = [...html.matchAll(/<dialog\b[^>]*>/g)]
+    .map((match) => match[0])
+    .filter((dialog) => /class="[^"]*\bworkspace-dialog-resizable\b[^"]*"/.test(dialog));
+  assert.deepEqual(resizableDialogs, [managerDialog]);
+
+  const resizableRule = cssRule(css, ".workspace-dialog-resizable");
+  assert.match(resizableRule, /\bcontainer\s*:\s*workspace-dialog\s*\/\s*inline-size\s*;/);
+  assert.match(resizableRule, /\bresize\s*:\s*both\s*;/);
+  assert.match(resizableRule, /\boverflow\s*:\s*auto\s*;/);
+  assert.match(resizableRule, /\bmin-width\s*:\s*[^;}]+\s*;/);
+  assert.match(resizableRule, /\bmin-height\s*:\s*[^;}]+\s*;/);
+  assert.match(resizableRule, /\bmax-width\s*:\s*[^;}]+\s*;/);
+  assert.match(resizableRule, /\bmax-height\s*:\s*[^;}]+\s*;/);
+  const resizableOpenRule = cssRule(css, ".workspace-dialog-resizable[open]");
+  assert.match(resizableOpenRule, /\bdisplay\s*:\s*flex\s*;/);
+  assert.match(resizableOpenRule, /\bflex-direction\s*:\s*column\s*;/);
+  const anchoredRule = cssRule(css, ".workspace-dialog-resize-anchored");
+  assert.match(anchoredRule, /\bposition\s*:\s*fixed\s*;/);
+  assert.match(anchoredRule, /\binset\s*:\s*var\(--workspace-dialog-top\)\s+auto\s+auto\s+var\(--workspace-dialog-left\)\s*;/);
+  assert.match(anchoredRule, /\bmargin\s*:\s*0\s*;/);
+  assert.match(anchoredRule, /\bmax-width\s*:\s*calc\(100vw\s*-\s*var\(--workspace-dialog-left\)\s*-\s*16px\)\s*;/);
+  assert.match(anchoredRule, /\bmax-height\s*:\s*calc\(100vh\s*-\s*var\(--workspace-dialog-top\)\s*-\s*16px\)\s*;/);
+  const workspaceTabsRule = cssRule(css, ".workspace-dialog-resizable .workspace-tabs");
+  assert.match(workspaceTabsRule, /\bflex\s*:\s*[^;}]+\s*;/);
+  assert.match(workspaceTabsRule, /\bmax-height\s*:\s*none\s*;/);
+  const workspaceListRule = cssRule(css, ".workspace-dialog-resizable .workspace-list");
+  assert.match(workspaceListRule, /\bmax-height\s*:\s*none\s*;/);
+  assert.match(workspaceListRule, /\bflex\s*:\s*0\s+0\s+auto\s*;/);
+  assert.match(workspaceListRule, /\boverflow\s*:\s*visible\s*;/);
+
+  const narrowDialogCss = cssBlocks(css)
+    .find((block) => normalizedCssSelector(block.selector) === "@container workspace-dialog (max-width: 520px)")?.body ?? "";
+  assert.notEqual(narrowDialogCss, "");
+  const narrowToastRule = cssRule(narrowDialogCss, ".workspace-dialog-resizable .workspace-name-toast");
+  assert.match(narrowToastRule, /\bposition\s*:\s*static\s*;/);
+  assert.match(narrowToastRule, /\bmargin-top\s*:\s*8px\s*;/);
+  assert.match(narrowToastRule, /\bwidth\s*:\s*100%\s*;/);
+  assert.match(narrowToastRule, /\bmax-width\s*:\s*none\s*;/);
+  const narrowToastArrowRule = cssRule(narrowDialogCss, ".workspace-dialog-resizable .workspace-name-toast::before");
+  assert.match(narrowToastArrowRule, /\bdisplay\s*:\s*none\s*;/);
+
+  const mobileCss = cssMediaBlock(css, "max-width\\s*:\\s*640px");
+  assert.notEqual(mobileCss, "");
+  const mobileResizableRule = cssRule(mobileCss, ".workspace-dialog-resizable");
+  assert.match(mobileResizableRule, /\bheight\s*:\s*auto\s*;/);
+  assert.match(mobileResizableRule, /\bresize\s*:\s*none\s*;/);
+  const mobileAnchoredRule = cssRule(mobileCss, ".workspace-dialog-resize-anchored");
+  assert.match(mobileAnchoredRule, /\binset\s*:\s*0\s*;/);
+  assert.match(mobileAnchoredRule, /\bmargin\s*:\s*auto\s*;/);
+  const mobileResizableOpenRule = cssRule(mobileCss, ".workspace-dialog-resizable[open]");
+  assert.match(mobileResizableOpenRule, /\bdisplay\s*:\s*block\s*;/);
+  const mobileWorkspaceTabsRule = cssRule(mobileCss, ".workspace-dialog-resizable .workspace-tabs");
+  assert.match(mobileWorkspaceTabsRule, /\bmax-height\s*:\s*300px\s*;/);
+  const mobileToastRule = cssRule(mobileCss, ".workspace-dialog-resizable .workspace-name-toast");
+  assert.match(mobileToastRule, /\bmargin-top\s*:\s*6px\s*;/);
+  const mobileWorkspaceListRule = cssRule(mobileCss, ".workspace-dialog-resizable .workspace-list");
+  assert.match(mobileWorkspaceListRule, /\bwidth\s*:\s*auto\s*;/);
+  assert.match(mobileWorkspaceListRule, /\bmax-height\s*:\s*none\s*;/);
+  assert.match(mobileWorkspaceListRule, /\boverflow\s*:\s*visible\s*;/);
+
+  const anchorStart = script.indexOf("function syncWorkspaceDialogResizeAnchor");
+  const openStart = script.indexOf("async function openWorkspaceDialog", anchorStart);
+  assert.ok(anchorStart >= 0 && openStart > anchorStart);
+  const anchorFunction = script.slice(anchorStart, openStart);
+  assert.match(anchorFunction, /workspaceDialog\.getBoundingClientRect\(\)/);
+  assert.match(script, /WORKSPACE_DIALOG_MOBILE_MAX_WIDTH\s*=\s*640/);
+  assert.match(anchorFunction, /window\.innerWidth <= WORKSPACE_DIALOG_MOBILE_MAX_WIDTH/);
+  assert.match(anchorFunction, /workspaceDialog\.classList\.remove\("workspace-dialog-resize-anchored"\)/);
+  assert.match(anchorFunction, /workspaceDialog\.style\.setProperty\("--workspace-dialog-left"/);
+  assert.match(anchorFunction, /workspaceDialog\.style\.setProperty\("--workspace-dialog-top"/);
+  assert.match(anchorFunction, /workspaceDialog\.classList\.add\("workspace-dialog-resize-anchored"\)/);
+
+  const openEnd = script.indexOf("function clearWorkspaceNameError", openStart);
+  const openFunction = script.slice(openStart, openEnd);
+  const showModalIndex = openFunction.indexOf("workspaceDialog.showModal()");
+  const anchorIndex = openFunction.indexOf("syncWorkspaceDialogResizeAnchor()");
+  assert.ok(showModalIndex >= 0 && anchorIndex > showModalIndex);
+  assert.match(script, /window\.addEventListener\("resize", \(\) => \{\s*syncWorkspaceDialogResizeAnchor\(\);/);
+});
+
+test("builds duplicate preview and explicit batch-close handlers", async () => {
+  const background = await readFile(new URL("../dist/background.js", import.meta.url), "utf8");
+
+  assert.match(background, /message\.type === "get-board-duplicate-preview"/);
+  assert.match(background, /findDuplicateBoardTabs/);
+  assert.match(background, /message\.type === "close-board-duplicates"/);
+  assert.match(background, /message\.confirmed !== true/);
+  assert.match(background, /chrome\.tabs\.remove/);
+});
+
+test("renders a duplicate review dialog before batch closure", async () => {
+  const [html, script, css] = await Promise.all([
+    readFile(new URL("../dist/board.html", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(html, /id="review-duplicates"/);
+  assert.match(html, /id="duplicate-review-dialog"/);
+  assert.match(script, /type: "get-board-duplicate-preview"/);
+  assert.match(script, /type: "close-board-duplicates"/);
+  assert.match(css, /\.duplicate-review/);
+});
+
+test("builds board cards from ten-tab segments and retains an empty custom card", () => {
+  const tabs = Array.from({ length: 11 }, (_value, index) => ({ id: index + 1, title: `Tab ${index + 1}` }));
+  const cards = buildBoardCards([
+    { boardKey: "custom:7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573", kind: "custom", title: "Empty", color: "purple", rank: 0, tabs: [] },
+    { boardKey: "auto:example.com", kind: "automatic", title: "Example", color: "blue", rank: 1, tabs },
+  ]);
+
+  assert.deepEqual(cards.map((card) => [card.boardKey, card.segmentIndex, card.segmentCount, card.tabs.length, card.heightUnits]), [
+    ["custom:7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573", 0, 1, 0, 1],
+    ["auto:example.com", 0, 2, 10, 2],
+    ["auto:example.com", 1, 2, 1, 1],
+  ]);
+});
+
+test("moves a logical board group to a new rank without moving Ungrouped", () => {
+  const groups = [
+    { boardKey: "ungrouped", kind: "ungrouped", title: "Ungrouped", color: "grey", rank: 0 },
+    { boardKey: "auto:one.example", kind: "automatic", title: "One", color: "blue", rank: 1 },
+    { boardKey: "auto:two.example", kind: "automatic", title: "Two", color: "green", rank: 2 },
+  ];
+
+  assert.deepEqual(moveBoardGroupRank(groups, "auto:two.example", 1).map((group) => [group.boardKey, group.rank]), [
+    ["ungrouped", 0],
+    ["auto:two.example", 1],
+    ["auto:one.example", 2],
+  ]);
+  assert.equal(moveBoardGroupRank(groups, "ungrouped", 2), null);
+});
+
+test("rejects invalid board tab drops before Chrome state changes", () => {
+  assert.equal(validateBoardTabDrop({ tabId: 1, targetBoardKey: "custom:not-a-uuid" }), null);
+  assert.equal(validateBoardTabDrop({ tabId: -1, targetBoardKey: "ungrouped" }), null);
+  assert.equal(validateBoardTabDrop({ tabId: 1, targetBoardKey: "ungrouped" }), null);
+  assert.equal(validateBoardTabDrop({ tabId: 1, targetBoardKey: "ungrouped", position: "before" }), null);
+  assert.equal(validateBoardTabDrop({ tabId: 1, targetBoardKey: "ungrouped", position: "after", targetTabId: 1 }), null);
+  assert.deepEqual(validateBoardTabDrop({ tabId: 1, targetBoardKey: "ungrouped", position: "before", targetTabId: 2 }), {
+    tabId: 1, targetBoardKey: "ungrouped", position: "before", targetTabId: 2,
+  });
+  assert.deepEqual(validateBoardTabDrop({ tabId: 1, targetBoardKey: "ungrouped", position: "append" }), {
+    tabId: 1, targetBoardKey: "ungrouped", position: "append",
+  });
+});
+
+test("computes final tab-strip indices for before and after board drops", () => {
+  assert.equal(boardDropIndex(0, 1, "after"), 1);
+  assert.equal(boardDropIndex(2, 1, "after"), 2);
+  assert.equal(boardDropIndex(0, 1, "before"), 0);
+  assert.equal(boardDropIndex(2, 1, "before"), 1);
+  assert.equal(boardDropIndex(-1, 1, "before"), null);
+});
+
+test("moves and clears local virtual board assignments without browser group ids", () => {
+  const customKey = "custom:7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573";
+  const automaticKey = "auto:other.example";
+  const moved = moveVirtualBoardAssignment({}, 7, 12, customKey);
+  assert.deepEqual(moved, { "7:12": { windowId: 7, tabId: 12, boardKey: customKey, order: 0 } });
+
+  const reassigned = moveVirtualBoardAssignment(moved, 7, 12, automaticKey, 3);
+  assert.deepEqual(reassigned["7:12"], { windowId: 7, tabId: 12, boardKey: automaticKey, order: 3 });
+  assert.deepEqual(moveVirtualBoardAssignment(reassigned, 7, 12, "ungrouped"), {});
+});
+
+test("builds virtual automatic groups by site while custom assignments take precedence", () => {
+  const customId = "7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573";
+  const groups = buildVirtualBoardGroups({
+    windowId: 7,
+    tabs: [
+      { id: 1, title: "One", url: "https://www.example.com/a" },
+      { id: 2, title: "Two", url: "https://example.com/b" },
+      { id: 3, title: "Three", url: "https://example.com/c" },
+    ],
+    settings: { autoGroupEnabled: true, minimumTabs: 2, defaultGroupColor: "blue" },
+    rules: [],
+    ignoredSites: [],
+    customGroups: [{ id: customId, title: "Research", color: "purple", sortOrder: 0 }],
+    assignments: { "7:1": { windowId: 7, tabId: 1, boardKey: `custom:${customId}`, order: 0 } },
+  });
+
+  assert.deepEqual(groups.map((group) => [group.boardKey, group.tabs.map((tab) => tab.id)]), [
+    ["ungrouped", []],
+    [`custom:${customId}`, [1]],
+    ["auto:example.com", [2, 3]],
+  ]);
+});
+
+test("aggregates sites across windows while retaining each tab's custom assignment", () => {
+  const customId = "7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573";
+  const groups = buildVirtualBoardGroups({
+    windowId: 7,
+    tabs: [
+      { id: 1, windowId: 7, title: "First", url: "https://example.com/first" },
+      { id: 2, windowId: 8, title: "Second", url: "https://example.com/second" },
+    ],
+    settings: { autoGroupEnabled: true, minimumTabs: 2, defaultGroupColor: "blue" },
+    rules: [],
+    ignoredSites: [],
+    customGroups: [{ id: customId, title: "Research", color: "purple", sortOrder: 0 }],
+    assignments: { "8:2": { windowId: 8, tabId: 2, boardKey: `custom:${customId}`, order: 0 } },
+  });
+
+  assert.deepEqual(groups.map((group) => [group.boardKey, group.tabs.map((tab) => tab.id)]), [
+    ["ungrouped", [1]],
+    [`custom:${customId}`, [2]],
+  ]);
+});
+
+test("treats only explicit authentication responses as session-invalidating", () => {
+  assert.equal(isExplicitAuthenticationFailure({ status: 401 }), true);
+  assert.equal(isExplicitAuthenticationFailure({ status: 403 }), true);
+  assert.equal(isExplicitAuthenticationFailure({ status: 500 }), false);
+  assert.equal(isExplicitAuthenticationFailure(new TypeError("Failed to fetch")), false);
+});
+
+test("returns the cached user without waiting for an authentication request", async () => {
+  const values = {
+    supabaseSession: {
+      access_token: "access-token",
+      refresh_token: "refresh-token",
+      expires_at: Math.floor(Date.now() / 1000) + 3600,
+      user: { id: "user-1", email: "user@example.com" },
+    },
+  };
+  globalThis.chrome.storage = {
+    local: {
+      get: async (key) => key in values ? { [key]: values[key] } : {},
+    },
+  };
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => { throw new Error("The popup must not wait for this request"); };
+    assert.deepEqual(await getStoredUser(), values.supabaseSession.user);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("keeps the cached user through a transient auth network failure but clears an explicit rejection", async () => {
+  const values = {
+    supabaseSession: {
+      access_token: "access-token",
+      refresh_token: "refresh-token",
+      expires_at: Math.floor(Date.now() / 1000) + 3600,
+      user: { id: "user-1", email: "user@example.com" },
+    },
+  };
+  globalThis.chrome.storage = {
+    local: {
+      get: async (key) => key in values ? { [key]: values[key] } : {},
+      set: async (next) => Object.assign(values, next),
+      remove: async (key) => { delete values[key]; },
+    },
+  };
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+    assert.deepEqual(await getCurrentUser(), values.supabaseSession.user);
+    assert.ok(values.supabaseSession);
+
+    globalThis.fetch = async () => new Response(JSON.stringify({ message: "JWT expired" }), { status: 401 });
+    assert.equal(await getCurrentUser(), null);
+    assert.equal(values.supabaseSession, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("accepts only board keys that satisfy the database key contract", () => {
+  assert.equal(automaticBoardKey("WWW.Example.com."), "auto:example.com");
+  assert.equal(automaticBoardKey("localhost"), null);
+  assert.equal(customBoardKey("7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573"), "custom:7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573");
+  assert.equal(customBoardKey("7C5E0DF8-D6B4-4B10-A820-2D1D1EF9B573"), null);
+});
+
+test("converts durable board custom groups from Supabase rows", () => {
+  assert.deepEqual(boardCustomGroupFromSyncRow({
+    id: "7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573",
+    user_id: "user-1",
+    title: "Research",
+    color: "purple",
+    sort_order: 3,
+  }, "user-1"), {
+    id: "7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573",
+    title: "Research",
+    color: "purple",
+    sortOrder: 3,
+  });
+});
+
+test("converts an automatic board layout using a stable site key", () => {
+  assert.deepEqual(boardLayoutFromSyncRow({
+    user_id: "user-1",
+    board_key: "auto:example.com",
+    device_class: "desktop",
+    rank: 2,
+    auto_fill: true,
+    manual_lane: null,
+    manual_order: null,
+  }, "user-1"), {
+    boardKey: "auto:example.com",
+    deviceClass: "desktop",
+    rank: 2,
+    autoFill: true,
+  });
+});
+
+test("rejects invalid board device classes and cross-user rows", () => {
+  const layout = {
+    user_id: "other-user",
+    board_key: "auto:example.com",
+    device_class: "desktop",
+    rank: 0,
+    auto_fill: true,
+    manual_lane: null,
+    manual_order: null,
+  };
+  const customGroup = { id: "7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573", user_id: "other-user", title: "Research", color: "blue", sort_order: 0 };
+
+  assert.equal(boardLayoutFromSyncRow({ ...layout, user_id: "user-1", device_class: "watch" }, "user-1"), null);
+  assert.equal(boardLayoutFromSyncRow(layout, "user-1"), null);
+  assert.equal(boardCustomGroupFromSyncRow(customGroup, "user-1"), null);
+});
+
+test("rejects board custom groups without UUIDs and noncanonical automatic site keys", () => {
+  const customGroup = {
+    id: "group-1",
+    user_id: "user-1",
+    title: "Research",
+    color: "blue",
+    sort_order: 0,
+  };
+  const layout = {
+    user_id: "user-1",
+    board_key: "auto:www.example.com",
+    device_class: "desktop",
+    rank: 0,
+    auto_fill: true,
+    manual_lane: null,
+    manual_order: null,
+  };
+
+  assert.equal(boardCustomGroupFromSyncRow(customGroup, "user-1"), null);
+  assert.equal(boardLayoutFromSyncRow(layout, "user-1"), null);
+});
+
+test("maps board tab counts to five-row height units", () => {
+  for (const tabCount of [0, 1, 2, 3, 4, 5]) {
+    assert.equal(heightUnitsForTabCount(tabCount), 1);
+  }
+  for (const tabCount of [6, 7, 8, 9, 10]) {
+    assert.equal(heightUnitsForTabCount(tabCount), 2);
+  }
+});
+
+test("splits board tabs into ten-tab segments", () => {
+  const tabs = Array.from({ length: 11 }, (_value, index) => `tab-${index + 1}`);
+
+  assert.deepEqual(segmentTabs(tabs), [tabs.slice(0, 10), tabs.slice(10)]);
+});
+
+test("auto-fills complete multi-segment groups as topmost leftmost rectangles", () => {
+  const placed = placeBoardCards([
+    { boardKey: "auto:one.example", segmentIndex: 0, heightUnits: 2, rank: 1 },
+    { boardKey: "auto:one.example", segmentIndex: 1, heightUnits: 1, rank: 1 },
+    { boardKey: "auto:two.example", segmentIndex: 0, heightUnits: 1, rank: 2 },
+    { boardKey: "auto:three.example", segmentIndex: 0, heightUnits: 1, rank: 3 },
+  ], 3, true);
+
+  assert.deepEqual(placed.placements.map((placement) => [placement.boardKey, placement.segmentIndex, placement.lane, placement.slot, placement.compositeHeight]), [
+    ["auto:one.example", 0, 0, 0, 2],
+    ["auto:one.example", 1, 1, 0, 2],
+    ["auto:two.example", 0, 2, 0, 1],
+    ["auto:three.example", 0, 2, 1, 1],
+  ]);
+});
+
+test("reserves the short segment's lower cell in a twenty-one-tab composite", () => {
+  const placed = placeBoardCards([
+    { boardKey: "auto:a.example", segmentIndex: 0, heightUnits: 2, rank: 1 },
+    { boardKey: "auto:a.example", segmentIndex: 1, heightUnits: 2, rank: 1 },
+    { boardKey: "auto:a.example", segmentIndex: 2, heightUnits: 1, rank: 1 },
+    { boardKey: "auto:b.example", segmentIndex: 0, heightUnits: 1, rank: 2 },
+  ], 3, true);
+
+  assert.deepEqual(placed.placements.map((placement) => [placement.boardKey, placement.segmentIndex, placement.lane, placement.slot]), [
+    ["auto:a.example", 0, 0, 0],
+    ["auto:a.example", 1, 1, 0],
+    ["auto:a.example", 2, 2, 0],
+    ["auto:b.example", 0, 0, 2],
+  ]);
+});
+
+test("keeps manual card lane and order for device-specific rendering", () => {
+  const placed = placeBoardCards([
+    { boardKey: "auto:one.example", segmentIndex: 0, heightUnits: 1, manualLane: 1, manualOrder: 2 },
+    { boardKey: "auto:two.example", segmentIndex: 0, heightUnits: 1, manualLane: 0, manualOrder: 1 },
+    { boardKey: "auto:three.example", segmentIndex: 0, heightUnits: 2, manualLane: 1, manualOrder: 0 },
+  ], 2, false);
+
+  assert.deepEqual(placed.placements.map((placement) => [placement.boardKey, placement.lane, placement.order]), [
+    ["auto:one.example", 1, 2],
+    ["auto:two.example", 0, 1],
+    ["auto:three.example", 1, 0],
+  ]);
+});
+
+test("keeps an empty manual grid slot when card heights change", () => {
+  const placed = placeBoardCards([
+    { boardKey: "auto:one.example", segmentIndex: 0, heightUnits: 2, manualLane: 0, manualSlot: 0 },
+    { boardKey: "auto:two.example", segmentIndex: 0, heightUnits: 1, manualLane: 0, manualSlot: 3 },
+  ], 2, false);
+
+  assert.deepEqual(placed.placements.map((placement) => [placement.boardKey, placement.lane, placement.slot]), [
+    ["auto:one.example", 0, 0],
+    ["auto:two.example", 0, 3],
+  ]);
+});
+
+test("spans a fixed manual grid unit for each five-tab card height", () => {
+  assert.deepEqual(manualBoardGridRow({ slot: 3, heightUnits: 2 }), { start: 4, span: 2 });
+  assert.deepEqual(manualBoardGridRow({ slot: 3, heightUnits: 1 }), { start: 4, span: 1 });
+});
+
+test("shifts manual cards by a dragged two-unit span without grid overlap", () => {
+  const moved = moveManualBoardCard([
+    { boardKey: "auto:source.example", segmentIndex: 0, heightUnits: 2, lane: 0, order: 0, slot: 0 },
+    { boardKey: "auto:target.example", segmentIndex: 0, heightUnits: 1, lane: 0, order: 2, slot: 2 },
+    { boardKey: "auto:after.example", segmentIndex: 0, heightUnits: 1, lane: 0, order: 3, slot: 3 },
+  ], "auto:source.example", "auto:target.example");
+
+  assert.deepEqual(moved?.map((placement) => [placement.boardKey, placement.lane, placement.slot, placement.heightUnits]), [
+    ["auto:source.example", 0, 2, 2],
+    ["auto:target.example", 0, 4, 1],
+    ["auto:after.example", 0, 5, 1],
+  ]);
+  const intervals = moved?.map((placement) => [placement.slot, placement.slot + placement.heightUnits]).sort((left, right) => left[0] - right[0]);
+  assert.ok(intervals?.every((interval, index) => index === 0 || intervals[index - 1][1] <= interval[0]));
+});
+
+test("selects manual board slots only from the active device layout", () => {
+  const cards = [{ boardKey: "auto:example.com", segmentIndex: 0, heightUnits: 1 }];
+  const layouts = [
+    { boardKey: "auto:example.com", deviceClass: "desktop", rank: 0, autoFill: false, manualLane: 2, manualSlot: 4 },
+    { boardKey: "auto:example.com", deviceClass: "tablet", rank: 0, autoFill: false, manualLane: 1, manualSlot: 1 },
+  ];
+
+  assert.deepEqual(boardCardsForDevice(cards, layouts, "desktop"), [{
+    boardKey: "auto:example.com", segmentIndex: 0, heightUnits: 1, manualLane: 2, manualSlot: 4,
+  }]);
+  assert.deepEqual(boardCardsForDevice(cards, layouts, "tablet"), [{
+    boardKey: "auto:example.com", segmentIndex: 0, heightUnits: 1, manualLane: 1, manualSlot: 1,
+  }]);
+});
+
+test("keeps eleven-tab segments in one horizontal manual composite", () => {
+  const cards = buildBoardCards([{
+    boardKey: "auto:example.com", kind: "automatic", title: "Example", color: "blue", rank: 0,
+    tabs: Array.from({ length: 11 }, (_value, index) => ({ id: index + 1, title: `Tab ${index + 1}` })),
+  }]);
+  const positioned = boardCardsForDevice(cards, [{
+    boardKey: "auto:example.com", deviceClass: "desktop", rank: 0, autoFill: false, manualLane: 1, manualSlot: 3,
+  }], "desktop");
+
+  const placed = placeBoardCards(positioned, 3, false);
+  assert.deepEqual(placed.placements.map((placement) => [placement.segmentIndex, placement.lane, placement.slot, placement.compositeHeight]), [
+    [0, 1, 3, 2],
+    [1, 2, 3, 2],
+  ]);
+});
+
+test("moves every segment of a composite together in manual layout", () => {
+  const moved = moveManualBoardCard([
+    { boardKey: "auto:a.example", segmentIndex: 0, heightUnits: 2, lane: 0, order: 0, slot: 0, compositeHeight: 2 },
+    { boardKey: "auto:a.example", segmentIndex: 1, heightUnits: 1, lane: 1, order: 0, slot: 0, compositeHeight: 2 },
+    { boardKey: "auto:b.example", segmentIndex: 0, heightUnits: 1, lane: 2, order: 0, slot: 0, compositeHeight: 1 },
+  ], "auto:a.example", "auto:b.example", 4);
+
+  assert.deepEqual(moved?.filter((placement) => placement.boardKey === "auto:a.example").map((placement) => [placement.lane, placement.slot]), [
+    [2, 0], [3, 0],
+  ]);
+});
+
+test("clamps a two-wide manual composite dropped on the last of three lanes", () => {
+  const moved = moveManualBoardCard([
+    { boardKey: "auto:a.example", segmentIndex: 0, heightUnits: 2, lane: 0, order: 0, slot: 0, compositeWidth: 2, compositeHeight: 2 },
+    { boardKey: "auto:a.example", segmentIndex: 1, heightUnits: 1, lane: 1, order: 0, slot: 0, compositeWidth: 2, compositeHeight: 2 },
+    { boardKey: "auto:b.example", segmentIndex: 0, heightUnits: 1, lane: 2, order: 0, slot: 0, compositeWidth: 1, compositeHeight: 1 },
+  ], "auto:a.example", "auto:b.example", 3);
+
+  assert.deepEqual(moved?.filter((placement) => placement.boardKey === "auto:a.example").map((placement) => placement.lane), [1, 2]);
+});
+
+test("keeps eleven- and twenty-one-tab composites horizontal at every board width", () => {
+  for (const laneCount of [3, 2, 1]) {
+    const eleven = placeBoardCards([
+      { boardKey: "auto:eleven.example", segmentIndex: 0, heightUnits: 2, rank: 1 },
+      { boardKey: "auto:eleven.example", segmentIndex: 1, heightUnits: 1, rank: 1 },
+    ], laneCount, true).placements;
+    const twentyOne = placeBoardCards([
+      { boardKey: "auto:twenty-one.example", segmentIndex: 0, heightUnits: 2, rank: 1 },
+      { boardKey: "auto:twenty-one.example", segmentIndex: 1, heightUnits: 2, rank: 1 },
+      { boardKey: "auto:twenty-one.example", segmentIndex: 2, heightUnits: 1, rank: 1 },
+    ], laneCount, true).placements;
+
+    assert.deepEqual(eleven.map((placement) => [placement.lane, placement.slot]), [[0, 0], [1, 0]]);
+    assert.deepEqual(twentyOne.map((placement) => [placement.lane, placement.slot]), [[0, 0], [1, 0], [2, 0]]);
+  }
+});
+
+test("validates isolated manual board layouts for each device class", () => {
+  const desktop = validateBoardLayout({
+    boardKey: "custom:7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573",
+    deviceClass: "desktop",
+    rank: 2,
+    autoFill: false,
+    manualLane: 1,
+    manualSlot: 3,
+  });
+  const tablet = validateBoardLayout({
+    boardKey: "custom:7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573",
+    deviceClass: "tablet",
+    rank: 2,
+    autoFill: false,
+    manualLane: 0,
+    manualSlot: 1,
+  });
+
+  assert.deepEqual(desktop, {
+    boardKey: "custom:7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573",
+    deviceClass: "desktop",
+    rank: 2,
+    autoFill: false,
+    manualLane: 1,
+    manualSlot: 3,
+  });
+  assert.deepEqual(tablet, {
+    boardKey: "custom:7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573",
+    deviceClass: "tablet",
+    rank: 2,
+    autoFill: false,
+    manualLane: 0,
+    manualSlot: 1,
+  });
+  assert.notDeepEqual(desktop, tablet);
+  assert.equal(validateBoardLayout({ ...desktop, deviceClass: "watch" }), null);
+  assert.equal(validateBoardLayout({ ...desktop, manualLane: -1 }), null);
+  assert.deepEqual(validateBoardLayout({
+    boardKey: "auto:docs.example",
+    deviceClass: "mobile",
+    rank: 4,
+    autoFill: true,
+  }), {
+    boardKey: "auto:docs.example",
+    deviceClass: "mobile",
+    rank: 4,
+    autoFill: true,
+  });
+  assert.equal(validateBoardLayout({
+    boardKey: "auto:docs.example",
+    deviceClass: "mobile",
+    rank: 4,
+    autoFill: true,
+    manualLane: 0,
+    manualOrder: 0,
+  }), null);
+});
 
 test("marks cloud restore failures as retryable without exposing error details", () => {
   assert.deepEqual(syncFailureStatus(new Error("Bearer top-secret-token failed")), {
@@ -43,6 +1151,7 @@ test("converts complete Supabase settings rows to concrete local settings", () =
     cloud_sync_enabled: false,
     sync_rules_enabled: true,
     sync_ignore_list_enabled: false,
+    open_board_on_new_tab: true,
   }), {
     autoGroupEnabled: false,
     minimumTabs: 4,
@@ -50,6 +1159,49 @@ test("converts complete Supabase settings rows to concrete local settings", () =
     cloudSyncEnabled: false,
     syncRulesEnabled: true,
     syncIgnoreListEnabled: false,
+    openBoardOnNewTab: true,
+  });
+});
+
+test("defaults a missing new-tab board setting from older Supabase rows", () => {
+  assert.equal(settingsFromSyncRow({
+    user_id: "user-1",
+    auto_group_enabled: true,
+    minimum_tabs: 2,
+  })?.openBoardOnNewTab, false);
+});
+
+test("validates the new-tab board setting in options payloads", () => {
+  const settings = {
+    autoGroupEnabled: true,
+    minimumTabs: 2,
+    defaultGroupColor: "blue",
+    cloudSyncEnabled: true,
+    syncRulesEnabled: true,
+    syncIgnoreListEnabled: true,
+    openBoardOnNewTab: true,
+  };
+  const { openBoardOnNewTab: _openBoardOnNewTab, ...legacySettings } = settings;
+
+  assert.equal(validateOptionsSettings(settings)?.openBoardOnNewTab, true);
+  assert.equal(validateOptionsSettings(legacySettings)?.openBoardOnNewTab, false);
+  assert.equal(validateOptionsSettings({ ...settings, openBoardOnNewTab: "true" }), null);
+});
+
+test("includes the new-tab board setting in sync payloads", () => {
+  assert.deepEqual(settingsSyncRow("user-1", {
+    autoGroupEnabled: true,
+    minimumTabs: 2,
+    openBoardOnNewTab: true,
+  }), {
+    user_id: "user-1",
+    auto_group_enabled: true,
+    minimum_tabs: 2,
+    open_board_on_new_tab: true,
+    default_group_color: undefined,
+    cloud_sync_enabled: undefined,
+    sync_rules_enabled: undefined,
+    sync_ignore_list_enabled: undefined,
   });
 });
 
@@ -167,8 +1319,7 @@ test("classifies only web URLs", () => {
   assert.equal(getSiteKey("not a url"), null);
 });
 
-test("builds window-scoped keys and readable titles", () => {
-  assert.equal(autoRecordKey(12, "docs.example.com"), "12:docs.example.com");
+test("builds readable site titles", () => {
   assert.equal(siteTitle("github.com"), "Github");
 });
 
@@ -281,11 +1432,38 @@ test("parses only valid portable data and rejects sensitive unknown keys", () =>
     ignoredSites: [{ id: "ignore-1", domain: "ads.example.com", matchScope: "exact", sortOrder: 0 }],
   };
 
-  assert.deepEqual(parsePortableData(valid), valid);
+  assert.deepEqual(parsePortableData(valid), {
+    ...valid,
+    settings: { ...valid.settings, openBoardOnNewTab: false },
+  });
   assert.equal(parsePortableData({ ...valid, settings: { ...valid.settings, minimumTabs: 0 } }), null);
   assert.equal(parsePortableData({ ...valid, accessToken: "secret" }), null);
   assert.equal(parsePortableData({ ...valid, groupRules: [{ ...valid.groupRules[0], color: "teal" }] }), null);
   assert.equal(parsePortableData({ ...valid, groupRules: [{ ...valid.groupRules[0], domains: ["example.com", "example.com"] }] }), null);
+});
+
+test("preserves and defaults the new-tab board setting in portable data", () => {
+  const current = {
+    version: 1,
+    settings: {
+      autoGroupEnabled: true,
+      minimumTabs: 2,
+      defaultGroupColor: "blue",
+      cloudSyncEnabled: true,
+      syncRulesEnabled: true,
+      syncIgnoreListEnabled: true,
+      lastSuccessfulSyncAt: null,
+      openBoardOnNewTab: true,
+    },
+    groupRules: [],
+    ignoredSites: [],
+  };
+  const legacy = structuredClone(current);
+  delete legacy.settings.openBoardOnNewTab;
+
+  assert.equal(parsePortableData(current)?.settings.openBoardOnNewTab, true);
+  assert.equal(parsePortableData(legacy)?.settings.openBoardOnNewTab, false);
+  assert.equal(parsePortableData({ ...current, settings: { ...current.settings, openBoardOnNewTab: "true" } }), null);
 });
 
 test("rejects portable data whose required fields are inherited", () => {
@@ -317,9 +1495,10 @@ test("maps portable data explicitly without runtime-only fields", () => {
       syncRulesEnabled: true,
       syncIgnoreListEnabled: false,
       lastSuccessfulSyncAt: "2026-07-22T00:00:00.000Z",
+      openBoardOnNewTab: false,
     },
-    [{ id: "rule-1", title: "Example", color: "blue", domains: ["example.com"], matchScope: "exact", enabled: true, sortOrder: 1, accessToken: "secret", groupId: 42, windowId: 7 }],
-    [{ id: "ignore-1", domain: "ads.example.com", matchScope: "exact", sortOrder: 1, accessToken: "secret", groupId: 42, windowId: 7 }],
+    [{ id: "rule-1", title: "Example", color: "blue", domains: ["example.com"], matchScope: "exact", enabled: true, sortOrder: 1, accessToken: "secret" }],
+    [{ id: "ignore-1", domain: "ads.example.com", matchScope: "exact", sortOrder: 1, accessToken: "secret" }],
   );
 
   assert.deepEqual(portable, {
@@ -332,6 +1511,7 @@ test("maps portable data explicitly without runtime-only fields", () => {
       syncRulesEnabled: true,
       syncIgnoreListEnabled: false,
       lastSuccessfulSyncAt: "2026-07-22T00:00:00.000Z",
+      openBoardOnNewTab: false,
     },
     groupRules: [{ id: "rule-1", title: "Example", color: "blue", domains: ["example.com"], matchScope: "exact", enabled: true, sortOrder: 1 }],
     ignoredSites: [{ id: "ignore-1", domain: "ads.example.com", matchScope: "exact", sortOrder: 1 }],
@@ -354,12 +1534,7 @@ test("converts stored state without runtime group mappings", () => {
       sortOrder: 0,
     }],
     ignoredSites: [{ id: "ignore-1", domain: "ads.example.com", matchScope: "exact", sortOrder: 0 }],
-    autoGroups: {
-      "7:example.com": { groupId: 42, windowId: 7, siteKey: "example.com" },
-    },
-    customGroups: {
-      custom: { id: "custom", groupId: 99, windowId: 7, title: "Custom", color: "green" },
-    },
+    boardAssignments: { "7:12": { windowId: 7, tabId: 12, boardKey: "auto:example.com", order: 0 } },
   });
 
   assert.deepEqual(portable, {
@@ -372,6 +1547,7 @@ test("converts stored state without runtime group mappings", () => {
       syncRulesEnabled: true,
       syncIgnoreListEnabled: true,
       lastSuccessfulSyncAt: null,
+      openBoardOnNewTab: false,
     },
     groupRules: [{
       id: "rule-1",
@@ -391,8 +1567,7 @@ test("keeps stored state unchanged for invalid or unconfirmed imports", () => {
     settings: { autoGroupEnabled: true, minimumTabs: 2 },
     groupRules: [],
     ignoredSites: [],
-    autoGroups: { "7:example.com": { groupId: 42, windowId: 7, siteKey: "example.com" } },
-    customGroups: {},
+    boardAssignments: { "7:12": { windowId: 7, tabId: 12, boardKey: "auto:example.com", order: 0 } },
   };
   const before = structuredClone(state);
   const valid = {
@@ -419,12 +1594,12 @@ test("keeps stored state unchanged for invalid or unconfirmed imports", () => {
 });
 
 test("exports a detached portable snapshot without runtime fields", () => {
-  const rules = [{ id: "rule-1", title: "Example", color: "blue", domains: ["example.com"], matchScope: "exact", enabled: true, sortOrder: 0, groupId: 42 }];
+  const rules = [{ id: "rule-1", title: "Example", color: "blue", domains: ["example.com"], matchScope: "exact", enabled: true, sortOrder: 0, accessToken: "secret" }];
   const exported = toPortableData({ autoGroupEnabled: true, minimumTabs: 2 }, rules, []);
 
   exported.groupRules[0].domains[0] = "changed.example.com";
   assert.equal(rules[0].domains[0], "example.com");
-  assert.equal("groupId" in exported.groupRules[0], false);
+  assert.equal("accessToken" in exported.groupRules[0], false);
 });
 
 test("clears durable options when their owner differs from the signed-in user", () => {
@@ -432,8 +1607,7 @@ test("clears durable options when their owner differs from the signed-in user", 
     settings: { autoGroupEnabled: false, minimumTabs: 6, defaultGroupColor: "purple" },
     groupRules: [{ id: "rule-a", title: "Account A", color: "blue", domains: ["a.example.com"], matchScope: "exact", enabled: true, sortOrder: 0 }],
     ignoredSites: [{ id: "ignore-a", domain: "ads.example.com", matchScope: "exact", sortOrder: 0 }],
-    autoGroups: { "7:a.example.com": { groupId: 42, windowId: 7, siteKey: "a.example.com" } },
-    customGroups: {},
+    boardAssignments: { "7:12": { windowId: 7, tabId: 12, boardKey: "auto:a.example.com", order: 0 } },
   };
 
   const switched = resetOptionsForUser(state, "account-a", "account-b");
@@ -441,7 +1615,7 @@ test("clears durable options when their owner differs from the signed-in user", 
   assert.deepEqual(switched.state.groupRules, []);
   assert.deepEqual(switched.state.ignoredSites, []);
   assert.equal(switched.state.settings.minimumTabs, 2);
-  assert.deepEqual(switched.state.autoGroups, state.autoGroups);
+  assert.deepEqual(switched.state.boardAssignments, state.boardAssignments);
   assert.equal(resetOptionsForUser(state, "account-a", "account-a").changed, false);
 });
 
