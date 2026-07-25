@@ -161,9 +161,12 @@ function clearWorkspaceNameError(): void {
   workspaceName.classList.remove("workspace-name-input-invalid");
   workspaceName.setAttribute("aria-invalid", "false");
 }
-function showWorkspaceNameError(message: string): void {
+function showWorkspaceError(message: string): void {
   workspaceNameError.textContent = message;
   workspaceNameError.hidden = false;
+}
+function showWorkspaceNameError(message: string): void {
+  showWorkspaceError(message);
   workspaceName.classList.add("workspace-name-input-invalid");
   workspaceName.setAttribute("aria-invalid", "true");
   workspaceName.focus();
@@ -178,13 +181,14 @@ async function saveCurrentWorkspace(): Promise<void> {
     showWorkspaceNameError("该工作区名称已存在");
     return;
   }
-  if (title.status !== "valid") throw new Error("工作区名称无效");
+  if (title.status !== "valid") { showWorkspaceNameError("工作区名称不能超过 80 字符"); return; }
   const tabs: WorkspaceTab[] = Array.from(workspaceTabs.querySelectorAll<HTMLInputElement>("input:checked")).map((input) => ({ title: input.dataset.title ?? "未命名标签页", url: input.dataset.url ?? "" }));
+  if (tabs.length === 0) { showWorkspaceError("请至少选择一个标签"); return; }
   try {
     await send({ type: "save-workspace", title: title.title, tabs });
   } catch (error) {
-    if (error instanceof Error && (error.message === "请输入工作区名称" || error.message === "该工作区名称已存在")) {
-      showWorkspaceNameError(error.message);
+    if (error instanceof Error) {
+      showWorkspaceError(error.message);
       return;
     }
     throw error;
@@ -1179,6 +1183,26 @@ window.addEventListener("resize", () => {
   if (currentState && !currentState.loginRequired) renderBoard(currentState);
 });
 
+async function revalidateBoardSession(): Promise<void> {
+  try {
+    const result = await send<{ user: { id: string; email?: string } | null; sync: { state: "ready" | "error"; message?: string } }>({ type: "restore-session" });
+    if (!result.user) {
+      loginRequired.classList.remove("hidden");
+      boardContent.classList.add("hidden");
+      loginMessage.textContent = "登录已过期，请重新登录。";
+      return;
+    }
+    await load();
+  } catch {
+    // background re-validation is best-effort
+  }
+}
+
+async function init(): Promise<void> {
+  await load();
+  if (currentState?.user) void revalidateBoardSession();
+}
+
 let boardRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 function scheduleBoardRefresh(): void {
   if (scopeMode !== "current") return;
@@ -1192,4 +1216,4 @@ chrome.tabs.onUpdated.addListener(() => scheduleBoardRefresh());
 chrome.tabs.onAttached.addListener(() => scheduleBoardRefresh());
 chrome.tabs.onDetached.addListener(() => scheduleBoardRefresh());
 
-void load().catch((error) => showStatus(error instanceof Error ? error.message : String(error), true));
+void init().catch((error) => showStatus(error instanceof Error ? error.message : String(error), true));
