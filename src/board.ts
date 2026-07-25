@@ -154,7 +154,7 @@ function syncWorkspaceDialogResizeAnchor(): void {
   workspaceDialog.style.setProperty("--workspace-dialog-top", `${Math.round(top)}px`);
   workspaceDialog.classList.add("workspace-dialog-resize-anchored");
 }
-async function openWorkspaceDialog(): Promise<void> { renderWorkspaceTabs(); await loadWorkspaces(); workspaceDialog.showModal(); workspaceName.focus(); syncWorkspaceDialogResizeAnchor(); }
+async function openWorkspaceDialog(): Promise<void> { renderWorkspaceTabs(); workspaceDialog.showModal(); syncWorkspaceDialogResizeAnchor(); workspaceName.focus(); await loadWorkspaces(); }
 function clearWorkspaceNameError(): void {
   workspaceNameError.hidden = true;
   workspaceNameError.textContent = "";
@@ -1178,5 +1178,18 @@ window.addEventListener("resize", () => {
   syncWorkspaceDialogResizeAnchor();
   if (currentState && !currentState.loginRequired) renderBoard(currentState);
 });
+
+let boardRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleBoardRefresh(): void {
+  if (scopeMode !== "current") return;
+  if (boardRefreshTimer) clearTimeout(boardRefreshTimer);
+  boardRefreshTimer = setTimeout(() => { boardRefreshTimer = null; void load().catch((error) => showStatus(error instanceof Error ? error.message : String(error), true)); }, 300);
+}
+
+chrome.tabs.onCreated.addListener(() => scheduleBoardRefresh());
+chrome.tabs.onRemoved.addListener(() => scheduleBoardRefresh());
+chrome.tabs.onUpdated.addListener(() => scheduleBoardRefresh());
+chrome.tabs.onAttached.addListener(() => scheduleBoardRefresh());
+chrome.tabs.onDetached.addListener(() => scheduleBoardRefresh());
 
 void load().catch((error) => showStatus(error instanceof Error ? error.message : String(error), true));
