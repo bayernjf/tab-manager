@@ -339,7 +339,7 @@ async function closeBoardDuplicates(groups: readonly DuplicateCloseGroup[]): Pro
 }
 
 async function boardState(currentWindowId?: number) {
-  const user = await getCurrentUser();
+  const user = await getStoredUser();
   if (!user) return { user: null, loginRequired: true, message: "请先登录后使用标签看板。", groups: [] };
   const state = await loadState();
   const groups = await boardLogicalGroups(state, currentWindowId);
@@ -427,11 +427,18 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       return { ok: true };
     }
     if (message.type === "open-tab-board") {
-      await requireBoardUser();
       if (!Number.isInteger(message.windowId) || message.windowId <= 0) throw new Error("找不到打开看板的窗口");
       const window = await chrome.windows.get(message.windowId);
       if (window.type !== "normal") throw new Error("请在普通浏览器窗口中使用标签看板");
-      const tab = await chrome.tabs.create({ windowId: message.windowId, url: chrome.runtime.getURL("board.html") });
+      const boardUrl = chrome.runtime.getURL("board.html");
+      const existing = await chrome.tabs.query({ url: boardUrl });
+      const target = existing[0];
+      if (target && typeof target.id === "number") {
+        if (target.windowId != null && target.windowId !== message.windowId) await chrome.windows.update(target.windowId, { focused: true }).catch(() => {});
+        await chrome.tabs.update(target.id, { active: true }).catch(() => {});
+        return { ok: true, tabId: target.id };
+      }
+      const tab = await chrome.tabs.create({ windowId: message.windowId, url: boardUrl });
       return { ok: true, tabId: tab.id };
     }
     if (message.type === "get-board-state") return boardState(message.windowId);
@@ -463,9 +470,14 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const title = validateWorkspaceTitle(message.title, existingTitles);
       if (title.status === "empty") throw new Error("请输入工作区名称");
       if (title.status === "duplicate") throw new Error("该工作区名称已存在");
-      if (title.status !== "valid") throw new Error("工作区名称或标签页无效");
-      const snapshot = validateWorkspaceSnapshot({ id: crypto.randomUUID(), title: title.title, createdAt: new Date().toISOString(), tabs: message.tabs, deviceId, deviceName });
-      if (!snapshot) throw new Error("工作区名称或标签页无效");
+      if (title.status !== "valid") throw new Error("工作区名称不能超过 80 字符");
+      if (!Array.isArray(message.tabs) || message.tabs.length < 1) throw new Error("请至少选择一个标签");
+      if (message.tabs.length > 200) throw new Error("工作区标签不能超过 200 个");
+      const tabs = message.tabs.map(workspaceTab);
+      const firstInvalid = tabs.findIndex((tab) => !tab);
+      if (firstInvalid >= 0) throw new Error(`第 ${firstInvalid + 1} 个标签无效：标题不能为空、网址必须是 http/https 网页`);
+      const snapshot = validateWorkspaceSnapshot({ id: crypto.randomUUID(), title: title.title, createdAt: new Date().toISOString(), tabs, deviceId, deviceName });
+      if (!snapshot) throw new Error("工作区数据无效，请检查名称与标签");
       if (useCloud) await upsertWorkspace(user.id, snapshot);
       await saveWorkspaceSnapshots([...existing, snapshot]).catch(() => {});
       return { workspace: snapshot };
@@ -517,7 +529,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const user = await requireBoardUser();
       if (!safeRecordId(message.id)) throw new Error("工作区不存在");
       const tab = workspaceTab(message.tab);
-      if (!tab) throw new Error("标签页无效");
+      if (!tab) throw new Error("标签无效：标题不能为空、网址必须是 http/https 网页");
       const state = await loadState();
       const useCloud = state.settings.cloudSyncEnabled === true;
       const all = await loadAllWorkspaces(user.id, useCloud);
@@ -538,14 +550,16 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
     }
     if (message.type === "update-workspace-tab") {
       const user = await requireBoardUser();
-      if (!safeRecordId(message.id) || typeof message.index !== "number" || !Number.isInteger(message.index) || message.index < 0 || typeof message.title !== "string" || typeof message.url !== "string") throw new Error("标签页无效");
+      if (!safeRecordId(message.id)) throw new Error("工作区不存在");
+      if (typeof message.index !== "number" || !Number.isInteger(message.index) || message.index < 0) throw new Error("标签不存在");
+      if (typeof message.title !== "string" || typeof message.url !== "string") throw new Error("标签内容无效：标题与网址不能为空");
       const state = await loadState();
       const useCloud = state.settings.cloudSyncEnabled === true;
       const all = await loadAllWorkspaces(user.id, useCloud);
       const workspace = all.find((item) => item.id === message.id);
       if (!workspace) throw new Error("工作区不存在");
       const tabs = updateWorkspaceTab(workspace.tabs, message.index, message.title, message.url);
-      if (!tabs) throw new Error("标签页无效");
+      if (!tabs) throw new Error("标签不存在，或网址必须是 http/https 网页");
       const updated: WorkspaceSnapshot = { ...workspace, tabs };
       if (useCloud) await upsertWorkspace(user.id, updated);
       await saveWorkspaceSnapshots(all.map((item) => (item.id === updated.id ? updated : item))).catch(() => {});
@@ -553,14 +567,15 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
     }
     if (message.type === "remove-workspace-tab") {
       const user = await requireBoardUser();
-      if (!safeRecordId(message.id) || typeof message.index !== "number" || !Number.isInteger(message.index) || message.index < 0) throw new Error("标签页无效");
+      if (!safeRecordId(message.id)) throw new Error("工作区不存在");
+      if (typeof message.index !== "number" || !Number.isInteger(message.index) || message.index < 0) throw new Error("标签不存在");
       const state = await loadState();
       const useCloud = state.settings.cloudSyncEnabled === true;
       const all = await loadAllWorkspaces(user.id, useCloud);
       const workspace = all.find((item) => item.id === message.id);
       if (!workspace) throw new Error("工作区不存在");
       const tabs = removeWorkspaceTab(workspace.tabs, message.index);
-      if (!tabs) throw new Error("标签页无效");
+      if (!tabs) throw new Error("标签不存在");
       const updated: WorkspaceSnapshot = { ...workspace, tabs };
       if (useCloud) await upsertWorkspace(user.id, updated);
       await saveWorkspaceSnapshots(all.map((item) => (item.id === updated.id ? updated : item))).catch(() => {});
@@ -568,14 +583,15 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
     }
     if (message.type === "move-workspace-tab") {
       const user = await requireBoardUser();
-      if (!safeRecordId(message.id) || typeof message.fromIndex !== "number" || !Number.isInteger(message.fromIndex) || message.fromIndex < 0 || typeof message.toIndex !== "number" || !Number.isInteger(message.toIndex) || message.toIndex < 0) throw new Error("排序无效");
+      if (!safeRecordId(message.id)) throw new Error("工作区不存在");
+      if (typeof message.fromIndex !== "number" || !Number.isInteger(message.fromIndex) || message.fromIndex < 0 || typeof message.toIndex !== "number" || !Number.isInteger(message.toIndex) || message.toIndex < 0) throw new Error("标签位置无效");
       const state = await loadState();
       const useCloud = state.settings.cloudSyncEnabled === true;
       const all = await loadAllWorkspaces(user.id, useCloud);
       const workspace = all.find((item) => item.id === message.id);
       if (!workspace) throw new Error("工作区不存在");
       const tabs = moveWorkspaceTab(workspace.tabs, message.fromIndex, message.toIndex);
-      if (!tabs) throw new Error("排序无效");
+      if (!tabs) throw new Error("无法移动到该位置");
       const updated: WorkspaceSnapshot = { ...workspace, tabs };
       if (useCloud) await upsertWorkspace(user.id, updated);
       await saveWorkspaceSnapshots(all.map((item) => (item.id === updated.id ? updated : item))).catch(() => {});
