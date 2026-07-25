@@ -7,6 +7,7 @@ import {
   ignoredSiteFromSyncRow,
   resolveCloudCollection,
   settingsFromSyncRow,
+  validateWorkspaceSnapshot,
   type GroupRule,
   type GroupRuleSyncRow,
   type IgnoredSite,
@@ -17,6 +18,7 @@ import {
   type BoardCustomGroupSyncRow,
   type BoardLayout,
   type BoardLayoutSyncRow,
+  type WorkspaceSnapshot,
 } from "./shared.js";
 import { loadState, saveSettings } from "./storage.js";
 
@@ -56,6 +58,7 @@ export function settingsSyncRow(userId: string, settings: Settings): SettingsSyn
     cloud_sync_enabled: settings.cloudSyncEnabled,
     sync_rules_enabled: settings.syncRulesEnabled,
     sync_ignore_list_enabled: settings.syncIgnoreListEnabled,
+    deferred_shortcut_times: settings.deferredShortcutTimes,
   };
 }
 
@@ -74,13 +77,14 @@ export async function pushSettings(userId: string, settings: Settings): Promise<
       cloud_sync_enabled: concreteSettings.cloudSyncEnabled,
       sync_rules_enabled: concreteSettings.syncRulesEnabled,
       sync_ignore_list_enabled: concreteSettings.syncIgnoreListEnabled,
+      deferred_shortcut_times: concreteSettings.deferredShortcutTimes,
     }),
   });
 }
 
 export async function syncSettings(userId: string): Promise<Settings> {
   const rows = await databaseRequest<SettingsSyncRow[]>(
-    `/user_settings?user_id=eq.${encodeURIComponent(userId)}&select=user_id,auto_group_enabled,minimum_tabs,open_board_on_new_tab,default_group_color,cloud_sync_enabled,sync_rules_enabled,sync_ignore_list_enabled&limit=1`,
+    `/user_settings?user_id=eq.${encodeURIComponent(userId)}&select=user_id,auto_group_enabled,minimum_tabs,open_board_on_new_tab,default_group_color,cloud_sync_enabled,sync_rules_enabled,sync_ignore_list_enabled,deferred_shortcut_times&limit=1`,
   );
   if (rows[0]) {
     const remoteSettings = settingsFromSyncRow(rows[0], userId);
@@ -171,6 +175,47 @@ export async function replaceBoardLayouts(userId: string, layouts: readonly Boar
   if (rows.some((row) => !boardLayoutFromSyncRow(row, userId))) throw new Error("看板布局包含无效数据");
   await databaseRequest<unknown>(`/board_layouts?user_id=eq.${encodeURIComponent(userId)}`, { method: "DELETE" });
   if (rows.length) await databaseRequest<unknown>("/board_layouts", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(rows) });
+}
+
+export async function fetchWorkspaces(userId: string): Promise<WorkspaceSnapshot[]> {
+  const rows = await databaseRequest<Array<Record<string, unknown>>>(
+    `/workspace_snapshots?user_id=eq.${encodeURIComponent(userId)}&select=id,device_id,device_name,title,tabs,created_at&order=created_at.desc`,
+  );
+  const workspaces = rows.map((row) => validateWorkspaceSnapshot({
+    id: row.id, title: row.title, createdAt: row.created_at, tabs: row.tabs, deviceId: row.device_id, deviceName: row.device_name,
+  }));
+  if (workspaces.some((workspace) => !workspace)) throw new Error("Supabase 返回了无效的工作区数据");
+  return workspaces as WorkspaceSnapshot[];
+}
+
+export async function upsertWorkspace(userId: string, workspace: WorkspaceSnapshot): Promise<void> {
+  const validated = validateWorkspaceSnapshot(workspace);
+  if (!validated || !validated.deviceId || !validated.deviceName) throw new Error("工作区包含无效数据");
+  await databaseRequest<unknown>("/workspace_snapshots?on_conflict=user_id,id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify({
+      user_id: userId,
+      id: validated.id,
+      device_id: validated.deviceId,
+      device_name: validated.deviceName,
+      title: validated.title,
+      tabs: validated.tabs,
+      created_at: validated.createdAt,
+    }),
+  });
+}
+
+export async function deleteWorkspaceRow(userId: string, id: string): Promise<void> {
+  await databaseRequest<unknown>(`/workspace_snapshots?user_id=eq.${encodeURIComponent(userId)}&id=eq.${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function renameDeviceWorkspaces(userId: string, deviceId: string, deviceName: string): Promise<void> {
+  await databaseRequest<unknown>(`/workspace_snapshots?user_id=eq.${encodeURIComponent(userId)}&device_id=eq.${encodeURIComponent(deviceId)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({ device_name: deviceName }),
+  });
 }
 
 export interface BoardSyncData {
