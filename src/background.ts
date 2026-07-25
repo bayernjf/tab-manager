@@ -475,7 +475,10 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       if (message.tabs.length > 200) throw new Error("工作区标签不能超过 200 个");
       const tabs = message.tabs.map(workspaceTab);
       const firstInvalid = tabs.findIndex((tab) => !tab);
-      if (firstInvalid >= 0) throw new Error(`第 ${firstInvalid + 1} 个标签无效：标题不能为空、网址必须是 http/https 网页`);
+      if (firstInvalid >= 0) {
+        const displayIndex = typeof message.tabs[firstInvalid]?.index === "number" ? message.tabs[firstInvalid].index : firstInvalid;
+        throw new Error(`第 ${displayIndex + 1} 个标签无效：标题不能为空、网址必须是 http/https 网页`);
+      }
       const snapshot = validateWorkspaceSnapshot({ id: crypto.randomUUID(), title: title.title, createdAt: new Date().toISOString(), tabs, deviceId, deviceName });
       if (!snapshot) throw new Error("工作区数据无效，请检查名称与标签");
       if (useCloud) await upsertWorkspace(user.id, snapshot);
