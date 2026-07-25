@@ -40,7 +40,10 @@
     </section>
   </main>
   <dialog id="workspace-dialog" class="workspace-dialog workspace-dialog-resizable" aria-labelledby="workspace-title">
-    <h2 id="workspace-title">本地工作区</h2>
+    <div class="workspace-dialog-header">
+      <h2 id="workspace-title">本地工作区</h2>
+      <button id="close-workspace-dialog" class="icon-button" type="button" aria-label="关闭工作区">×</button>
+    </div>
     <div class="workspace-device-bar">
       <span class="workspace-device-prefix">本设备</span>
       <input id="workspace-device-name" class="workspace-device-input" type="text" maxlength="60" aria-label="本设备名称" spellcheck="false">
@@ -55,7 +58,6 @@
     <div id="workspace-tabs" class="workspace-tabs"></div>
     <button id="save-workspace" class="button" type="button">保存选中标签</button>
     <div id="workspace-list" class="workspace-list"></div>
-    <button id="close-workspace-dialog" class="button secondary" type="button">关闭</button>
   </dialog>
   <dialog id="workspace-restore-dialog" class="workspace-dialog" aria-labelledby="workspace-restore-title">
     <h2 id="workspace-restore-title">恢复工作区</h2><p id="workspace-restore-summary"></p><div id="workspace-restore-list" class="workspace-tabs"></div>
