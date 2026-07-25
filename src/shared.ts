@@ -373,14 +373,30 @@ export function findDuplicateBoardTabs(tabs: readonly BoardTab[]): DuplicateBoar
   });
 }
 
-export function workspaceTab(value: unknown): WorkspaceTab | null {
-  if (!isPlainObject(value) || typeof value.title !== "string" || !value.title.trim() || value.title.length > 160 || typeof value.url !== "string" || value.url.length > 4_000) return null;
+export type WorkspaceTabValidation =
+  | { status: "valid"; tab: WorkspaceTab }
+  | { status: "invalid-data" | "empty-title" | "empty-url" | "url-too-long" | "invalid-url" | "unsupported-url" };
+
+export function validateWorkspaceTab(value: unknown): WorkspaceTabValidation {
+  if (!isPlainObject(value)) return { status: "invalid-data" };
+  if (typeof value.title !== "string") return { status: "empty-title" };
+  const title = value.title.trim();
+  if (!title) return { status: "empty-title" };
+  if (typeof value.url !== "string" || !value.url.trim()) return { status: "empty-url" };
+  if (value.url.length > 4_000) return { status: "url-too-long" };
   try {
     const url = new URL(value.url);
-    return url.protocol === "http:" || url.protocol === "https:" ? { title: value.title.trim(), url: url.href } : null;
+    return url.protocol === "http:" || url.protocol === "https:"
+      ? { status: "valid", tab: { title: title.slice(0, 160), url: url.href } }
+      : { status: "unsupported-url" };
   } catch {
-    return null;
+    return { status: "invalid-url" };
   }
+}
+
+export function workspaceTab(value: unknown): WorkspaceTab | null {
+  const validation = validateWorkspaceTab(value);
+  return validation.status === "valid" ? validation.tab : null;
 }
 
 export type WorkspaceTitleValidation =

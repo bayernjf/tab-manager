@@ -18,6 +18,7 @@ import {
   boardWindowLabel,
   findDuplicateBoardTabs,
   validateWorkspaceTitle,
+  validateWorkspaceTab,
   validateWorkspaceSnapshot,
   workspaceRestorePreview,
   workspaceTab,
@@ -106,6 +107,17 @@ function safeRecordId(value: unknown): value is string {
 interface DuplicateCloseGroup {
   retainedTabId: number;
   tabIds: number[];
+}
+
+function workspaceTabValidationMessage(status: Exclude<ReturnType<typeof validateWorkspaceTab>["status"], "valid">): string {
+  switch (status) {
+    case "empty-title": return "标题不能为空";
+    case "empty-url": return "网址不能为空";
+    case "url-too-long": return "网址不能超过 4000 个字符";
+    case "invalid-url": return "网址格式无效";
+    case "unsupported-url": return "仅支持 http/https 网页";
+    case "invalid-data": return "标签数据格式无效";
+  }
 }
 
 function duplicateCloseGroups(value: unknown): DuplicateCloseGroup[] | null {
@@ -473,12 +485,15 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       if (title.status !== "valid") throw new Error("工作区名称不能超过 80 字符");
       if (!Array.isArray(message.tabs) || message.tabs.length < 1) throw new Error("请至少选择一个标签");
       if (message.tabs.length > 200) throw new Error("工作区标签不能超过 200 个");
-      const tabs = message.tabs.map(workspaceTab);
-      const firstInvalid = tabs.findIndex((tab) => !tab);
+      const validations = message.tabs.map(validateWorkspaceTab);
+      const firstInvalid = validations.findIndex((validation) => validation.status !== "valid");
       if (firstInvalid >= 0) {
         const displayIndex = typeof message.tabs[firstInvalid]?.index === "number" ? message.tabs[firstInvalid].index : firstInvalid;
-        throw new Error(`第 ${displayIndex + 1} 个标签无效：标题不能为空、网址必须是 http/https 网页`);
+        const validation = validations[firstInvalid];
+        if (!validation || validation.status === "valid") throw new Error("标签数据格式无效");
+        throw new Error(`第 ${displayIndex + 1} 个标签无效：${workspaceTabValidationMessage(validation.status)}`);
       }
+      const tabs = validations.flatMap((validation) => validation.status === "valid" ? [validation.tab] : []);
       const snapshot = validateWorkspaceSnapshot({ id: crypto.randomUUID(), title: title.title, createdAt: new Date().toISOString(), tabs, deviceId, deviceName });
       if (!snapshot) throw new Error("工作区数据无效，请检查名称与标签");
       if (useCloud) await upsertWorkspace(user.id, snapshot);
@@ -531,8 +546,9 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
     if (message.type === "add-tab-to-workspace") {
       const user = await requireBoardUser();
       if (!safeRecordId(message.id)) throw new Error("工作区不存在");
-      const tab = workspaceTab(message.tab);
-      if (!tab) throw new Error("标签无效：标题不能为空、网址必须是 http/https 网页");
+      const validation = validateWorkspaceTab(message.tab);
+      if (validation.status !== "valid") throw new Error(`标签无效：${workspaceTabValidationMessage(validation.status)}`);
+      const tab = validation.tab;
       const state = await loadState();
       const useCloud = state.settings.cloudSyncEnabled === true;
       const all = await loadAllWorkspaces(user.id, useCloud);

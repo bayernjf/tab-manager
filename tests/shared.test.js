@@ -36,6 +36,7 @@ const {
   boardWindowLabel,
   findDuplicateBoardTabs,
   validateWorkspaceTitle,
+  validateWorkspaceTab,
   validateWorkspaceSnapshot,
   validateDeferredTab,
   isDeferredTabDue,
@@ -330,6 +331,19 @@ test("validates local workspace snapshots without unsupported URLs", () => {
   });
 
   assert.equal(snapshot, null);
+});
+
+test("reports precise workspace tab validation failures", () => {
+  assert.deepEqual(validateWorkspaceTab({ title: "", url: "https://example.com" }), { status: "empty-title" });
+  assert.deepEqual(validateWorkspaceTab({ title: "x".repeat(161), url: "https://example.com" }), {
+    status: "valid", tab: { title: "x".repeat(160), url: "https://example.com/" },
+  });
+  assert.deepEqual(validateWorkspaceTab({ title: "Example", url: "" }), { status: "empty-url" });
+  assert.deepEqual(validateWorkspaceTab({ title: "Example", url: "not a url" }), { status: "invalid-url" });
+  assert.deepEqual(validateWorkspaceTab({ title: "Example", url: "chrome://newtab/" }), { status: "unsupported-url" });
+  assert.deepEqual(validateWorkspaceTab({ title: "Example", url: "https://example.com" }), {
+    status: "valid", tab: { title: "Example", url: "https://example.com/" },
+  });
 });
 
 test("rejects workspace snapshots whose untrimmed title exceeds the limit", () => {
