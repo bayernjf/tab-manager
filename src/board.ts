@@ -73,7 +73,8 @@ function showStatus(message: string, error = false): void {
   status.className = error ? "status error" : "status";
 }
 
-async function loadWorkspaces(): Promise<void> { const result = await send<{ workspaces: WorkspaceSnapshot[]; device: { id: string; name: string } }>({ type: "get-workspaces" }); workspaces = result.workspaces; currentDevice = result.device; workspaceDeviceName.value = currentDevice.name; deviceNameOriginal = currentDevice.name; renderWorkspaces(); }
+async function refreshWorkspacesCache(): Promise<void> { const result = await send<{ workspaces: WorkspaceSnapshot[]; device: { id: string; name: string } }>({ type: "get-workspaces" }); workspaces = result.workspaces; currentDevice = result.device; }
+async function loadWorkspaces(): Promise<void> { await refreshWorkspacesCache(); if (!currentDevice) return; workspaceDeviceName.value = currentDevice.name; deviceNameOriginal = currentDevice.name; renderWorkspaces(); }
 function renderWorkspaces(): void {
   workspaceList.replaceChildren(...workspaces.map((workspace) => {
     const row = document.createElement("div");
@@ -372,15 +373,21 @@ async function openSaveToWorkspaceMenu(tab: BoardSegmentCard["tabs"][number], to
     if (onResize) window.addEventListener("resize", onResize);
   }, 0);
   try {
-    const result = await send<{ workspaces: WorkspaceSnapshot[] }>({ type: "get-workspaces" });
-    if (!result.workspaces.length) {
+    let list = workspaces;
+    if (!list.length) {
+      const result = await send<{ workspaces: WorkspaceSnapshot[] }>({ type: "get-workspaces" });
+      list = result.workspaces;
+      workspaces = list;
+    }
+    if (!list.length) {
       closeMenu();
       await send({ type: "save-workspace", title: "默认", tabs: [{ title: tab.title, url: tab.url ?? "" }] });
       showStatus("已保存到默认工作区");
       return;
     }
-    menu.replaceChildren(description, ...result.workspaces.map((workspace) => {
-      const option = makeButton(workspace.title, "workspace-save-option", `保存到 ${workspace.title}`);
+    menu.replaceChildren(description, ...list.map((workspace) => {
+      const label = workspace.deviceName ? `${workspace.title} · ${workspace.deviceName}` : workspace.title;
+      const option = makeButton(label, "workspace-save-option", `保存到 ${workspace.title}`);
       option.addEventListener("click", () => { closeMenu(); void addTabToWorkspace(workspace.id, workspace.title, { title: tab.title, url: tab.url ?? "" }); });
       return option;
     }));
@@ -981,6 +988,7 @@ async function load(): Promise<void> {
   renderBoard(state);
   await renderDeferredTabs();
   await renderBoardStatistics();
+  void refreshWorkspacesCache().catch(() => {});
 }
 
 function rebalanceGroupSegments(boardKey: BoardKey): void {
