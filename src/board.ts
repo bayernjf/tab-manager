@@ -272,7 +272,7 @@ function renderTab(tab: BoardSegmentCard["tabs"][number], targetBoardKey: BoardK
   open.append(icon, title);
   open.addEventListener("click", () => void activateTab(tab.id));
   const saveToWorkspace = makeButton("+", "tab-saveworkspace", `保存到工作区：${tab.title}`);
-  saveToWorkspace.addEventListener("click", (event) => { event.stopPropagation(); void openSaveToWorkspaceMenu(row, tab, saveToWorkspace); });
+  saveToWorkspace.addEventListener("click", (event) => { event.stopPropagation(); void openSaveToWorkspaceMenu(tab, saveToWorkspace); });
   saveToWorkspace.addEventListener("dragstart", (event) => { event.preventDefault(); event.stopPropagation(); });
   const close = makeButton("×", "tab-close", `关闭标签：${tab.title}`);
   close.addEventListener("click", (event) => {
@@ -334,8 +334,8 @@ function renderTab(tab: BoardSegmentCard["tabs"][number], targetBoardKey: BoardK
 
 async function deferTab(tabId: number, dueAt: string): Promise<void> { try { await send({ type: "defer-board-tab", tabId, dueAt: new Date(dueAt).toISOString() }); showStatus("已加入稍后处理"); await load(); } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); } }
 
-async function openSaveToWorkspaceMenu(row: HTMLElement, tab: BoardSegmentCard["tabs"][number], toggleButton: HTMLButtonElement): Promise<void> {
-  const existing = row.querySelector(".workspace-save-menu") as (HTMLDivElement & { closeRef?: () => void }) | null;
+async function openSaveToWorkspaceMenu(tab: BoardSegmentCard["tabs"][number], toggleButton: HTMLButtonElement): Promise<void> {
+  const existing = document.querySelector(".workspace-save-menu") as (HTMLDivElement & { closeRef?: () => void }) | null;
   if (existing) { existing.closeRef?.(); return; }
   const menu = document.createElement("div") as HTMLDivElement & { closeRef?: () => void };
   menu.className = "workspace-save-menu";
@@ -346,12 +346,31 @@ async function openSaveToWorkspaceMenu(row: HTMLElement, tab: BoardSegmentCard["
   loading.className = "empty";
   loading.textContent = "加载中…";
   menu.append(description, loading);
-  row.append(menu);
+  document.body.append(menu);
+  positionWorkspaceSaveMenu(menu, toggleButton);
   let onOutside: ((event: MouseEvent) => void) | null = null;
-  const closeMenu = () => { menu.remove(); if (onOutside) document.removeEventListener("mousedown", onOutside, true); };
+  let onScroll: ((event: Event) => void) | null = null;
+  let onResize: (() => void) | null = null;
+  const closeMenu = () => {
+    menu.remove();
+    if (onOutside) document.removeEventListener("mousedown", onOutside, true);
+    if (onScroll) document.removeEventListener("scroll", onScroll, true);
+    if (onResize) window.removeEventListener("resize", onResize);
+  };
   menu.closeRef = closeMenu;
+  menu.addEventListener("wheel", (event: WheelEvent) => {
+    const max = menu.scrollHeight - menu.clientHeight;
+    if (max <= 0) { event.preventDefault(); return; }
+    if ((event.deltaY < 0 && menu.scrollTop <= 0) || (event.deltaY > 0 && menu.scrollTop >= max)) event.preventDefault();
+  }, { passive: false });
   onOutside = (event) => { if (!menu.contains(event.target as Node) && !toggleButton.contains(event.target as Node)) closeMenu(); };
-  setTimeout(() => { if (onOutside) document.addEventListener("mousedown", onOutside, true); }, 0);
+  onScroll = (event) => { if (event.target instanceof Node && menu.contains(event.target)) return; closeMenu(); };
+  onResize = () => closeMenu();
+  setTimeout(() => {
+    if (onOutside) document.addEventListener("mousedown", onOutside, true);
+    if (onScroll) document.addEventListener("scroll", onScroll, true);
+    if (onResize) window.addEventListener("resize", onResize);
+  }, 0);
   try {
     const result = await send<{ workspaces: WorkspaceSnapshot[] }>({ type: "get-workspaces" });
     if (!result.workspaces.length) {
@@ -365,10 +384,24 @@ async function openSaveToWorkspaceMenu(row: HTMLElement, tab: BoardSegmentCard["
       option.addEventListener("click", () => { closeMenu(); void addTabToWorkspace(workspace.id, workspace.title, { title: tab.title, url: tab.url ?? "" }); });
       return option;
     }));
+    positionWorkspaceSaveMenu(menu, toggleButton);
   } catch (error) {
     closeMenu();
     showStatus(error instanceof Error ? error.message : String(error), true);
   }
+}
+
+function positionWorkspaceSaveMenu(menu: HTMLElement, toggleButton: HTMLElement): void {
+  const rect = toggleButton.getBoundingClientRect();
+  const margin = 4;
+  const spaceBelow = window.innerHeight - rect.bottom - margin;
+  const spaceAbove = rect.top - margin;
+  const top = menu.offsetHeight <= spaceBelow || spaceBelow >= spaceAbove
+    ? rect.bottom + margin
+    : rect.top - menu.offsetHeight - margin;
+  menu.style.top = `${Math.max(margin, Math.min(top, window.innerHeight - menu.offsetHeight - margin))}px`;
+  const left = rect.right - menu.offsetWidth;
+  menu.style.left = `${Math.max(margin, Math.min(left, window.innerWidth - menu.offsetWidth - margin))}px`;
 }
 
 async function addTabToWorkspace(id: string, title: string, tab: WorkspaceTab): Promise<void> {
