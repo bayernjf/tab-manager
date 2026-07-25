@@ -204,7 +204,49 @@ function syncWorkspaceDialogResizeAnchor(): void {
   workspaceDialog.style.setProperty("--workspace-dialog-top", `${Math.round(top)}px`);
   workspaceDialog.classList.add("workspace-dialog-resize-anchored");
 }
-async function openWorkspaceDialog(): Promise<void> { renderWorkspaceTabs(); workspaceDialog.showModal(); syncWorkspaceDialogResizeAnchor(); workspaceName.focus(); await loadWorkspaces(); }
+function makeWorkspaceDialogDraggable(): void {
+  const header = workspaceDialog.querySelector(".workspace-dialog-header") as HTMLElement | null;
+  if (!header) return;
+  let isDragging = false;
+  let startX = 0;
+  let startY = 0;
+  let startLeft = 0;
+  let startTop = 0;
+  const onMouseMove = (event: MouseEvent) => {
+    if (!isDragging) return;
+    const dx = event.clientX - startX;
+    const dy = event.clientY - startY;
+    const rect = workspaceDialog.getBoundingClientRect();
+    const maxLeft = window.innerWidth - rect.width - WORKSPACE_DIALOG_VIEWPORT_MARGIN;
+    const maxTop = window.innerHeight - rect.height - WORKSPACE_DIALOG_VIEWPORT_MARGIN;
+    const left = Math.min(Math.max(WORKSPACE_DIALOG_VIEWPORT_MARGIN, startLeft + dx), Math.max(WORKSPACE_DIALOG_VIEWPORT_MARGIN, maxLeft));
+    const top = Math.min(Math.max(WORKSPACE_DIALOG_VIEWPORT_MARGIN, startTop + dy), Math.max(WORKSPACE_DIALOG_VIEWPORT_MARGIN, maxTop));
+    workspaceDialog.style.setProperty("--workspace-dialog-left", `${Math.round(left)}px`);
+    workspaceDialog.style.setProperty("--workspace-dialog-top", `${Math.round(top)}px`);
+    workspaceDialog.classList.add("workspace-dialog-resize-anchored");
+  };
+  const onMouseUp = () => {
+    isDragging = false;
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
+    document.body.style.userSelect = "";
+  };
+  header.addEventListener("mousedown", (event) => {
+    if (window.innerWidth <= WORKSPACE_DIALOG_MOBILE_MAX_WIDTH) return;
+    if (event.target instanceof HTMLElement && event.target.closest("button")) return;
+    isDragging = true;
+    startX = event.clientX;
+    startY = event.clientY;
+    const rect = workspaceDialog.getBoundingClientRect();
+    startLeft = rect.left;
+    startTop = rect.top;
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    document.body.style.userSelect = "none";
+    event.preventDefault();
+  });
+}
+async function openWorkspaceDialog(): Promise<void> { renderWorkspaceTabs(); workspaceDialog.showModal(); syncWorkspaceDialogResizeAnchor(); makeWorkspaceDialogDraggable(); workspaceName.focus(); await loadWorkspaces(); }
 function clearWorkspaceNameError(): void {
   workspaceNameError.hidden = true;
   workspaceNameError.textContent = "";
