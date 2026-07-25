@@ -203,6 +203,60 @@ test("positions board tab close controls on the right", async () => {
   assert.match(boardCss, /\.tab-saveworkspace \{[^}]*right: 68px/);
 });
 
+test("shows close-tab feedback as a fixed toast centered on the group heading", async () => {
+  const [script, css] = await Promise.all([
+    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
+  ]);
+  const closeFn = script.slice(script.indexOf("async function closeTab"), script.indexOf("function applyOptimisticGroupReorder"));
+
+  assert.match(closeFn, /boardToast\("标签已关闭"/);
+  assert.match(closeFn, /boardToast\(error instanceof Error \? error\.message : String\(error\), true/);
+  assert.doesNotMatch(closeFn, /showStatus\("标签已关闭"\)/);
+  assert.match(script, /row\.closest\("\.group-card"\)/);
+  assert.match(script, /card\?\.querySelector\("\.card-title"\)/);
+  assert.match(script, /heading \?\? close/);
+  assert.match(script, /function boardToast/);
+  assert.match(script, /anchor\.classList\.contains\("card-title"\) \|\| anchor\.closest\("\.card-title"\)/);
+  assert.match(script, /isCardHeading/);
+  assert.match(script, /rect\.left \+ rect\.width \/ 2 - toastWidth \/ 2/);
+  assert.match(script, /document\.body\.append\(toast\)/);
+  assert.match(script, /setTimeout\(\(\) => \{ toast\.remove\(\); \}, 2200\)/);
+  assert.match(css, /\.board-toast \{[^}]*position: fixed/);
+  assert.match(css, /\.board-toast\.success/);
+  assert.match(css, /\.board-toast\.error/);
+});
+
+test("shows workspace tab deletion feedback as a toast centered on the group heading", async () => {
+  const script = await readFile(new URL("../dist/board.js", import.meta.url), "utf8");
+  const deleteFn = script.slice(script.indexOf("async function deleteWorkspaceTab"), script.indexOf("async function addWorkspaceTab"));
+
+  assert.match(deleteFn, /boardToast\("标签已从工作区删除"/);
+  assert.match(deleteFn, /boardToast\(error instanceof Error \? error\.message : String\(error\), true/);
+  assert.doesNotMatch(deleteFn, /showStatus\("标签已从工作区删除"\)/);
+  assert.match(script, /void deleteWorkspaceTab\(flatIndex, heading \?\? close\)/);
+});
+
+test("confirms last-tab deletion also removes the workspace", async () => {
+  const [script, html] = await Promise.all([
+    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.html", import.meta.url), "utf8"),
+  ]);
+  const deleteFn = script.slice(script.indexOf("async function deleteWorkspaceTab"), script.indexOf("async function addWorkspaceTab"));
+
+  assert.match(deleteFn, /workspaceCards\.length === 1 && totalTabs === 1/);
+  assert.match(deleteFn, /lastTabConfirmDialog\.showModal/);
+  assert.match(deleteFn, /confirmLastTabConfirm\.disabled = false/);
+  assert.match(deleteFn, /cancelLastTabConfirm\.disabled = false/);
+  assert.match(deleteFn, /await send\(\{ type: "delete-workspace", id: workspaceId \}\)/);
+  assert.match(deleteFn, /boardToast\("工作区已删除"/);
+  assert.match(deleteFn, /loadedWorkspace = null/);
+  assert.match(deleteFn, /lastTabConfirmDialog\.close/);
+  assert.match(deleteFn, /const cleanup = \(\) =>/);
+  assert.match(html, /last-tab-confirm-dialog/);
+  assert.match(html, /该工作区也将被删除/);
+});
+
 test("gives GitHub's white favicon a contrasting background", async () => {
   const [boardScript, boardCss] = await Promise.all([
     readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
@@ -478,6 +532,49 @@ test("renders board-only deferred reminder controls", async () => {
   assert.match(script, /type: "defer-board-tab"/);
   assert.match(script, /type: "get-deferred-tabs"/);
   assert.match(css, /\.deferred-reminders/);
+});
+
+test("shows save-to-workspace feedback in a fixed toast above the menu", async () => {
+  const [script, css] = await Promise.all([
+    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
+  ]);
+  const menuStart = script.indexOf("async function openSaveToWorkspaceMenu");
+  const menuEnd = script.indexOf("function renderDeferredRow", menuStart);
+  const menu = script.slice(menuStart, menuEnd);
+
+  assert.ok(menuStart >= 0 && menuEnd > menuStart);
+  assert.match(menu, /className = "workspace-save-toast"/);
+  assert.match(menu, /document\.body\.append\(menu, saveToast\)/);
+  assert.doesNotMatch(menu, /menu\.(?:append|replaceChildren)\([^)]*saveToast/);
+  assert.match(menu, /className = error \? "workspace-save-toast error" : "workspace-save-toast success"/);
+  assert.match(menu, /saveToast\.hidden = false/);
+  assert.match(menu, /showSaveToast\(`已保存到 \$\{workspace\.title\}`\)/);
+  assert.match(menu, /showSaveToast\(error instanceof Error \? error\.message : String\(error\), true\)/);
+  assert.match(menu, /positionWorkspaceSaveMenu\(menu, toggleButton, saveToast\)/);
+  assert.match(menu, /saveToast\.remove\(\)/);
+  assert.match(menu, /toast\.style\.top = `\$\{menuTop - toast\.offsetHeight - toastGap\}px`/);
+  assert.match(menu, /toast\.style\.left = `\$\{menuLeft\}px`/);
+  assert.match(css, /\.workspace-save-toast \{[^}]*position: fixed/);
+  assert.match(css, /\.workspace-save-toast\.success/);
+  assert.match(css, /\.workspace-save-toast\.error/);
+  assert.match(css, /\.workspace-save-toast\[hidden\] \{[^}]*display: none/);
+});
+
+test("reuses workspace title, tab count, and device layout in save options", async () => {
+  const [script, css] = await Promise.all([
+    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(script, /function appendWorkspaceListItemDetails/);
+  assert.match(script, /appendWorkspaceListItemDetails\(option, workspace\)/);
+  assert.match(script, /appendWorkspaceListItemDetails\(item, workspace\)/);
+  assert.match(script, /className = "workspace-popover-item-title"/);
+  assert.match(script, /className = "workspace-popover-item-count"/);
+  assert.match(script, /className = "workspace-popover-item-device"/);
+  assert.match(css, /\.workspace-popover-item, \.workspace-save-option \{/);
+  assert.match(css, /\.workspace-save-option:hover \.workspace-popover-item-count/);
 });
 
 test("renders every scheduled reminder with clear status and actions", async () => {
