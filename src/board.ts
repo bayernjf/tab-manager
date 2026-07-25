@@ -45,6 +45,9 @@ const closeDuplicateReview = $<HTMLButtonElement>("#close-duplicate-review");
 const cancelDuplicateReview = $<HTMLButtonElement>("#cancel-duplicate-review");
 const confirmDuplicateReview = $<HTMLButtonElement>("#confirm-duplicate-review");
 const openWorkspaces = $<HTMLButtonElement>("#open-workspaces"), workspaceDialog = $<HTMLDialogElement>("#workspace-dialog"), workspaceName = $<HTMLInputElement>("#workspace-name"), workspaceNameError = $<HTMLElement>("#workspace-name-error"), workspaceSelectAll = $<HTMLInputElement>("#workspace-select-all"), workspaceTabs = $("#workspace-tabs"), saveWorkspace = $<HTMLButtonElement>("#save-workspace"), workspaceDeviceName = $<HTMLInputElement>("#workspace-device-name"), workspaceList = $("#workspace-list"), closeWorkspaceDialog = $<HTMLButtonElement>("#close-workspace-dialog"), workspaceRestoreDialog = $<HTMLDialogElement>("#workspace-restore-dialog"), workspaceRestoreSummary = $("#workspace-restore-summary"), workspaceRestoreList = $("#workspace-restore-list"), confirmWorkspaceRestore = $<HTMLButtonElement>("#confirm-workspace-restore"), cancelWorkspaceRestore = $<HTMLButtonElement>("#cancel-workspace-restore");
+const lastTabConfirmDialog = $<HTMLDialogElement>("#last-tab-confirm-dialog");
+const cancelLastTabConfirm = $<HTMLButtonElement>("#cancel-last-tab-confirm");
+const confirmLastTabConfirm = $<HTMLButtonElement>("#confirm-last-tab-confirm");
 const deferredReminders = $("#deferred-reminders"), deferredList = $("#deferred-list");
 const boardStatistics = $("#board-statistics");
 const scopeNav = $("#scope-nav");
@@ -71,6 +74,37 @@ async function send<T>(message: unknown): Promise<T> {
 function showStatus(message: string, error = false): void {
   status.textContent = message;
   status.className = error ? "status error" : "status";
+}
+
+function boardToast(message: string, error = false, anchor?: HTMLElement): HTMLParagraphElement {
+  const toast = document.createElement("p");
+  toast.className = `board-toast ${error ? "error" : "success"}`;
+  toast.setAttribute("role", "status");
+  toast.setAttribute("aria-live", "polite");
+  toast.textContent = message;
+  document.body.append(toast);
+  if (anchor) {
+    const rect = anchor.getBoundingClientRect();
+    const margin = 6;
+    toast.style.maxWidth = `${Math.min(280, window.innerWidth - margin * 2)}px`;
+    const toastWidth = toast.offsetWidth;
+    const isCardHeading = anchor.classList.contains("card-title") || anchor.closest(".card-title") !== null;
+    let left: number;
+    if (isCardHeading) {
+      left = Math.max(margin, Math.min(rect.left + rect.width / 2 - toastWidth / 2, window.innerWidth - toastWidth - margin));
+    } else {
+      left = Math.max(margin, Math.min(rect.right - toastWidth, window.innerWidth - toastWidth - margin));
+    }
+    const top = Math.max(margin, rect.top - toast.offsetHeight - 4);
+    toast.style.top = `${top}px`;
+    toast.style.left = `${left}px`;
+  } else {
+    toast.style.top = "20px";
+    toast.style.left = "50%";
+    toast.style.transform = "translateX(-50%)";
+  }
+  window.setTimeout(() => { toast.remove(); }, 2200);
+  return toast;
 }
 
 async function refreshWorkspacesCache(): Promise<void> { const result = await send<{ workspaces: WorkspaceSnapshot[]; device: { id: string; name: string } }>({ type: "get-workspaces" }); workspaces = result.workspaces; currentDevice = result.device; }
@@ -127,6 +161,7 @@ function renderWorkspaceTabs(): void {
     input.value = String(tab.id);
     input.dataset.title = tab.title;
     input.dataset.url = tab.url;
+    input.dataset.index = String(index);
     const indexSpan = document.createElement("span");
     indexSpan.className = "workspace-tab-index";
     indexSpan.textContent = String(index + 1);
@@ -197,7 +232,7 @@ async function saveCurrentWorkspace(): Promise<void> {
     return;
   }
   if (title.status !== "valid") { showWorkspaceNameError("工作区名称不能超过 80 字符"); return; }
-  const tabs: WorkspaceTab[] = Array.from(workspaceTabs.querySelectorAll<HTMLInputElement>("input:checked")).map((input) => ({ title: input.dataset.title ?? "未命名标签页", url: input.dataset.url ?? "" }));
+  const tabs = Array.from(workspaceTabs.querySelectorAll<HTMLInputElement>("input:checked")).map((input) => ({ title: input.dataset.title ?? "未命名标签页", url: input.dataset.url ?? "", index: Number(input.dataset.index ?? 0) }));
   if (tabs.length === 0) { showWorkspaceError("请至少选择一个标签"); return; }
   try {
     await send({ type: "save-workspace", title: title.title, tabs });
@@ -292,7 +327,9 @@ function renderTab(tab: BoardSegmentCard["tabs"][number], targetBoardKey: BoardK
   const close = makeButton("×", "tab-close", `关闭标签：${tab.title}`);
   close.addEventListener("click", (event) => {
     event.stopPropagation();
-    void closeTab(tab.id);
+    const card = row.closest(".group-card") as HTMLElement | null;
+    const heading = card?.querySelector(".card-title") as HTMLElement | null;
+    void closeTab(tab.id, heading ?? close);
   });
   close.addEventListener("dragstart", (event) => {
     event.preventDefault();
@@ -354,6 +391,11 @@ async function openSaveToWorkspaceMenu(tab: BoardSegmentCard["tabs"][number], to
   if (existing) { existing.closeRef?.(); return; }
   const menu = document.createElement("div") as HTMLDivElement & { closeRef?: () => void };
   menu.className = "workspace-save-menu";
+  const saveToast = document.createElement("p");
+  saveToast.className = "workspace-save-toast";
+  saveToast.setAttribute("role", "status");
+  saveToast.setAttribute("aria-live", "polite");
+  saveToast.hidden = true;
   const description = document.createElement("p");
   description.className = "workspace-save-desc";
   description.textContent = "选择要保存到的工作区";
@@ -361,16 +403,44 @@ async function openSaveToWorkspaceMenu(tab: BoardSegmentCard["tabs"][number], to
   loading.className = "empty";
   loading.textContent = "加载中…";
   menu.append(description, loading);
-  document.body.append(menu);
-  positionWorkspaceSaveMenu(menu, toggleButton);
+  document.body.append(menu, saveToast);
+  positionWorkspaceSaveMenu(menu, toggleButton, saveToast);
   let onOutside: ((event: MouseEvent) => void) | null = null;
   let onScroll: ((event: Event) => void) | null = null;
   let onResize: (() => void) | null = null;
   const closeMenu = () => {
     menu.remove();
+    saveToast.remove();
     if (onOutside) document.removeEventListener("mousedown", onOutside, true);
     if (onScroll) document.removeEventListener("scroll", onScroll, true);
     if (onResize) window.removeEventListener("resize", onResize);
+  };
+  const showSaveToast = (message: string, error = false) => {
+    saveToast.textContent = message;
+    saveToast.className = error ? "workspace-save-toast error" : "workspace-save-toast success";
+    saveToast.hidden = false;
+    positionWorkspaceSaveMenu(menu, toggleButton, saveToast);
+  };
+  const renderOptions = () => {
+    const options = workspaces.map((workspace) => {
+      const option = makeButton("", "workspace-save-option", `保存到 ${workspace.title}`);
+      appendWorkspaceListItemDetails(option, workspace);
+      option.addEventListener("click", async () => {
+        option.disabled = true;
+        try {
+          await send({ type: "add-tab-to-workspace", id: workspace.id, tab: { title: tab.title, url: tab.url ?? "" } });
+          workspaces = workspaces.map((item) => item.id === workspace.id ? { ...item, tabs: [...item.tabs, { title: tab.title, url: tab.url ?? "" }] } : item);
+          showSaveToast(`已保存到 ${workspace.title}`);
+          renderOptions();
+          positionWorkspaceSaveMenu(menu, toggleButton, saveToast);
+        } catch (error) {
+          option.disabled = false;
+          showSaveToast(error instanceof Error ? error.message : String(error), true);
+        }
+      });
+      return option;
+    });
+    menu.replaceChildren(description, ...options);
   };
   menu.closeRef = closeMenu;
   menu.addEventListener("wheel", (event: WheelEvent) => {
@@ -387,50 +457,45 @@ async function openSaveToWorkspaceMenu(tab: BoardSegmentCard["tabs"][number], to
     if (onResize) window.addEventListener("resize", onResize);
   }, 0);
   try {
-    let list = workspaces;
-    if (!list.length) {
+    if (!workspaces.length) {
       const result = await send<{ workspaces: WorkspaceSnapshot[] }>({ type: "get-workspaces" });
-      list = result.workspaces;
-      workspaces = list;
+      workspaces = result.workspaces;
     }
-    if (!list.length) {
-      closeMenu();
-      await send({ type: "save-workspace", title: "默认", tabs: [{ title: tab.title, url: tab.url ?? "" }] });
-      showStatus("已保存到默认工作区");
-      return;
+    if (!workspaces.length) {
+      const result = await send<{ workspace: WorkspaceSnapshot }>({ type: "save-workspace", title: "默认", tabs: [{ title: tab.title, url: tab.url ?? "" }] });
+      workspaces = [result.workspace];
+      showSaveToast("已保存到默认工作区");
     }
-    menu.replaceChildren(description, ...list.map((workspace) => {
-      const label = workspace.deviceName ? `${workspace.title} · ${workspace.deviceName}` : workspace.title;
-      const option = makeButton(label, "workspace-save-option", `保存到 ${workspace.title}`);
-      option.addEventListener("click", () => { closeMenu(); void addTabToWorkspace(workspace.id, workspace.title, { title: tab.title, url: tab.url ?? "" }); });
-      return option;
-    }));
-    positionWorkspaceSaveMenu(menu, toggleButton);
+    renderOptions();
+    positionWorkspaceSaveMenu(menu, toggleButton, saveToast);
   } catch (error) {
-    closeMenu();
-    showStatus(error instanceof Error ? error.message : String(error), true);
+    menu.replaceChildren(description);
+    showSaveToast(error instanceof Error ? error.message : String(error), true);
+    positionWorkspaceSaveMenu(menu, toggleButton, saveToast);
   }
 }
 
-function positionWorkspaceSaveMenu(menu: HTMLElement, toggleButton: HTMLElement): void {
+function positionWorkspaceSaveMenu(menu: HTMLElement, toggleButton: HTMLElement, toast?: HTMLElement): void {
   const rect = toggleButton.getBoundingClientRect();
   const margin = 4;
+  const toastGap = 6;
+  if (toast && !toast.hidden) toast.style.width = `${menu.offsetWidth}px`;
+  const toastOffset = toast && !toast.hidden ? toast.offsetHeight + toastGap : 0;
   const spaceBelow = window.innerHeight - rect.bottom - margin;
   const spaceAbove = rect.top - margin;
   const top = menu.offsetHeight <= spaceBelow || spaceBelow >= spaceAbove
     ? rect.bottom + margin
     : rect.top - menu.offsetHeight - margin;
-  menu.style.top = `${Math.max(margin, Math.min(top, window.innerHeight - menu.offsetHeight - margin))}px`;
-  const left = rect.right - menu.offsetWidth;
-  menu.style.left = `${Math.max(margin, Math.min(left, window.innerWidth - menu.offsetWidth - margin))}px`;
+  const menuTop = Math.max(margin + toastOffset, Math.min(top, window.innerHeight - menu.offsetHeight - margin));
+  const menuLeft = Math.max(margin, Math.min(rect.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - margin));
+  menu.style.top = `${menuTop}px`;
+  menu.style.left = `${menuLeft}px`;
+  if (toast && !toast.hidden) {
+    toast.style.top = `${menuTop - toast.offsetHeight - toastGap}px`;
+    toast.style.left = `${menuLeft}px`;
+  }
 }
 
-async function addTabToWorkspace(id: string, title: string, tab: WorkspaceTab): Promise<void> {
-  try {
-    await send({ type: "add-tab-to-workspace", id, tab });
-    showStatus(`已保存到 ${title}`);
-  } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); }
-}
 function renderDeferredRow(tab: DeferredTab): HTMLElement {
   const row = document.createElement("div");
   row.className = "deferred-row";
@@ -742,6 +807,19 @@ function toggleWorkspacePopover(anchorButton: HTMLButtonElement): void {
   })();
 }
 
+function appendWorkspaceListItemDetails(item: HTMLElement, workspace: WorkspaceSnapshot): void {
+  const title = document.createElement("span");
+  title.className = "workspace-popover-item-title";
+  title.textContent = workspace.title;
+  const count = document.createElement("span");
+  count.className = "workspace-popover-item-count";
+  count.textContent = `${workspace.tabs.length} 个标签`;
+  const device = document.createElement("span");
+  device.className = "workspace-popover-item-device";
+  device.textContent = workspace.deviceName ?? "本设备";
+  item.append(title, count, device);
+}
+
 function renderWorkspacePopoverList(list: HTMLElement, popover: HTMLElement & { closeRef?: () => void }): void {
   list.replaceChildren();
   if (!workspaces.length) {
@@ -757,13 +835,7 @@ function renderWorkspacePopoverList(list: HTMLElement, popover: HTMLElement & { 
     item.className = "workspace-popover-item";
     item.classList.toggle("selected", loadedWorkspace?.id === workspace.id);
     item.setAttribute("aria-label", `加载工作区 ${workspace.title}`);
-    const title = document.createElement("span");
-    title.className = "workspace-popover-item-title";
-    title.textContent = workspace.title;
-    const device = document.createElement("span");
-    device.className = "workspace-popover-item-device";
-    device.textContent = workspace.deviceName ?? "本设备";
-    item.append(title, device);
+    appendWorkspaceListItemDetails(item, workspace);
     item.addEventListener("click", () => { popover.closeRef?.(); void loadWorkspaceBoard(workspace.id); });
     list.append(item);
   }
@@ -892,7 +964,12 @@ function renderWorkspaceTab(tab: BoardSegmentCard["tabs"][number]): HTMLElement 
   const edit = makeButton("✎", "tab-edit", `编辑标签：${tab.title}`);
   edit.addEventListener("click", (event) => { event.stopPropagation(); beginEditWorkspaceTab(row, flatIndex, tab); });
   const close = makeButton("×", "tab-close", `从工作区删除：${tab.title}`);
-  close.addEventListener("click", (event) => { event.stopPropagation(); void deleteWorkspaceTab(flatIndex); });
+  close.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const card = row.closest(".group-card") as HTMLElement | null;
+    const heading = card?.querySelector(".card-title") as HTMLElement | null;
+    void deleteWorkspaceTab(flatIndex, heading ?? close);
+  });
   row.append(edit, close, open);
   row.addEventListener("dragstart", (event) => {
     if (event.target instanceof Element && event.target.closest(".tab-close, .tab-edit")) { event.preventDefault(); return; }
@@ -949,14 +1026,59 @@ async function saveWorkspaceTabEdit(flatIndex: number, title: string, url: strin
   } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); }
 }
 
-async function deleteWorkspaceTab(flatIndex: number): Promise<void> {
+async function deleteWorkspaceTab(flatIndex: number, anchor?: HTMLElement): Promise<void> {
   if (!loadedWorkspace) return;
+  const workspaceId = loadedWorkspace.id;
+  const totalTabs = workspaceCards.reduce((sum, card) => sum + card.tabs.length, 0);
+  const isLastTab = workspaceCards.length === 1 && totalTabs === 1;
+
+  if (isLastTab) {
+    confirmLastTabConfirm.disabled = false;
+    cancelLastTabConfirm.disabled = false;
+    lastTabConfirmDialog.showModal();
+    const cleanup = () => {
+      confirmLastTabConfirm.removeEventListener("click", handleConfirm);
+      cancelLastTabConfirm.removeEventListener("click", handleCancel);
+      confirmLastTabConfirm.disabled = false;
+      cancelLastTabConfirm.disabled = false;
+    };
+    const handleConfirm = async () => {
+      confirmLastTabConfirm.disabled = true;
+      cancelLastTabConfirm.disabled = true;
+      try {
+        await send({ type: "delete-workspace", id: workspaceId });
+        boardToast("工作区已删除", false, anchor);
+        loadedWorkspace = null;
+        workspaceCards = [];
+        scopeMode = "current";
+        setWorkspaceMode(false);
+        renderScopeNav();
+        workspaceHeader.replaceChildren();
+        lastTabConfirmDialog.close();
+        cleanup();
+        await load();
+        await loadWorkspaces();
+      } catch (error) {
+        lastTabConfirmDialog.close();
+        cleanup();
+        boardToast(error instanceof Error ? error.message : String(error), true, anchor);
+      }
+    };
+    const handleCancel = () => {
+      cleanup();
+      lastTabConfirmDialog.close();
+    };
+    confirmLastTabConfirm.addEventListener("click", handleConfirm);
+    cancelLastTabConfirm.addEventListener("click", handleCancel);
+    return;
+  }
+
   try {
-    await send({ type: "remove-workspace-tab", id: loadedWorkspace.id, index: flatIndex });
-    showStatus("标签已从工作区删除");
-    await loadWorkspaceBoard(loadedWorkspace.id);
+    await send({ type: "remove-workspace-tab", id: workspaceId, index: flatIndex });
+    boardToast("标签已从工作区删除", false, anchor);
+    await loadWorkspaceBoard(workspaceId);
     await loadWorkspaces();
-  } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); }
+  } catch (error) { boardToast(error instanceof Error ? error.message : String(error), true, anchor); }
 }
 
 async function addWorkspaceTab(url: string, title: string): Promise<void> {
@@ -993,7 +1115,8 @@ function setWorkspaceMode(on: boolean): void {
   windowFilter.classList.toggle("hidden", on);
   reviewDuplicates.classList.toggle("hidden", on);
   boardStatistics.classList.toggle("hidden", on);
-  deferredReminders.classList.toggle("hidden", on);
+  // 仅在工作区模式隐藏；切回“当前”时不主动显示，由 renderDeferredTabs 按数据决定，避免空列表先弹出再隐藏的闪烁。
+  if (on) deferredReminders.classList.add("hidden");
   workspaceHeader.classList.toggle("hidden", !on);
 }
 
@@ -1115,12 +1238,12 @@ async function activateTab(tabId: number): Promise<void> {
   } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); }
 }
 
-async function closeTab(tabId: number): Promise<void> {
+async function closeTab(tabId: number, anchor?: HTMLElement): Promise<void> {
   try {
     await send({ type: "close-board-tab", tabId });
-    showStatus("标签已关闭");
+    boardToast("标签已关闭", false, anchor);
     await load();
-  } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); }
+  } catch (error) { boardToast(error instanceof Error ? error.message : String(error), true, anchor); }
 }
 
 function applyOptimisticGroupReorder(boardKey: BoardKey, targetBoardKey: BoardKey): void {
