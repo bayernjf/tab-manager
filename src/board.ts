@@ -673,20 +673,12 @@ function renderScopeNav(): void {
   scopeNav.replaceChildren();
   const scopes = document.createElement("div");
   scopes.className = "scope-nav-scopes";
-  scopes.append(makeScopeButton("current", "当前"), makeScopeButton("workspace", "从工作区加载"));
+  const currentBtn = makeScopeButton("current", "当前");
+  currentBtn.addEventListener("click", () => void returnToCurrent());
+  const workspaceBtn = makeScopeButton("workspace", "从工作区加载");
+  workspaceBtn.addEventListener("click", () => toggleWorkspacePopover(workspaceBtn));
+  scopes.append(currentBtn, workspaceBtn);
   scopeNav.append(scopes);
-  if (scopeMode !== "workspace") return;
-  const list = document.createElement("div");
-  list.className = "scope-nav-workspaces";
-  if (!workspaces.length) {
-    const empty = document.createElement("span");
-    empty.className = "scope-nav-empty";
-    empty.textContent = "暂无工作区";
-    list.append(empty);
-  } else {
-    for (const workspace of workspaces) list.append(makeWorkspaceNavButton(workspace));
-  }
-  scopeNav.append(makeScopeChevron(), list);
 }
 
 function makeScopeButton(kind: ScopeMode, label: string): HTMLButtonElement {
@@ -695,43 +687,97 @@ function makeScopeButton(kind: ScopeMode, label: string): HTMLButtonElement {
   button.className = "scope-nav-scope";
   button.textContent = label;
   button.setAttribute("aria-pressed", String(scopeMode === kind));
-  button.addEventListener("click", () => void selectScopeMode(kind));
   return button;
 }
 
-function makeScopeChevron(): HTMLSpanElement {
-  const chevron = document.createElement("span");
-  chevron.className = "scope-nav-chevron";
-  chevron.setAttribute("aria-hidden", "true");
-  chevron.textContent = "›";
-  return chevron;
+function toggleWorkspacePopover(anchorButton: HTMLButtonElement): void {
+  const existing = document.querySelector(".workspace-popover") as (HTMLDivElement & { closeRef?: () => void }) | null;
+  if (existing) { existing.closeRef?.(); return; }
+  const popover = document.createElement("div") as HTMLDivElement & { closeRef?: () => void };
+  popover.className = "workspace-popover";
+  const header = document.createElement("p");
+  header.className = "workspace-popover-header";
+  header.textContent = "选择工作区";
+  const list = document.createElement("div");
+  list.className = "workspace-popover-list";
+  const loading = document.createElement("p");
+  loading.className = "workspace-popover-empty";
+  loading.textContent = "加载中…";
+  list.append(loading);
+  popover.append(header, list);
+  document.body.append(popover);
+  positionWorkspacePopover(popover, anchorButton);
+  let onOutside: ((event: MouseEvent) => void) | null = null;
+  let onScroll: ((event: Event) => void) | null = null;
+  let onResize: (() => void) | null = null;
+  const close = () => {
+    popover.remove();
+    if (onOutside) document.removeEventListener("mousedown", onOutside, true);
+    if (onScroll) document.removeEventListener("scroll", onScroll, true);
+    if (onResize) window.removeEventListener("resize", onResize);
+  };
+  popover.closeRef = close;
+  list.addEventListener("wheel", (event: WheelEvent) => {
+    const max = list.scrollHeight - list.clientHeight;
+    if (max <= 0) { event.preventDefault(); return; }
+    if ((event.deltaY < 0 && list.scrollTop <= 0) || (event.deltaY > 0 && list.scrollTop >= max)) event.preventDefault();
+  }, { passive: false });
+  onOutside = (event) => { if (!popover.contains(event.target as Node) && !anchorButton.contains(event.target as Node)) close(); };
+  onScroll = (event) => { if (event.target instanceof Node && popover.contains(event.target)) return; close(); };
+  onResize = () => close();
+  setTimeout(() => {
+    if (onOutside) document.addEventListener("mousedown", onOutside, true);
+    if (onScroll) document.addEventListener("scroll", onScroll, true);
+    if (onResize) window.addEventListener("resize", onResize);
+  }, 0);
+  void (async () => {
+    try {
+      if (!workspaces.length) await loadWorkspaces();
+      renderWorkspacePopoverList(list, popover);
+      positionWorkspacePopover(popover, anchorButton);
+    } catch (error) {
+      close();
+      showStatus(error instanceof Error ? error.message : String(error), true);
+    }
+  })();
 }
 
-function makeWorkspaceNavButton(workspace: WorkspaceSnapshot): HTMLButtonElement {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "scope-nav-workspace";
-  button.classList.toggle("selected", loadedWorkspace?.id === workspace.id);
-  const title = document.createElement("span");
-  title.className = "scope-nav-workspace-title";
-  title.textContent = workspace.title;
-  const count = document.createElement("span");
-  count.className = "scope-nav-workspace-count";
-  count.textContent = `${workspace.tabs.length} 标签`;
-  button.append(title, count);
-  button.addEventListener("click", () => void loadWorkspaceBoard(workspace.id));
-  return button;
-}
-
-async function selectScopeMode(mode: ScopeMode): Promise<void> {
-  if (scopeMode === mode) return;
-  scopeMode = mode;
-  if (mode === "workspace") {
-    if (!workspaces.length) await loadWorkspaces();
-    renderScopeNav();
+function renderWorkspacePopoverList(list: HTMLElement, popover: HTMLElement & { closeRef?: () => void }): void {
+  list.replaceChildren();
+  if (!workspaces.length) {
+    const empty = document.createElement("p");
+    empty.className = "workspace-popover-empty";
+    empty.textContent = "暂无工作区";
+    list.append(empty);
     return;
   }
-  await returnToCurrent();
+  for (const workspace of workspaces) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "workspace-popover-item";
+    item.classList.toggle("selected", loadedWorkspace?.id === workspace.id);
+    item.setAttribute("aria-label", `加载工作区 ${workspace.title}`);
+    const title = document.createElement("span");
+    title.className = "workspace-popover-item-title";
+    title.textContent = workspace.title;
+    const device = document.createElement("span");
+    device.className = "workspace-popover-item-device";
+    device.textContent = workspace.deviceName ?? "本设备";
+    item.append(title, device);
+    item.addEventListener("click", () => { popover.closeRef?.(); void loadWorkspaceBoard(workspace.id); });
+    list.append(item);
+  }
+}
+
+function positionWorkspacePopover(popover: HTMLElement, anchorButton: HTMLElement): void {
+  const rect = anchorButton.getBoundingClientRect();
+  const margin = 4;
+  const preferredLeft = rect.right + margin;
+  const left = preferredLeft + popover.offsetWidth <= window.innerWidth - margin
+    ? preferredLeft
+    : Math.max(margin, window.innerWidth - popover.offsetWidth - margin);
+  popover.style.left = `${left}px`;
+  popover.style.top = `${Math.max(margin, Math.min(rect.top, window.innerHeight - popover.offsetHeight - margin))}px`;
 }
 
 async function loadWorkspaceBoard(id: string): Promise<void> {
