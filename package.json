@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "clean": "rm -rf dist",
-    "build": "npm run clean && tsc && cp src/manifest.json src/popup.html src/popup.css src/board.html src/board.css dist/ && node scripts/inject-env.mjs",
+    "build": "npm run clean && tsc && cp src/manifest.json src/popup.html src/popup.css src/board.html src/board.css src/options.html src/options.css dist/ && node scripts/inject-env.mjs",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node --test tests/*.test.js"
   },

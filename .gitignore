@@ -4,3 +4,8 @@ dist/
 .env.local
 .env.*.local
 .superpowers/
+
+# 工具生成的本地文件
+.codegraph/
+.headroom/
+.claude/launch.json
