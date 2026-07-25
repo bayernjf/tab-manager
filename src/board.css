@@ -120,7 +120,7 @@ button.scope-nav-scope[aria-pressed="true"] { background: #386650; color: #fff; 
 .workspace-dialog-resize-anchored { position: fixed; inset: var(--workspace-dialog-top) auto auto var(--workspace-dialog-left); max-width: calc(100vw - var(--workspace-dialog-left) - 16px); max-height: calc(100vh - var(--workspace-dialog-top) - 16px); margin: 0; }
 .workspace-dialog-resizable[open] { display: flex; flex-direction: column; }
 .workspace-dialog-resizable > .button { align-self: flex-start; }
-.workspace-dialog-resizable .workspace-tabs { width: 100%; min-height: 120px; max-height: none; flex: 1 1 0; overflow: auto; }
+.workspace-dialog-resizable .workspace-tabs { width: 100%; min-height: 120px; max-height: none; flex: 1 1 0; overflow: auto; margin: 4px 0 12px; }
 .workspace-dialog-resizable .workspace-list { width: 100%; min-height: 0; max-height: none; flex: 0 0 auto; overflow: visible; }
 @container workspace-dialog (max-width: 520px) { .workspace-dialog-resizable .workspace-name-toast { position: static; width: 100%; max-width: none; margin-top: 8px; transform: none; }.workspace-dialog-resizable .workspace-name-toast::before { display: none; } }
 .workspace-dialog::backdrop { background: rgba(27, 47, 37, .35); }.workspace-dialog h2 { margin-bottom: 12px; }.workspace-dialog-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; }.workspace-dialog-header h2 { margin: 0; }.workspace-dialog input { padding: 8px; }.workspace-tabs { display: grid; gap: 7px; max-height: 300px; overflow: auto; margin: 12px 0; }.workspace-tabs label { display: flex; align-items: center; gap: 8px; font-size: 12px; }

@@ -116,16 +116,30 @@ function syncWorkspaceSelectAll(): void {
   workspaceSelectAll.indeterminate = checkedCount > 0 && checkedCount < inputs.length;
 }
 function renderWorkspaceTabs(): void {
-  const tabs = currentState?.groups.flatMap((group) => group.tabs).filter((tab): tab is typeof tab & { url: string } => Boolean(tab.url));
-  workspaceTabs.replaceChildren(...(tabs ?? []).map((tab) => {
+  const tabs = currentState?.groups.flatMap((group) => group.tabs).filter((tab): tab is typeof tab & { url: string } => Boolean(tab.url)) ?? [];
+  const fallback = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
+  workspaceTabs.replaceChildren(...tabs.map((tab, index) => {
     const label = document.createElement("label");
+    label.className = "workspace-tab-row";
     const input = document.createElement("input");
     input.type = "checkbox";
     input.checked = true;
     input.value = String(tab.id);
     input.dataset.title = tab.title;
     input.dataset.url = tab.url;
-    label.append(input, document.createTextNode(tab.title));
+    const indexSpan = document.createElement("span");
+    indexSpan.className = "workspace-tab-index";
+    indexSpan.textContent = String(index + 1);
+    const icon = document.createElement("img");
+    icon.className = "tab-icon";
+    icon.alt = "";
+    icon.src = tab.favIconUrl || faviconFor(tab.url) || fallback;
+    icon.addEventListener("error", () => { if (icon.src !== fallback) icon.src = fallback; });
+    icon.classList.toggle("github-tab-icon", getSiteKey(tab.url) === "github.com");
+    const title = document.createElement("span");
+    title.className = "workspace-tab-title";
+    title.textContent = tab.title;
+    label.append(input, indexSpan, icon, title);
     return label;
   }));
   syncWorkspaceSelectAll();
