@@ -1,5 +1,6 @@
 import {
   DEFAULT_SETTINGS,
+  detectBrowserKind,
   resetOptionsForUser,
   type BoardCustomGroup,
   type BoardLayout,
@@ -80,4 +81,36 @@ export async function prepareOptionsForUser(userId: string): Promise<StoredState
     });
   }
   return prepared.state;
+}
+
+export async function getOrCreateDeviceId(): Promise<string> {
+  const { deviceId } = await chrome.storage.local.get("deviceId");
+  if (typeof deviceId === "string" && deviceId) return deviceId;
+  const id = crypto.randomUUID();
+  await chrome.storage.local.set({ deviceId: id });
+  return id;
+}
+
+const LEGACY_DEVICE_NAMES = new Set(["本设备", "Mac 设备", "Windows 设备", "Linux 设备", "ChromeOS 设备"]);
+
+export async function getOrCreateDeviceName(): Promise<string> {
+  const { deviceName } = await chrome.storage.local.get("deviceName");
+  // Regenerate when blank or when the cached value is a legacy auto-generated name
+  // (older builds used platform-only names like "Mac 设备" without the browser suffix).
+  // User-chosen names are preserved.
+  if (typeof deviceName === "string" && deviceName.trim() && !LEGACY_DEVICE_NAMES.has(deviceName)) return deviceName;
+  const name = defaultDeviceName();
+  await chrome.storage.local.set({ deviceName: name });
+  return name;
+}
+
+function defaultDeviceName(): string {
+  const userAgent = navigator.userAgent ?? "";
+  const browser = detectBrowserKind(userAgent) === "edge" ? "Edge" : "Chrome";
+  let deviceType = "本";
+  if (/Mac/i.test(userAgent)) deviceType = "Mac";
+  else if (/Win/i.test(userAgent)) deviceType = "Win";
+  else if (/CrOS/i.test(userAgent)) deviceType = "ChromeOS";
+  else if (/Linux/i.test(userAgent)) deviceType = "Linux";
+  return `${deviceType}设备-${browser}`;
 }
