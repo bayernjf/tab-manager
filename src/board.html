@@ -34,11 +34,17 @@
         <label><span class="sr-only">分组颜色</span><select id="new-group-color" aria-label="分组颜色"><option value="blue">蓝色</option><option value="green">绿色</option><option value="purple">紫色</option><option value="orange">橙色</option><option value="red">红色</option><option value="pink">粉色</option><option value="cyan">青色</option><option value="yellow">黄色</option><option value="grey">灰色</option></select></label>
         <button class="button" type="submit">新建分组</button>
       </form>
+      <nav id="scope-nav" class="scope-nav" aria-label="看板范围"></nav>
+      <div id="workspace-header" class="workspace-header hidden" aria-live="polite"></div>
       <div id="board-grid" class="board-grid" aria-live="polite"></div>
     </section>
   </main>
   <dialog id="workspace-dialog" class="workspace-dialog workspace-dialog-resizable" aria-labelledby="workspace-title">
     <h2 id="workspace-title">本地工作区</h2>
+    <div class="workspace-device-bar">
+      <span class="workspace-device-prefix">本设备</span>
+      <input id="workspace-device-name" class="workspace-device-input" type="text" maxlength="60" aria-label="本设备名称" spellcheck="false">
+    </div>
     <div class="workspace-controls">
       <div class="workspace-name-field">
         <input id="workspace-name" maxlength="80" placeholder="工作区名称" aria-describedby="workspace-name-error" aria-invalid="false">
