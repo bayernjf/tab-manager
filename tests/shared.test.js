@@ -589,6 +589,8 @@ test("reuses workspace title, tab count, and device layout in save options", asy
   assert.match(script, /className = "workspace-popover-item-device"/);
   assert.match(css, /\.workspace-popover-item, \.workspace-save-option \{/);
   assert.match(css, /\.workspace-save-option:hover \.workspace-popover-item-count/);
+  assert.match(css, /\.workspace-popover-list \{[^}]*overscroll-behavior: contain/);
+  assert.match(css, /\.workspace-save-menu \{[^}]*overscroll-behavior: contain/);
 });
 
 test("renders every scheduled reminder with clear status and actions", async () => {
@@ -800,6 +802,7 @@ test("makes only the workspace manager dialog resizable", async () => {
   assert.match(resizableRule, /\bcontainer\s*:\s*workspace-dialog\s*\/\s*inline-size\s*;/);
   assert.match(resizableRule, /\bresize\s*:\s*both\s*;/);
   assert.match(resizableRule, /\boverflow\s*:\s*auto\s*;/);
+  assert.match(resizableRule, /\boverscroll-behavior\s*:\s*contain\s*;/);
   assert.match(resizableRule, /\bmin-width\s*:\s*[^;}]+\s*;/);
   assert.match(resizableRule, /\bmin-height\s*:\s*[^;}]+\s*;/);
   assert.match(resizableRule, /\bmax-width\s*:\s*[^;}]+\s*;/);
@@ -816,6 +819,7 @@ test("makes only the workspace manager dialog resizable", async () => {
   const workspaceTabsRule = cssRule(css, ".workspace-dialog-resizable .workspace-tabs");
   assert.match(workspaceTabsRule, /\bflex\s*:\s*[^;}]+\s*;/);
   assert.match(workspaceTabsRule, /\bmax-height\s*:\s*none\s*;/);
+  assert.match(workspaceTabsRule, /\boverscroll-behavior\s*:\s*contain\s*;/);
   const workspaceListRule = cssRule(css, ".workspace-dialog-resizable .workspace-list");
   assert.match(workspaceListRule, /\bmax-height\s*:\s*none\s*;/);
   assert.match(workspaceListRule, /\bflex\s*:\s*0\s+0\s+auto\s*;/);
@@ -867,7 +871,15 @@ test("makes only the workspace manager dialog resizable", async () => {
   const openFunction = script.slice(openStart, openEnd);
   const showModalIndex = openFunction.indexOf("workspaceDialog.showModal()");
   const anchorIndex = openFunction.indexOf("syncWorkspaceDialogResizeAnchor()");
+  const dragIndex = openFunction.indexOf("makeWorkspaceDialogDraggable()");
   assert.ok(showModalIndex >= 0 && anchorIndex > showModalIndex);
+  assert.ok(dragIndex > anchorIndex);
+  assert.match(script, /function makeWorkspaceDialogDraggable/);
+  assert.match(script, /workspace-dialog-header/);
+  assert.match(script, /addEventListener\("mousedown"/);
+  assert.match(script, /document\.addEventListener\("mousemove"/);
+  assert.match(script, /document\.addEventListener\("mouseup"/);
+  assert.match(css, /\.workspace-dialog-header \{[^}]*cursor: grab/);
   assert.match(script, /window\.addEventListener\("resize", \(\) => \{\s*syncWorkspaceDialogResizeAnchor\(\);/);
 });
 
