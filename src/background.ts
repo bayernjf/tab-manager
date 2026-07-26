@@ -72,6 +72,7 @@ type PopupMessage =
   | { type: "save-workspace"; title: unknown; tabs: unknown }
   | { type: "get-workspace-restore-preview"; id: unknown }
   | { type: "restore-workspace"; id: unknown; windowId: unknown; confirmed?: boolean }
+  | { type: "restore-workspace-tabs"; tabs: unknown; windowId: unknown; confirmed?: boolean }
   | { type: "delete-workspace"; id: unknown }
   | { type: "set-device-name"; name: unknown }
   | { type: "add-tab-to-workspace"; id: unknown; tab: unknown }
@@ -520,6 +521,22 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       for (const tab of preview.tabs) await chrome.tabs.create({ windowId: message.windowId, url: tab.url, active: false });
       return { ok: true, created: preview.tabs.length, unavailableCount: preview.unavailableCount };
     }
+    if (message.type === "restore-workspace-tabs") {
+      await requireBoardUser();
+      if (message.confirmed !== true) throw new Error("请确认后再恢复标签");
+      if (!Array.isArray(message.tabs) || message.tabs.length < 1) throw new Error("请至少选择一个标签");
+      if (message.tabs.length > 200) throw new Error("工作区标签不能超过 200 个");
+      const validations = message.tabs.map(validateWorkspaceTab);
+      const firstInvalid = validations.findIndex((validation) => validation.status !== "valid");
+      if (firstInvalid >= 0) {
+        const validation = validations[firstInvalid];
+        if (!validation || validation.status === "valid") throw new Error("标签数据格式无效");
+        throw new Error(`第 ${firstInvalid + 1} 个标签无效：${workspaceTabValidationMessage(validation.status)}`);
+      }
+      const tabs = validations.flatMap((validation) => validation.status === "valid" ? [validation.tab] : []);
+      for (const tab of tabs) await chrome.tabs.create({ windowId: typeof message.windowId === "number" ? message.windowId : undefined, url: tab.url, active: false });
+      return { ok: true, created: tabs.length, unavailableCount: 0 };
+    }
     if (message.type === "delete-workspace") {
       const user = await requireBoardUser();
       if (!safeRecordId(message.id)) throw new Error("工作区不存在");
@@ -565,7 +582,10 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const state = await loadState();
       const workspace = (await loadAllWorkspaces(user.id, state.settings.cloudSyncEnabled === true)).find((item) => item.id === message.id);
       if (!workspace) throw new Error("工作区不存在");
-      return { workspace: { id: workspace.id, title: workspace.title, createdAt: workspace.createdAt, deviceName: workspace.deviceName }, cards: buildBoardCards(groupWorkspaceTabsByDomain(workspace.tabs)) };
+      return {
+        workspace: { id: workspace.id, title: workspace.title, createdAt: workspace.createdAt, deviceName: workspace.deviceName },
+        cards: buildBoardCards(groupWorkspaceTabsByDomain(workspace.tabs, state.settings, state.groupRules, state.ignoredSites)),
+      };
     }
     if (message.type === "update-workspace-tab") {
       const user = await requireBoardUser();
