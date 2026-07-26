@@ -158,6 +158,7 @@ button.scope-nav-scope[aria-pressed="true"] { background: #386650; color: #fff; 
 .workspace-name-toast { position: absolute; z-index: 2; top: 50%; left: calc(100% + 10px); width: max-content; max-width: 230px; margin: 0; padding: 8px 10px; transform: translateY(-50%); border: 1px solid #efc4c4; border-radius: 8px; color: #993f3f; background: #fff5f5; box-shadow: 0 6px 18px rgba(74, 37, 37, .12); font-size: 12px; font-weight: 650; }
 .workspace-name-toast::before { position: absolute; top: 50%; right: 100%; width: 8px; height: 8px; transform: translate(5px, -50%) rotate(45deg); border-bottom: 1px solid #efc4c4; border-left: 1px solid #efc4c4; background: #fff5f5; content: ""; }
 .workspace-name-toast[hidden] { display: none; }
+.workspace-restore-list { border: 1px solid #e1e9e3; border-radius: 9px; background: #fff; }.workspace-restore-list .tab-open { cursor: default; }.workspace-restore-actions { display: flex; align-items: center; justify-content: space-between; gap: 28px; margin-top: 18px; }.workspace-restore-actions .button { margin: 0; }
 .empty { margin: 0; padding: 16px 12px; color: #809087; font-size: 12px; text-align: center; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 @media (max-width: 980px) { .board-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
