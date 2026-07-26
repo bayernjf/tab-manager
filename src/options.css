@@ -9,9 +9,8 @@
 .deferred-shortcut { display: inline-flex; height: 42px; align-items: center; gap: 3px; padding: 0 7px 0 13px; border: 1px solid #d7e4da; border-radius: 999px; background: #fbfdfb; box-shadow: 0 2px 8px rgba(41, 74, 55, .05); transition: border-color .16s ease, box-shadow .16s ease, background .16s ease; }
 .deferred-shortcut:hover { border-color: #b9d0c0; background: #fff; }
 .deferred-shortcut:focus-within { border-color: #4a8b68; background: #fff; box-shadow: 0 0 0 3px rgba(74, 139, 104, .12); }
-.deferred-shortcut-input { width: calc(5ch + 22px); padding: 0; border: 0; outline: 0; color: #1f3d2e; background: transparent; font-size: 16px; font-weight: 750; text-align: right; }
+.deferred-shortcut-input { width: 92px; padding: 0 0 0 10px; border: 0; outline: 0; color: #1f3d2e; background: transparent; font-size: 16px; font-weight: 750; }
 .deferred-shortcut-input:focus-visible { outline: 0; }
-.deferred-shortcut-unit { margin-right: 2px; color: #71837a; font-size: 12px; }
 .deferred-shortcut-remove { display: grid; width: 27px; height: 27px; place-items: center; padding: 0; border-radius: 50%; color: #809087; background: transparent; font-size: 17px; line-height: 1; }
 .deferred-shortcut-remove:hover, .deferred-shortcut-remove:focus-visible { outline: 0; color: #a04f4f; background: #faeeee; }
 .deferred-shortcut-remove:disabled, .deferred-shortcut-remove:disabled:hover { cursor: not-allowed; opacity: .45; color: #aab5ae; background: transparent; }
