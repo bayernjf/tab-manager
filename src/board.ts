@@ -55,7 +55,7 @@ const workspaceHeader = $("#workspace-header");
 
 let currentState: BoardState | null = null;
 let duplicateGroups: DuplicateBoardTabGroup[] = [];
-let workspaces: WorkspaceSnapshot[] = [], restoreWorkspaceId: string | null = null;
+let workspaces: WorkspaceSnapshot[] = [], restoreWorkspaceId: string | null = null, restoreWorkspaceTabs: WorkspaceTab[] | null = null;
 let currentDevice: { id: string; name: string } | null = null;
 let deviceNameOriginal = "";
 type ScopeMode = "current" | "workspace";
@@ -290,8 +290,49 @@ async function saveCurrentWorkspace(): Promise<void> {
   await loadWorkspaces();
   showStatus("工作区已保存");
 }
-async function previewWorkspaceRestore(id: string): Promise<void> { const result = await send<{ preview: { tabs: WorkspaceTab[]; unavailableCount: number } }>({ type: "get-workspace-restore-preview", id }); restoreWorkspaceId = id; workspaceRestoreSummary.textContent = `将打开 ${result.preview.tabs.length} 个标签${result.preview.unavailableCount ? `，跳过 ${result.preview.unavailableCount} 个不可用页面` : ""}`; workspaceRestoreList.replaceChildren(...result.preview.tabs.map((tab) => { const item = document.createElement("p"); item.textContent = tab.title; return item; })); workspaceRestoreDialog.showModal(); }
-async function restoreWorkspace(): Promise<void> { if (!restoreWorkspaceId) return; const tab = await chrome.tabs.getCurrent(); const result = await send<{ created: number }>({ type: "restore-workspace", id: restoreWorkspaceId, windowId: tab?.windowId, confirmed: true }); workspaceRestoreDialog.close(); showStatus(`已打开 ${result.created} 个标签`); }
+function showWorkspaceRestorePreview(tabs: readonly WorkspaceTab[], unavailableCount = 0): void {
+  workspaceRestoreSummary.textContent = `将打开 ${tabs.length} 个标签${unavailableCount ? `，跳过 ${unavailableCount} 个不可用页面` : ""}`;
+  const fallback = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
+  workspaceRestoreList.replaceChildren(...tabs.map((tab) => {
+    const row = document.createElement("div");
+    row.className = "tab-row workspace-restore-tab";
+    row.title = tab.url;
+    const content = document.createElement("div");
+    content.className = "tab-open";
+    const icon = document.createElement("img");
+    icon.className = "tab-icon";
+    icon.alt = "";
+    icon.src = faviconFor(tab.url) || fallback;
+    icon.addEventListener("error", () => { if (icon.src !== fallback) icon.src = fallback; });
+    icon.classList.toggle("github-tab-icon", getSiteKey(tab.url) === "github.com");
+    const title = document.createElement("span");
+    title.className = "tab-title";
+    title.textContent = tab.title;
+    content.append(icon, title);
+    row.append(content);
+    return row;
+  }));
+  workspaceRestoreDialog.showModal();
+}
+async function previewWorkspaceRestore(id: string): Promise<void> { const result = await send<{ preview: { tabs: WorkspaceTab[]; unavailableCount: number } }>({ type: "get-workspace-restore-preview", id }); restoreWorkspaceId = id; restoreWorkspaceTabs = null; showWorkspaceRestorePreview(result.preview.tabs, result.preview.unavailableCount); }
+function previewWorkspaceCardRestore(card: BoardSegmentCard): void {
+  const tabs = card.tabs.flatMap((tab) => tab.url ? [{ title: tab.title, url: tab.url }] : []);
+  if (!tabs.length) { showStatus("该分组没有可恢复的标签", true); return; }
+  restoreWorkspaceId = null;
+  restoreWorkspaceTabs = tabs;
+  showWorkspaceRestorePreview(tabs);
+}
+async function restoreWorkspace(): Promise<void> {
+  const tab = await chrome.tabs.getCurrent();
+  const result = restoreWorkspaceId
+    ? await send<{ created: number }>({ type: "restore-workspace", id: restoreWorkspaceId, windowId: tab?.windowId, confirmed: true })
+    : restoreWorkspaceTabs
+      ? await send<{ created: number }>({ type: "restore-workspace-tabs", tabs: restoreWorkspaceTabs, windowId: tab?.windowId, confirmed: true })
+      : null;
+  if (!result) return;
+  workspaceRestoreDialog.close();
+  showStatus(`已打开 ${result.created} 个标签`);
+}
 async function deleteWorkspace(id: string): Promise<void> { await send({ type: "delete-workspace", id }); await loadWorkspaces(); }
 async function renameDevice(name: string): Promise<void> {
   try {
@@ -956,6 +997,12 @@ function renderWorkspaceCard(card: BoardSegmentCard, placement: { slot: number; 
     segment.textContent = `第 ${card.segmentIndex + 1}/${card.segmentCount} 段`;
     heading.append(segment);
   }
+  const actions = document.createElement("div");
+  actions.className = "deferred-actions";
+  const restore = makeButton("恢复", "deferred-action deferred-open", `恢复 ${card.title} 的标签`);
+  restore.addEventListener("click", () => previewWorkspaceCardRestore(card));
+  actions.append(restore);
+  heading.append(actions);
   const tabs = document.createElement("div");
   tabs.className = "tabs";
   if (card.tabs.length) tabs.append(...card.tabs.map((tab) => renderWorkspaceTab(tab)));
