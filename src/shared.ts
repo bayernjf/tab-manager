@@ -86,6 +86,8 @@ export interface WorkspaceSnapshot {
   title: string;
   createdAt: string;
   tabs: WorkspaceTab[];
+  deviceId?: string;
+  deviceName?: string;
 }
 
 export interface WorkspaceRestorePreview {
@@ -112,6 +114,8 @@ export interface BoardSegmentCard extends BoardLogicalGroup {
   segmentCount: number;
   heightUnits: 1 | 2;
 }
+
+export type BrowserKind = "chrome" | "edge";
 
 export interface BoardTabDrop {
   tabId: number;
@@ -146,7 +150,7 @@ export interface Settings {
   autoGroupEnabled: boolean;
   minimumTabs: number;
   openBoardOnNewTab: boolean;
-  deferredShortcutMinutes?: number[];
+  deferredShortcutTimes?: string[];
   defaultGroupColor?: GroupColor;
   cloudSyncEnabled?: boolean;
   syncRulesEnabled?: boolean;
@@ -184,6 +188,7 @@ export interface SettingsSyncRow {
   cloud_sync_enabled?: boolean;
   sync_rules_enabled?: boolean;
   sync_ignore_list_enabled?: boolean;
+  deferred_shortcut_times?: string[];
 }
 
 export interface GroupRuleSyncRow {
@@ -242,7 +247,7 @@ export interface SyncFailureStatus {
 export interface VirtualBoardAssignment {
   windowId: number;
   tabId: number;
-  boardKey: Exclude<BoardKey, "ungrouped">;
+  boardKey: BoardKey;
   order: number;
 }
 
@@ -274,7 +279,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoGroupEnabled: true,
   minimumTabs: 2,
   openBoardOnNewTab: false,
-  deferredShortcutMinutes: [1, 3, 5],
+  deferredShortcutTimes: ["09:00", "14:00", "18:00"],
   defaultGroupColor: "blue",
   cloudSyncEnabled: true,
   syncRulesEnabled: true,
@@ -289,7 +294,8 @@ export function settingsFromSyncRow(value: unknown, expectedUserId?: string): Se
   const syncRulesEnabled = value.sync_rules_enabled === undefined ? DEFAULT_SETTINGS.syncRulesEnabled : value.sync_rules_enabled;
   const syncIgnoreListEnabled = value.sync_ignore_list_enabled === undefined ? DEFAULT_SETTINGS.syncIgnoreListEnabled : value.sync_ignore_list_enabled;
   const openBoardOnNewTab = value.open_board_on_new_tab === undefined ? DEFAULT_SETTINGS.openBoardOnNewTab : value.open_board_on_new_tab;
-  if (!isGroupColor(defaultGroupColor) || typeof cloudSyncEnabled !== "boolean" || typeof syncRulesEnabled !== "boolean" || typeof syncIgnoreListEnabled !== "boolean" || typeof openBoardOnNewTab !== "boolean") return null;
+  const deferredShortcutTimes = normalizeDeferredShortcutTimes(value.deferred_shortcut_times);
+  if (!isGroupColor(defaultGroupColor) || typeof cloudSyncEnabled !== "boolean" || typeof syncRulesEnabled !== "boolean" || typeof syncIgnoreListEnabled !== "boolean" || typeof openBoardOnNewTab !== "boolean" || !deferredShortcutTimes) return null;
   return {
     autoGroupEnabled: value.auto_group_enabled,
     minimumTabs: value.minimum_tabs,
@@ -298,6 +304,7 @@ export function settingsFromSyncRow(value: unknown, expectedUserId?: string): Se
     cloudSyncEnabled,
     syncRulesEnabled,
     syncIgnoreListEnabled,
+    deferredShortcutTimes,
   };
 }
 
@@ -366,14 +373,30 @@ export function findDuplicateBoardTabs(tabs: readonly BoardTab[]): DuplicateBoar
   });
 }
 
-function workspaceTab(value: unknown): WorkspaceTab | null {
-  if (!isPlainObject(value) || typeof value.title !== "string" || !value.title.trim() || value.title.length > 160 || typeof value.url !== "string" || value.url.length > 4_000) return null;
+export type WorkspaceTabValidation =
+  | { status: "valid"; tab: WorkspaceTab }
+  | { status: "invalid-data" | "empty-title" | "empty-url" | "url-too-long" | "invalid-url" | "unsupported-url" };
+
+export function validateWorkspaceTab(value: unknown): WorkspaceTabValidation {
+  if (!isPlainObject(value)) return { status: "invalid-data" };
+  if (typeof value.title !== "string") return { status: "empty-title" };
+  const title = value.title.trim();
+  if (!title) return { status: "empty-title" };
+  if (typeof value.url !== "string" || !value.url.trim()) return { status: "empty-url" };
+  if (value.url.length > 4_000) return { status: "url-too-long" };
   try {
     const url = new URL(value.url);
-    return url.protocol === "http:" || url.protocol === "https:" ? { title: value.title.trim(), url: url.href } : null;
+    return url.protocol === "http:" || url.protocol === "https:"
+      ? { status: "valid", tab: { title: title.slice(0, 160), url: url.href } }
+      : { status: "unsupported-url" };
   } catch {
-    return null;
+    return { status: "invalid-url" };
   }
+}
+
+export function workspaceTab(value: unknown): WorkspaceTab | null {
+  const validation = validateWorkspaceTab(value);
+  return validation.status === "valid" ? validation.tab : null;
 }
 
 export type WorkspaceTitleValidation =
@@ -396,7 +419,10 @@ export function validateWorkspaceSnapshot(value: unknown): WorkspaceSnapshot | n
   const title = validateWorkspaceTitle(value.title, []);
   if (title.status !== "valid") return null;
   const tabs = value.tabs.map(workspaceTab);
-  return tabs.every((tab): tab is WorkspaceTab => tab !== null) ? { id: value.id, title: title.title, createdAt: value.createdAt, tabs } : null;
+  if (!tabs.every((tab): tab is WorkspaceTab => tab !== null)) return null;
+  const deviceId = typeof value.deviceId === "string" && value.deviceId ? value.deviceId : undefined;
+  const deviceName = typeof value.deviceName === "string" && value.deviceName.trim() && value.deviceName.length <= 60 ? value.deviceName.trim() : undefined;
+  return { id: value.id, title: title.title, createdAt: value.createdAt, tabs, ...(deviceId ? { deviceId } : {}), ...(deviceName ? { deviceName } : {}) };
 }
 
 export function workspaceRestorePreview(snapshot: WorkspaceSnapshot): WorkspaceRestorePreview {
@@ -422,11 +448,20 @@ export function formatDeferredDateTime(value: string): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-export function normalizeDeferredShortcutMinutes(value: unknown): number[] | null {
-  if (value === undefined) return [1, 3, 5];
-  if (!Array.isArray(value) || value.length < 1 || value.length > 5 || value.some((item) => typeof item !== "number" || !Number.isInteger(item) || item < 1 || item > 10_080)) return null;
+export function normalizeDeferredShortcutTimes(value: unknown): string[] | null {
+  if (value === undefined) return ["09:00", "14:00", "18:00"];
+  if (!Array.isArray(value) || value.length < 1 || value.length > 5 || value.some((item) => typeof item !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(item))) return null;
   const unique = [...new Set(value)];
   return unique.length ? unique : null;
+}
+
+export function nextDeferredOccurrence(hhmm: string, now: Date = new Date()): Date {
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hhmm)) throw new Error(`无效的时刻：${hhmm}`);
+  const [hours, minutes] = hhmm.split(":").map(Number) as [number, number];
+  const next = new Date(now);
+  next.setHours(hours, minutes, 0, 0);
+  if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1);
+  return next;
 }
 
 export function heightUnitsForTabCount(tabCount: number): 1 | 2 {
@@ -457,6 +492,64 @@ export function buildBoardCards(groups: readonly BoardLogicalGroup[]): BoardSegm
     }
   }
   return cards;
+}
+
+const BROWSER_KINDS: readonly BrowserKind[] = ["chrome", "edge"];
+const BOARD_GROUP_KINDS: readonly BoardGroupKind[] = ["automatic", "custom", "ungrouped"];
+
+function isBrowserKind(value: unknown): value is BrowserKind {
+  return typeof value === "string" && (BROWSER_KINDS as readonly string[]).includes(value);
+}
+
+function isBoardGroupKind(value: unknown): value is BoardGroupKind {
+  return typeof value === "string" && (BOARD_GROUP_KINDS as readonly string[]).includes(value);
+}
+
+export function detectBrowserKind(userAgent: string): BrowserKind {
+  return /Edg\//.test(userAgent) ? "edge" : "chrome";
+}
+
+export function groupWorkspaceTabsByDomain(
+  tabs: readonly WorkspaceTab[],
+  settings: Settings,
+  rules: readonly GroupRule[],
+  ignoredSites: readonly IgnoredSite[],
+): BoardLogicalGroup[] {
+  return buildVirtualBoardGroups({
+    tabs: tabs.map((tab, id) => ({ id, title: tab.title, url: tab.url })),
+    settings,
+    rules,
+    ignoredSites,
+    customGroups: [],
+    assignments: {},
+  });
+}
+
+export function moveWorkspaceTab(tabs: readonly WorkspaceTab[], fromIndex: number, toIndex: number): WorkspaceTab[] | null {
+  if (!Number.isInteger(fromIndex) || !Number.isInteger(toIndex) || fromIndex < 0 || toIndex < 0 || fromIndex >= tabs.length || toIndex >= tabs.length || fromIndex === toIndex) return null;
+  const next = [...tabs];
+  const [moved] = next.splice(fromIndex, 1);
+  if (!moved) return null;
+  next.splice(toIndex, 0, moved);
+  return next;
+}
+
+export function updateWorkspaceTab(tabs: readonly WorkspaceTab[], index: number, title: string, url: string): WorkspaceTab[] | null {
+  if (!Number.isInteger(index) || index < 0 || index >= tabs.length) return null;
+  const tab = workspaceTab({ title, url });
+  if (!tab) return null;
+  return tabs.map((item, itemIndex) => (itemIndex === index ? tab : item));
+}
+
+export function removeWorkspaceTab(tabs: readonly WorkspaceTab[], index: number): WorkspaceTab[] | null {
+  if (!Number.isInteger(index) || index < 0 || index >= tabs.length) return null;
+  return tabs.filter((_, itemIndex) => itemIndex !== index);
+}
+
+export function appendWorkspaceTab(tabs: readonly WorkspaceTab[], value: unknown): WorkspaceTab[] | null {
+  const tab = workspaceTab(value);
+  if (!tab) return null;
+  return [...tabs, tab];
 }
 
 export function moveBoardGroupRank(groups: readonly BoardGroup[], boardKey: BoardKey, rank: number): BoardGroup[] | null {
@@ -492,12 +585,7 @@ export function moveVirtualBoardAssignment(
   order = 0,
 ): Record<string, VirtualBoardAssignment> {
   const key = virtualBoardAssignmentKey(windowId, tabId);
-  const next = { ...assignments };
-  if (boardKey === "ungrouped") {
-    delete next[key];
-    return next;
-  }
-  return { ...next, [key]: { windowId, tabId, boardKey, order } };
+  return { ...assignments, [key]: { windowId, tabId, boardKey, order } };
 }
 
 export function buildVirtualBoardGroups(input: VirtualBoardGroupInput): BoardLogicalGroup[] {
@@ -555,7 +643,11 @@ export function buildVirtualBoardGroups(input: VirtualBoardGroupInput): BoardLog
   }
   const groupedIds = new Set(groups.flatMap((group) => group.tabs.map((tab) => tab.id)));
   const ungrouped = groups[0];
-  if (ungrouped) ungrouped.tabs = input.tabs.filter((tab) => !groupedIds.has(tab.id));
+  if (ungrouped) {
+    const ordered = tabsFor("ungrouped");
+    const orderedIds = new Set(ordered.map((tab) => tab.id));
+    ungrouped.tabs = [...ordered, ...input.tabs.filter((tab) => !groupedIds.has(tab.id) && !orderedIds.has(tab.id))];
+  }
   return groups;
 }
 
@@ -846,7 +938,7 @@ export function canConfirmOptionsImport(previewUserId: string | null, currentUse
 
 export function validateOptionsSettings(value: unknown): Settings | null {
   if (!isPlainObject(value)) return null;
-  const allowedKeys = ["autoGroupEnabled", "minimumTabs", "openBoardOnNewTab", "deferredShortcutMinutes", "defaultGroupColor", "cloudSyncEnabled", "syncRulesEnabled", "syncIgnoreListEnabled", "lastSuccessfulSyncAt"];
+  const allowedKeys = ["autoGroupEnabled", "minimumTabs", "openBoardOnNewTab", "deferredShortcutTimes", "defaultGroupColor", "cloudSyncEnabled", "syncRulesEnabled", "syncIgnoreListEnabled", "lastSuccessfulSyncAt"];
   if (Object.keys(value).some((key) => !allowedKeys.includes(key))) return null;
   const parsed = parsePortableSettings({
     autoGroupEnabled: value.autoGroupEnabled,
@@ -858,8 +950,8 @@ export function validateOptionsSettings(value: unknown): Settings | null {
     syncIgnoreListEnabled: value.syncIgnoreListEnabled,
     lastSuccessfulSyncAt: null,
   });
-  const deferredShortcutMinutes = normalizeDeferredShortcutMinutes(value.deferredShortcutMinutes);
-  return parsed && deferredShortcutMinutes ? { ...parsed, deferredShortcutMinutes, lastSuccessfulSyncAt: null } : null;
+  const deferredShortcutTimes = normalizeDeferredShortcutTimes(value.deferredShortcutTimes);
+  return parsed && deferredShortcutTimes ? { ...parsed, deferredShortcutTimes, lastSuccessfulSyncAt: null } : null;
 }
 
 export function createGroupRuleFromInput(value: unknown, id: string, sortOrder: number): GroupRule | null {

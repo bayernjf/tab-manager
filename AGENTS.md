@@ -113,7 +113,7 @@ Popup 不直接管理认证会话或数据库访问。`popup.ts` 通过 `chrome.
 
 ### 数据同步策略
 
-当前同步扩展设置、稳定域名规则、忽略网站、看板自定义分组元数据和看板布局元数据；其中 `openBoardOnNewTab` 控制用户新建浏览器标签页时是否自动打开看板。浏览器运行时标签归属不跨设备同步。
+当前同步扩展设置、稳定域名规则、忽略网站、看板自定义分组元数据和看板布局元数据；其中 `openBoardOnNewTab` 控制用户新建浏览器标签页时是否自动打开看板。工作区（`workspace_snapshots` 表）是跨设备共享标签的唯一机制：用户在看板中显式保存的工作区以标签标题/网址（不含运行时 ID）同步到云端，可供其他设备/浏览器加载到看板中查看与编辑并回写。运行时标签 ID 永不上传。
 
 同步规则：
 
@@ -126,9 +126,10 @@ Popup 不直接管理认证会话或数据库访问。`popup.ts` 通过 `chrome.
 - `tabId`
 - `windowId`
 - `boardAssignments` 中以 `windowId:tabId` 为键的虚拟看板归属
-- 当前打开标签页列表
 
-浏览器标签必须保持未分组状态：不要使用 `chrome.tabs.group`、`chrome.tabs.ungroup`、`chrome.tabGroups` 或 `tabGroups` 权限。自动/自定义分组只存在于看板中；跨设备只能保存稳定的规则、标题、颜色、排序和布局，不能上传浏览器临时 ID 或标签内容。
+标签内容（标题、网址）仅作为用户显式保存的工作区快照（`workspace_snapshots`）同步到云端，且必须剔除运行时 ID（tabId/windowId）；扩展不会自动或实时上传当前打开的标签页。
+
+浏览器标签必须保持未分组状态：不要使用 `chrome.tabs.group`、`chrome.tabs.ungroup`、`chrome.tabGroups` 或 `tabGroups` 权限。自动/自定义分组只存在于看板中；跨设备只能保存稳定的规则、标题、颜色、排序、布局，以及用户显式保存的工作区中的标签内容，不能上传浏览器临时 ID。
 
 新标签页看板采用 `chrome.tabs.onCreated` 检测原生 `chrome://newtab/` 或 `edge://newtab/`，而不是 `chrome_url_overrides`。这样用户关闭该设置后可以继续使用浏览器原生新标签页；监听器只应重定向原生新标签页，不得干预普通链接或扩展创建的标签。
 

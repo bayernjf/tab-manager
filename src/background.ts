@@ -18,8 +18,15 @@ import {
   boardWindowLabel,
   findDuplicateBoardTabs,
   validateWorkspaceTitle,
+  validateWorkspaceTab,
   validateWorkspaceSnapshot,
   workspaceRestorePreview,
+  workspaceTab,
+  appendWorkspaceTab,
+  groupWorkspaceTabsByDomain,
+  moveWorkspaceTab,
+  removeWorkspaceTab,
+  updateWorkspaceTab,
   validateDeferredTab,
   moveVirtualBoardAssignment,
   moveBoardGroupRank,
@@ -32,9 +39,9 @@ import {
   type Settings,
   type WorkspaceSnapshot,
 } from "./shared.js";
-import { loadState, loadWorkspaceSnapshots, loadDeferredTabs, prepareOptionsForUser, saveBoardAssignments, saveBoardCustomGroups, saveBoardLayouts, saveDeferredTabs, saveOptionsData, saveSettings, saveWorkspaceSnapshots } from "./storage.js";
+import { loadState, loadWorkspaceSnapshots, loadDeferredTabs, prepareOptionsForUser, saveBoardAssignments, saveBoardCustomGroups, saveBoardLayouts, saveDeferredTabs, saveOptionsData, saveSettings, saveWorkspaceSnapshots, getOrCreateDeviceId, getOrCreateDeviceName } from "./storage.js";
 import { getCurrentUser, getStoredUser, signIn, signOut, signUp } from "./auth.js";
-import { pushSettings, replaceBoardSyncData, replaceOptionalSyncData, restoreBoardSyncData, restoreOptionalSyncData, syncSettings } from "./sync.js";
+import { pushSettings, replaceBoardSyncData, replaceOptionalSyncData, restoreBoardSyncData, restoreOptionalSyncData, syncSettings, fetchWorkspaces, upsertWorkspace, deleteWorkspaceRow, renameDeviceWorkspaces } from "./sync.js";
 
 type PopupMessage =
   | { type: "auth-state" }
@@ -47,6 +54,7 @@ type PopupMessage =
   | { type: "delete-custom-group"; id: string }
   | { type: "update-settings"; settings: Settings }
   | { type: "get-options-state" }
+  | { type: "sync-options" }
   | { type: "sync-now" }
   | { type: "save-options-settings"; settings: unknown }
   | { type: "create-group-rule"; rule: unknown }
@@ -64,7 +72,14 @@ type PopupMessage =
   | { type: "save-workspace"; title: unknown; tabs: unknown }
   | { type: "get-workspace-restore-preview"; id: unknown }
   | { type: "restore-workspace"; id: unknown; windowId: unknown; confirmed?: boolean }
+  | { type: "restore-workspace-tabs"; tabs: unknown; windowId: unknown; confirmed?: boolean }
   | { type: "delete-workspace"; id: unknown }
+  | { type: "set-device-name"; name: unknown }
+  | { type: "add-tab-to-workspace"; id: unknown; tab: unknown }
+  | { type: "get-workspace-board"; id: unknown }
+  | { type: "update-workspace-tab"; id: unknown; index: unknown; title: unknown; url: unknown }
+  | { type: "remove-workspace-tab"; id: unknown; index: unknown }
+  | { type: "move-workspace-tab"; id: unknown; fromIndex: unknown; toIndex: unknown }
   | { type: "get-deferred-tabs" }
   | { type: "defer-board-tab"; tabId: unknown; dueAt: unknown }
   | { type: "open-deferred-tab"; id: unknown; windowId: unknown }
@@ -95,6 +110,17 @@ interface DuplicateCloseGroup {
   tabIds: number[];
 }
 
+function workspaceTabValidationMessage(status: Exclude<ReturnType<typeof validateWorkspaceTab>["status"], "valid">): string {
+  switch (status) {
+    case "empty-title": return "标题不能为空";
+    case "empty-url": return "网址不能为空";
+    case "url-too-long": return "网址不能超过 4000 个字符";
+    case "invalid-url": return "网址格式无效";
+    case "unsupported-url": return "仅支持 http/https 网页";
+    case "invalid-data": return "标签数据格式无效";
+  }
+}
+
 function duplicateCloseGroups(value: unknown): DuplicateCloseGroup[] | null {
   if (!Array.isArray(value) || !value.length) return null;
   const groups: DuplicateCloseGroup[] = [];
@@ -114,6 +140,25 @@ function isUpdateGroupRuleInput(value: unknown): value is { id: string } {
 }
 
 async function optionsState() {
+  const user = await getStoredUser();
+  const state = await loadState();
+  return {
+    user: user ? { id: user.id, email: user.email } : null,
+    settings: state.settings,
+    rules: state.groupRules,
+    ignoredSites: state.ignoredSites,
+    status: {
+      authenticated: user !== null,
+      cloudSyncEnabled: state.settings.cloudSyncEnabled ?? false,
+      syncRulesEnabled: state.settings.syncRulesEnabled ?? false,
+      syncIgnoreListEnabled: state.settings.syncIgnoreListEnabled ?? false,
+      lastSuccessfulSyncAt: state.settings.lastSuccessfulSyncAt ?? null,
+      sync: user ? { state: "syncing" as const } : { state: "ready" as const },
+    },
+  };
+}
+
+async function syncOptions() {
   const user = await getCurrentUser();
   let sync: { state: "ready" | "error"; message?: string } = { state: "ready" };
   if (user) {
@@ -211,7 +256,7 @@ async function restoreUserOptions(userId: string): Promise<void> {
 }
 
 async function popupState() {
-  const user = await getCurrentUser();
+  const user = await getStoredUser();
   if (!user) throw new Error("登录状态已失效，请重新登录。");
   const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
   const windowId = active?.windowId;
@@ -307,11 +352,22 @@ async function closeBoardDuplicates(groups: readonly DuplicateCloseGroup[]): Pro
 }
 
 async function boardState(currentWindowId?: number) {
-  const user = await getCurrentUser();
+  const user = await getStoredUser();
   if (!user) return { user: null, loginRequired: true, message: "请先登录后使用标签看板。", groups: [] };
   const state = await loadState();
   const groups = await boardLogicalGroups(state, currentWindowId);
   return { user: { id: user.id, email: user.email }, loginRequired: false, groups: buildBoardCards(groups), layouts: state.boardLayouts, settings: state.settings };
+}
+
+async function loadAllWorkspaces(userId: string, cloudSyncEnabled: boolean): Promise<WorkspaceSnapshot[]> {
+  if (cloudSyncEnabled) {
+    const cloud = await fetchWorkspaces(userId).catch(() => null);
+    if (cloud) {
+      await saveWorkspaceSnapshots(cloud).catch(() => {});
+      return cloud;
+    }
+  }
+  return loadWorkspaceSnapshots();
 }
 
 async function requireBoardUser() {
@@ -384,11 +440,18 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       return { ok: true };
     }
     if (message.type === "open-tab-board") {
-      await requireBoardUser();
       if (!Number.isInteger(message.windowId) || message.windowId <= 0) throw new Error("找不到打开看板的窗口");
       const window = await chrome.windows.get(message.windowId);
       if (window.type !== "normal") throw new Error("请在普通浏览器窗口中使用标签看板");
-      const tab = await chrome.tabs.create({ windowId: message.windowId, url: chrome.runtime.getURL("board.html") });
+      const boardUrl = chrome.runtime.getURL("board.html");
+      const existing = await chrome.tabs.query({ url: boardUrl });
+      const target = existing[0];
+      if (target && typeof target.id === "number") {
+        if (target.windowId != null && target.windowId !== message.windowId) await chrome.windows.update(target.windowId, { focused: true }).catch(() => {});
+        await chrome.tabs.update(target.id, { active: true }).catch(() => {});
+        return { ok: true, tabId: target.id };
+      }
+      const tab = await chrome.tabs.create({ windowId: message.windowId, url: boardUrl });
       return { ok: true, tabId: tab.id };
     }
     if (message.type === "get-board-state") return boardState(message.windowId);
@@ -404,45 +467,173 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       return { ok: true, ...(await closeBoardDuplicates(groups)) };
     }
     if (message.type === "get-workspaces") {
-      await requireBoardUser();
-      return { workspaces: await loadWorkspaceSnapshots() };
+      const user = await requireBoardUser();
+      const [deviceId, deviceName] = await Promise.all([getOrCreateDeviceId(), getOrCreateDeviceName()]);
+      const state = await loadState();
+      const workspaces = await loadAllWorkspaces(user.id, state.settings.cloudSyncEnabled === true);
+      return { workspaces, device: { id: deviceId, name: deviceName } };
     }
     if (message.type === "save-workspace") {
-      await requireBoardUser();
-      const storedWorkspaces = await loadWorkspaceSnapshots();
-      const title = validateWorkspaceTitle(message.title, storedWorkspaces.map((workspace) => workspace.title));
+      const user = await requireBoardUser();
+      const [deviceId, deviceName] = await Promise.all([getOrCreateDeviceId(), getOrCreateDeviceName()]);
+      const state = await loadState();
+      const useCloud = state.settings.cloudSyncEnabled === true;
+      const existing = await loadAllWorkspaces(user.id, useCloud);
+      const existingTitles = existing.filter((workspace) => workspace.deviceName === deviceName).map((workspace) => workspace.title);
+      const title = validateWorkspaceTitle(message.title, existingTitles);
       if (title.status === "empty") throw new Error("请输入工作区名称");
       if (title.status === "duplicate") throw new Error("该工作区名称已存在");
-      if (title.status !== "valid") throw new Error("工作区名称或标签页无效");
-      const snapshot = validateWorkspaceSnapshot({ id: crypto.randomUUID(), title: title.title, createdAt: new Date().toISOString(), tabs: message.tabs });
-      if (!snapshot) throw new Error("工作区名称或标签页无效");
-      const workspaces = [...storedWorkspaces, snapshot];
-      await saveWorkspaceSnapshots(workspaces);
+      if (title.status !== "valid") throw new Error("工作区名称不能超过 80 字符");
+      if (!Array.isArray(message.tabs) || message.tabs.length < 1) throw new Error("请至少选择一个标签");
+      if (message.tabs.length > 200) throw new Error("工作区标签不能超过 200 个");
+      const validations = message.tabs.map(validateWorkspaceTab);
+      const firstInvalid = validations.findIndex((validation) => validation.status !== "valid");
+      if (firstInvalid >= 0) {
+        const displayIndex = typeof message.tabs[firstInvalid]?.index === "number" ? message.tabs[firstInvalid].index : firstInvalid;
+        const validation = validations[firstInvalid];
+        if (!validation || validation.status === "valid") throw new Error("标签数据格式无效");
+        throw new Error(`第 ${displayIndex + 1} 个标签无效：${workspaceTabValidationMessage(validation.status)}`);
+      }
+      const tabs = validations.flatMap((validation) => validation.status === "valid" ? [validation.tab] : []);
+      const snapshot = validateWorkspaceSnapshot({ id: crypto.randomUUID(), title: title.title, createdAt: new Date().toISOString(), tabs, deviceId, deviceName });
+      if (!snapshot) throw new Error("工作区数据无效，请检查名称与标签");
+      if (useCloud) await upsertWorkspace(user.id, snapshot);
+      await saveWorkspaceSnapshots([...existing, snapshot]).catch(() => {});
       return { workspace: snapshot };
     }
     if (message.type === "get-workspace-restore-preview") {
-      await requireBoardUser();
+      const user = await requireBoardUser();
       if (!safeRecordId(message.id)) throw new Error("工作区不存在");
-      const workspace = (await loadWorkspaceSnapshots()).find((item) => item.id === message.id);
+      const state = await loadState();
+      const workspace = (await loadAllWorkspaces(user.id, state.settings.cloudSyncEnabled === true)).find((item) => item.id === message.id);
       if (!workspace) throw new Error("工作区不存在");
       return { workspace, preview: workspaceRestorePreview(workspace) };
     }
     if (message.type === "restore-workspace") {
-      await requireBoardUser();
+      const user = await requireBoardUser();
       if (message.confirmed !== true) throw new Error("请先确认恢复工作区");
       if (!safeRecordId(message.id) || typeof message.windowId !== "number" || !Number.isInteger(message.windowId)) throw new Error("恢复参数无效");
-      const workspace = (await loadWorkspaceSnapshots()).find((item) => item.id === message.id);
+      const state = await loadState();
+      const workspace = (await loadAllWorkspaces(user.id, state.settings.cloudSyncEnabled === true)).find((item) => item.id === message.id);
       const window = await chrome.windows.get(message.windowId);
       if (!workspace || window.type !== "normal") throw new Error("工作区或目标窗口不存在");
       const preview = workspaceRestorePreview(workspace);
       for (const tab of preview.tabs) await chrome.tabs.create({ windowId: message.windowId, url: tab.url, active: false });
       return { ok: true, created: preview.tabs.length, unavailableCount: preview.unavailableCount };
     }
-    if (message.type === "delete-workspace") {
+    if (message.type === "restore-workspace-tabs") {
       await requireBoardUser();
+      if (message.confirmed !== true) throw new Error("请确认后再恢复标签");
+      if (!Array.isArray(message.tabs) || message.tabs.length < 1) throw new Error("请至少选择一个标签");
+      if (message.tabs.length > 200) throw new Error("工作区标签不能超过 200 个");
+      const validations = message.tabs.map(validateWorkspaceTab);
+      const firstInvalid = validations.findIndex((validation) => validation.status !== "valid");
+      if (firstInvalid >= 0) {
+        const validation = validations[firstInvalid];
+        if (!validation || validation.status === "valid") throw new Error("标签数据格式无效");
+        throw new Error(`第 ${firstInvalid + 1} 个标签无效：${workspaceTabValidationMessage(validation.status)}`);
+      }
+      const tabs = validations.flatMap((validation) => validation.status === "valid" ? [validation.tab] : []);
+      for (const tab of tabs) await chrome.tabs.create({ windowId: typeof message.windowId === "number" ? message.windowId : undefined, url: tab.url, active: false });
+      return { ok: true, created: tabs.length, unavailableCount: 0 };
+    }
+    if (message.type === "delete-workspace") {
+      const user = await requireBoardUser();
       if (!safeRecordId(message.id)) throw new Error("工作区不存在");
+      const state = await loadState();
+      if (state.settings.cloudSyncEnabled === true) await deleteWorkspaceRow(user.id, message.id).catch(() => {});
       const workspaces = (await loadWorkspaceSnapshots()).filter((item) => item.id !== message.id);
-      await saveWorkspaceSnapshots(workspaces);
+      await saveWorkspaceSnapshots(workspaces).catch(() => {});
+      return { ok: true };
+    }
+    if (message.type === "set-device-name") {
+      const name = typeof message.name === "string" ? message.name.trim() : "";
+      if (!name || name.length > 60) throw new Error("设备名称无效");
+      await chrome.storage.local.set({ deviceName: name });
+      const user = await getCurrentUser();
+      if (user) {
+        const state = await loadState();
+        const deviceId = await getOrCreateDeviceId();
+        await Promise.all([
+          state.settings.cloudSyncEnabled === true ? renameDeviceWorkspaces(user.id, deviceId, name).catch(() => {}) : Promise.resolve(),
+        ]);
+      }
+      return { name };
+    }
+    if (message.type === "add-tab-to-workspace") {
+      const user = await requireBoardUser();
+      if (!safeRecordId(message.id)) throw new Error("工作区不存在");
+      const validation = validateWorkspaceTab(message.tab);
+      if (validation.status !== "valid") throw new Error(`标签无效：${workspaceTabValidationMessage(validation.status)}`);
+      const tab = validation.tab;
+      const state = await loadState();
+      const useCloud = state.settings.cloudSyncEnabled === true;
+      const all = await loadAllWorkspaces(user.id, useCloud);
+      const workspace = all.find((item) => item.id === message.id);
+      if (!workspace) throw new Error("工作区不存在");
+      const updated: WorkspaceSnapshot = { ...workspace, tabs: [...workspace.tabs, tab] };
+      if (useCloud) await upsertWorkspace(user.id, updated);
+      await saveWorkspaceSnapshots(all.map((item) => (item.id === updated.id ? updated : item))).catch(() => {});
+      return { ok: true };
+    }
+    if (message.type === "get-workspace-board") {
+      const user = await requireBoardUser();
+      if (!safeRecordId(message.id)) throw new Error("工作区不存在");
+      const state = await loadState();
+      const workspace = (await loadAllWorkspaces(user.id, state.settings.cloudSyncEnabled === true)).find((item) => item.id === message.id);
+      if (!workspace) throw new Error("工作区不存在");
+      return {
+        workspace: { id: workspace.id, title: workspace.title, createdAt: workspace.createdAt, deviceName: workspace.deviceName },
+        cards: buildBoardCards(groupWorkspaceTabsByDomain(workspace.tabs, state.settings, state.groupRules, state.ignoredSites)),
+      };
+    }
+    if (message.type === "update-workspace-tab") {
+      const user = await requireBoardUser();
+      if (!safeRecordId(message.id)) throw new Error("工作区不存在");
+      if (typeof message.index !== "number" || !Number.isInteger(message.index) || message.index < 0) throw new Error("标签不存在");
+      if (typeof message.title !== "string" || typeof message.url !== "string") throw new Error("标签内容无效：标题与网址不能为空");
+      const state = await loadState();
+      const useCloud = state.settings.cloudSyncEnabled === true;
+      const all = await loadAllWorkspaces(user.id, useCloud);
+      const workspace = all.find((item) => item.id === message.id);
+      if (!workspace) throw new Error("工作区不存在");
+      const tabs = updateWorkspaceTab(workspace.tabs, message.index, message.title, message.url);
+      if (!tabs) throw new Error("标签不存在，或网址必须是 http/https 网页");
+      const updated: WorkspaceSnapshot = { ...workspace, tabs };
+      if (useCloud) await upsertWorkspace(user.id, updated);
+      await saveWorkspaceSnapshots(all.map((item) => (item.id === updated.id ? updated : item))).catch(() => {});
+      return { ok: true };
+    }
+    if (message.type === "remove-workspace-tab") {
+      const user = await requireBoardUser();
+      if (!safeRecordId(message.id)) throw new Error("工作区不存在");
+      if (typeof message.index !== "number" || !Number.isInteger(message.index) || message.index < 0) throw new Error("标签不存在");
+      const state = await loadState();
+      const useCloud = state.settings.cloudSyncEnabled === true;
+      const all = await loadAllWorkspaces(user.id, useCloud);
+      const workspace = all.find((item) => item.id === message.id);
+      if (!workspace) throw new Error("工作区不存在");
+      const tabs = removeWorkspaceTab(workspace.tabs, message.index);
+      if (!tabs) throw new Error("标签不存在");
+      const updated: WorkspaceSnapshot = { ...workspace, tabs };
+      if (useCloud) await upsertWorkspace(user.id, updated);
+      await saveWorkspaceSnapshots(all.map((item) => (item.id === updated.id ? updated : item))).catch(() => {});
+      return { ok: true };
+    }
+    if (message.type === "move-workspace-tab") {
+      const user = await requireBoardUser();
+      if (!safeRecordId(message.id)) throw new Error("工作区不存在");
+      if (typeof message.fromIndex !== "number" || !Number.isInteger(message.fromIndex) || message.fromIndex < 0 || typeof message.toIndex !== "number" || !Number.isInteger(message.toIndex) || message.toIndex < 0) throw new Error("标签位置无效");
+      const state = await loadState();
+      const useCloud = state.settings.cloudSyncEnabled === true;
+      const all = await loadAllWorkspaces(user.id, useCloud);
+      const workspace = all.find((item) => item.id === message.id);
+      if (!workspace) throw new Error("工作区不存在");
+      const tabs = moveWorkspaceTab(workspace.tabs, message.fromIndex, message.toIndex);
+      if (!tabs) throw new Error("无法移动到该位置");
+      const updated: WorkspaceSnapshot = { ...workspace, tabs };
+      if (useCloud) await upsertWorkspace(user.id, updated);
+      await saveWorkspaceSnapshots(all.map((item) => (item.id === updated.id ? updated : item))).catch(() => {});
       return { ok: true };
     }
     if (message.type === "get-deferred-tabs") { await requireBoardUser(); return { tabs: await loadDeferredTabs() }; }
@@ -498,11 +689,6 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       if (drop.targetBoardKey.startsWith("custom:")) {
         const id = drop.targetBoardKey.slice("custom:".length);
         if (!state.boardCustomGroups.some((group) => group.id === id)) throw new Error("目标自定义分组不存在");
-      }
-      if (drop.targetBoardKey === "ungrouped") {
-        state.boardAssignments = moveVirtualBoardAssignment(state.boardAssignments, source.windowId!, drop.tabId, "ungrouped");
-        await saveBoardAssignments(state.boardAssignments);
-        return { ok: true };
       }
       const targetTabs = ((await boardLogicalGroups(state)).find((group) => group.boardKey === drop.targetBoardKey)?.tabs ?? []).filter((candidate) => candidate.id !== drop.tabId);
       const targetIndex = drop.targetTabId === undefined ? targetTabs.length : targetTabs.findIndex((candidate) => candidate.id === drop.targetTabId);
@@ -564,6 +750,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
     }
     if (message.type === "get-popup-state") return popupState();
     if (message.type === "get-options-state") return optionsState();
+    if (message.type === "sync-options") return syncOptions();
     if (message.type === "export-options-data") return { data: toPortableDataFromState(await loadState()) };
     if (message.type === "sync-now") {
       const user = await getCurrentUser();

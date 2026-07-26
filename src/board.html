@@ -34,26 +34,34 @@
         <label><span class="sr-only">分组颜色</span><select id="new-group-color" aria-label="分组颜色"><option value="blue">蓝色</option><option value="green">绿色</option><option value="purple">紫色</option><option value="orange">橙色</option><option value="red">红色</option><option value="pink">粉色</option><option value="cyan">青色</option><option value="yellow">黄色</option><option value="grey">灰色</option></select></label>
         <button class="button" type="submit">新建分组</button>
       </form>
+      <nav id="scope-nav" class="scope-nav" aria-label="看板范围"></nav>
+      <div id="workspace-header" class="workspace-header hidden" aria-live="polite"></div>
       <div id="board-grid" class="board-grid" aria-live="polite"></div>
     </section>
   </main>
   <dialog id="workspace-dialog" class="workspace-dialog workspace-dialog-resizable" aria-labelledby="workspace-title">
-    <h2 id="workspace-title">本地工作区</h2>
+    <div class="workspace-dialog-header">
+      <h2 id="workspace-title">本地工作区</h2>
+      <button id="close-workspace-dialog" class="icon-button" type="button" aria-label="关闭工作区">×</button>
+    </div>
+    <div class="workspace-device-bar">
+      <span class="workspace-device-prefix">本设备</span>
+      <input id="workspace-device-name" class="workspace-device-input" type="text" maxlength="60" aria-label="本设备名称" spellcheck="false">
+    </div>
     <div class="workspace-controls">
       <div class="workspace-name-field">
         <input id="workspace-name" maxlength="80" placeholder="工作区名称" aria-describedby="workspace-name-error" aria-invalid="false">
         <p id="workspace-name-error" class="workspace-name-toast" role="alert" hidden></p>
       </div>
-      <label class="workspace-select-all"><input id="workspace-select-all" type="checkbox" checked>全选</label>
     </div>
+    <label class="workspace-select-all"><input id="workspace-select-all" type="checkbox" checked>全选</label>
     <div id="workspace-tabs" class="workspace-tabs"></div>
     <button id="save-workspace" class="button" type="button">保存选中标签</button>
     <div id="workspace-list" class="workspace-list"></div>
-    <button id="close-workspace-dialog" class="button secondary" type="button">关闭</button>
   </dialog>
   <dialog id="workspace-restore-dialog" class="workspace-dialog" aria-labelledby="workspace-restore-title">
-    <h2 id="workspace-restore-title">恢复工作区</h2><p id="workspace-restore-summary"></p><div id="workspace-restore-list" class="workspace-tabs"></div>
-    <button id="confirm-workspace-restore" class="button" type="button">确认打开标签</button><button id="cancel-workspace-restore" class="button secondary" type="button">取消</button>
+    <h2 id="workspace-restore-title">恢复工作区</h2><p id="workspace-restore-summary"></p><div id="workspace-restore-list" class="workspace-tabs workspace-restore-list"></div>
+    <div class="workspace-restore-actions"><button id="cancel-workspace-restore" class="button secondary" type="button">取消</button><button id="confirm-workspace-restore" class="button" type="button">确认</button></div>
   </dialog>
   <dialog id="duplicate-review-dialog" class="duplicate-review" aria-labelledby="duplicate-review-title">
     <header class="duplicate-review-header">
@@ -65,6 +73,16 @@
     <footer class="duplicate-review-actions">
       <button id="cancel-duplicate-review" class="button secondary" type="button">取消</button>
       <button id="confirm-duplicate-review" class="button" type="button" disabled>关闭重复标签</button>
+    </footer>
+  </dialog>
+  <dialog id="last-tab-confirm-dialog" class="duplicate-review last-tab-confirm-dialog" aria-labelledby="last-tab-confirm-title">
+    <header class="duplicate-review-header">
+      <div><span class="eyebrow">TAB GARDEN</span><h2 id="last-tab-confirm-title">删除确认</h2></div>
+    </header>
+    <p class="duplicate-review-summary">该工作区也将被删除</p>
+    <footer class="duplicate-review-actions">
+      <button id="cancel-last-tab-confirm" class="button secondary" type="button">取消</button>
+      <button id="confirm-last-tab-confirm" class="button" type="button">删除</button>
     </footer>
   </dialog>
   <script type="module" src="board.js"></script>
