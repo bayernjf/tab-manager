@@ -383,29 +383,29 @@ test("detects Edge versus Chrome from the user agent string", () => {
   assert.equal(detectBrowserKind(""), "chrome");
 });
 
-test("groups workspace tabs by domain with stable colors and flat-index ids", () => {
+test("groups workspace tabs with the board rules and leaves unmatched tabs ungrouped", () => {
   const tabs = [
     { title: "A", url: "https://example.com/a" },
     { title: "B", url: "https://example.com/b" },
     { title: "C", url: "https://other.com/c" },
     { title: "D", url: "chrome://settings" },
   ];
-  const groups = groupWorkspaceTabsByDomain(tabs);
-  assert.equal(groups.length, 3);
-  assert.equal(groups[0].boardKey, "auto:example.com");
-  assert.equal(groups[0].title, "example.com");
-  assert.equal(groups[0].tabs.length, 2);
-  assert.deepEqual(groups[0].tabs.map((tab) => tab.id), [0, 1]);
-  assert.equal(groups[1].boardKey, "auto:other.com");
-  assert.equal(groups[1].tabs[0].id, 2);
-  assert.equal(groups[2].boardKey, "ungrouped");
-  assert.equal(groups[2].kind, "ungrouped");
-  assert.equal(groups[2].tabs[0].id, 3);
-  assert.ok(["blue", "green", "purple", "orange", "pink", "cyan", "yellow", "red"].includes(groups[0].color));
+  const groups = groupWorkspaceTabsByDomain(tabs, DEFAULT_SETTINGS, [{
+    id: "rule-1", domains: ["example.com"], matchScope: "exact", title: "示例站点", color: "purple", enabled: true, sortOrder: 0,
+  }], []);
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].boardKey, "ungrouped");
+  assert.equal(groups[0].kind, "ungrouped");
+  assert.deepEqual(groups[0].tabs.map((tab) => tab.id), [2, 3]);
+  assert.equal(groups[1].boardKey, "auto:example.com");
+  assert.equal(groups[1].title, "示例站点");
+  assert.equal(groups[1].color, "purple");
+  assert.deepEqual(groups[1].tabs.map((tab) => tab.id), [0, 1]);
 });
 
-test("returns no groups for an empty workspace", () => {
-  assert.deepEqual(groupWorkspaceTabsByDomain([]), []);
+test("keeps an empty ungrouped card for an empty workspace", () => {
+  const groups = groupWorkspaceTabsByDomain([], DEFAULT_SETTINGS, [], []);
+  assert.deepEqual(groups.map((group) => [group.boardKey, group.tabs.length]), [["ungrouped", 0]]);
 });
 
 test("moves, updates, removes and appends workspace tabs immutably", () => {
@@ -426,6 +426,7 @@ test("moves, updates, removes and appends workspace tabs immutably", () => {
 test("exposes workspace board and tab edit messages", async () => {
   const bg = await readFile(new URL("../dist/background.js", import.meta.url), "utf8");
   assert.match(bg, /message\.type === "get-workspace-board"/);
+  assert.match(bg, /message\.type === "restore-workspace-tabs"/);
   assert.match(bg, /message\.type === "update-workspace-tab"/);
   assert.match(bg, /message\.type === "remove-workspace-tab"/);
   assert.match(bg, /message\.type === "move-workspace-tab"/);
@@ -440,9 +441,21 @@ test("renders scope navigation and editable workspace boards", async () => {
   assert.match(html, /id="scope-nav"/);
   assert.match(html, /id="workspace-header"/);
   assert.match(script, /type: "get-workspace-board"/);
+  assert.match(script, /function previewWorkspaceCardRestore/);
+  assert.match(script, /type: "restore-workspace-tabs"/);
+  assert.match(script, /deferred-action deferred-open/);
   assert.match(script, /renderWorkspaceBoard/);
+  const currentCard = script.slice(script.indexOf("function renderCard("), script.indexOf("function renderWindowFilter("));
+  const workspaceCard = script.slice(script.indexOf("function renderWorkspaceCard("), script.indexOf("function faviconFor("));
+  assert.doesNotMatch(currentCard, /previewWorkspaceCardRestore/);
+  assert.match(workspaceCard, /previewWorkspaceCardRestore/);
   assert.match(css, /\.scope-nav/);
   assert.match(css, /\.workspace-tab/);
+  assert.match(html, /id="confirm-workspace-restore"[^>]*>确认<\/button>/);
+  assert.match(html, /class="workspace-restore-actions"/);
+  assert.match(script, /workspace-restore-tab/);
+  assert.match(script, /faviconFor\(tab\.url\)/);
+  assert.match(css, /\.workspace-restore-actions \{[^}]*justify-content: space-between/);
 });
 
 test("renders options from cache and syncs in the background", async () => {
