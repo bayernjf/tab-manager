@@ -509,39 +509,20 @@ export function detectBrowserKind(userAgent: string): BrowserKind {
   return /Edg\//.test(userAgent) ? "edge" : "chrome";
 }
 
-const WORKSPACE_GROUP_COLORS: readonly GroupColor[] = ["blue", "green", "purple", "orange", "pink", "cyan", "yellow", "red"];
-
-export function groupWorkspaceTabsByDomain(tabs: readonly WorkspaceTab[]): BoardLogicalGroup[] {
-  const bySite = new Map<string, BoardTab[]>();
-  const ungrouped: BoardTab[] = [];
-  for (const [index, tab] of tabs.entries()) {
-    const mapped: BoardTab = { id: index, title: tab.title };
-    if (tab.url) mapped.url = tab.url;
-    const siteKey = getSiteKey(tab.url);
-    if (!siteKey) {
-      ungrouped.push(mapped);
-      continue;
-    }
-    const list = bySite.get(siteKey) ?? [];
-    list.push(mapped);
-    bySite.set(siteKey, list);
-  }
-  const sites = [...bySite.keys()].sort((left, right) => {
-    const leftCount = bySite.get(left)?.length ?? 0;
-    const rightCount = bySite.get(right)?.length ?? 0;
-    if (leftCount !== rightCount) return rightCount - leftCount;
-    return left < right ? -1 : left > right ? 1 : 0;
+export function groupWorkspaceTabsByDomain(
+  tabs: readonly WorkspaceTab[],
+  settings: Settings,
+  rules: readonly GroupRule[],
+  ignoredSites: readonly IgnoredSite[],
+): BoardLogicalGroup[] {
+  return buildVirtualBoardGroups({
+    tabs: tabs.map((tab, id) => ({ id, title: tab.title, url: tab.url })),
+    settings,
+    rules,
+    ignoredSites,
+    customGroups: [],
+    assignments: {},
   });
-  const groups: BoardLogicalGroup[] = sites.map((site, index) => ({
-    boardKey: `auto:${site}` as BoardKey,
-    kind: "automatic",
-    title: site,
-    color: WORKSPACE_GROUP_COLORS[index % WORKSPACE_GROUP_COLORS.length] ?? "blue",
-    rank: index + 1,
-    tabs: bySite.get(site) ?? [],
-  }));
-  if (ungrouped.length) groups.push({ boardKey: "ungrouped", kind: "ungrouped", title: "未分组", color: "grey", rank: 0, tabs: ungrouped });
-  return groups;
 }
 
 export function moveWorkspaceTab(tabs: readonly WorkspaceTab[], fromIndex: number, toIndex: number): WorkspaceTab[] | null {
