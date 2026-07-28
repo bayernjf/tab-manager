@@ -36,6 +36,24 @@ async function loadLanguagePack(lang: Language): Promise<MessageMap> {
   }
 }
 
+function setI18nText(element: HTMLElement, text: string): void {
+  const hasElementChildren = Array.from(element.childNodes).some(
+    (node) => node.nodeType === Node.ELEMENT_NODE,
+  );
+  if (!hasElementChildren) {
+    element.textContent = text;
+    return;
+  }
+  const firstText = Array.from(element.childNodes).find(
+    (node) => node.nodeType === Node.TEXT_NODE,
+  );
+  if (firstText) {
+    firstText.nodeValue = text;
+  } else {
+    element.insertBefore(document.createTextNode(text), element.firstChild);
+  }
+}
+
 export const i18n = {
   t(key: string, substitutions?: string[]): string {
     if (currentMessages[key]) {
@@ -81,7 +99,7 @@ export const i18n = {
 
       const text = this.t(actualKey);
       if (attrName === "textContent") {
-        (element as HTMLElement).textContent = text;
+        setI18nText(element as HTMLElement, text);
       } else if (attrName === "placeholder") {
         (element as HTMLInputElement).placeholder = text;
       } else if (attrName === "title") {
