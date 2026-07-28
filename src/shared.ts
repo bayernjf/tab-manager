@@ -236,6 +236,7 @@ interface PortableSettings {
   syncIgnoreListEnabled: boolean;
   lastSuccessfulSyncAt: string | null;
   theme: Theme;
+  language?: Language;
 }
 
 export interface PortableData {
@@ -885,6 +886,7 @@ export function toPortableData(settings: Settings, groupRules: readonly GroupRul
       syncIgnoreListEnabled: settings.syncIgnoreListEnabled ?? DEFAULT_SETTINGS.syncIgnoreListEnabled!,
       lastSuccessfulSyncAt: settings.lastSuccessfulSyncAt ?? null,
       theme: settings.theme ?? DEFAULT_SETTINGS.theme!,
+      language: settings.language ?? DEFAULT_SETTINGS.language,
     },
     groupRules: groupRules.map((rule) => ({
       id: rule.id,
@@ -963,7 +965,7 @@ export function canConfirmOptionsImport(previewUserId: string | null, currentUse
 
 export function validateOptionsSettings(value: unknown): Settings | null {
   if (!isPlainObject(value)) return null;
-  const allowedKeys = ["autoGroupEnabled", "minimumTabs", "openBoardOnNewTab", "deferredShortcutTimes", "defaultGroupColor", "cloudSyncEnabled", "syncRulesEnabled", "syncIgnoreListEnabled", "lastSuccessfulSyncAt", "theme"];
+  const allowedKeys = ["autoGroupEnabled", "minimumTabs", "openBoardOnNewTab", "deferredShortcutTimes", "defaultGroupColor", "cloudSyncEnabled", "syncRulesEnabled", "syncIgnoreListEnabled", "lastSuccessfulSyncAt", "theme", "language"];
   if (Object.keys(value).some((key) => !allowedKeys.includes(key))) return null;
   const parsed = parsePortableSettings({
     autoGroupEnabled: value.autoGroupEnabled,
@@ -975,6 +977,7 @@ export function validateOptionsSettings(value: unknown): Settings | null {
     syncIgnoreListEnabled: value.syncIgnoreListEnabled,
     lastSuccessfulSyncAt: null,
     theme: value.theme,
+    language: value.language,
   });
   const deferredShortcutTimes = normalizeDeferredShortcutTimes(value.deferredShortcutTimes);
   return parsed && deferredShortcutTimes ? { ...parsed, deferredShortcutTimes, lastSuccessfulSyncAt: null } : null;
@@ -1069,14 +1072,16 @@ function isSortOrder(value: unknown): value is number {
 
 function parsePortableSettings(value: unknown): PortableSettings | null {
   const requiredKeys = ["autoGroupEnabled", "minimumTabs", "defaultGroupColor", "cloudSyncEnabled", "syncRulesEnabled", "syncIgnoreListEnabled", "lastSuccessfulSyncAt"];
-  const currentKeys = [...requiredKeys, "openBoardOnNewTab", "theme"];
-  if (!isPlainObject(value) || (!hasOnlyKeys(value, requiredKeys) && !hasOnlyKeys(value, currentKeys))) return null;
+  const allowedKeys = [...requiredKeys, "openBoardOnNewTab", "theme", "language"];
+  if (!isPlainObject(value) || !Object.keys(value).every((key) => allowedKeys.includes(key)) || !requiredKeys.every((key) => Object.prototype.hasOwnProperty.call(value, key))) return null;
   const openBoardOnNewTab = value.openBoardOnNewTab === undefined ? DEFAULT_SETTINGS.openBoardOnNewTab : value.openBoardOnNewTab;
   const themeValue = value.theme === undefined ? DEFAULT_SETTINGS.theme : value.theme;
   if (!isTheme(themeValue)) return null;
   const theme = themeValue;
+  const language = value.language === undefined ? DEFAULT_SETTINGS.language : isLanguage(value.language) ? value.language : null;
+  if (language === null) return null;
   if (typeof value.autoGroupEnabled !== "boolean" || !isMinimumTabs(value.minimumTabs) || !isGroupColor(value.defaultGroupColor) || typeof value.cloudSyncEnabled !== "boolean" || typeof value.syncRulesEnabled !== "boolean" || typeof value.syncIgnoreListEnabled !== "boolean" || typeof openBoardOnNewTab !== "boolean" || !isSyncTimestamp(value.lastSuccessfulSyncAt)) return null;
-  return { autoGroupEnabled: value.autoGroupEnabled, minimumTabs: value.minimumTabs, openBoardOnNewTab, defaultGroupColor: value.defaultGroupColor, cloudSyncEnabled: value.cloudSyncEnabled, syncRulesEnabled: value.syncRulesEnabled, syncIgnoreListEnabled: value.syncIgnoreListEnabled, lastSuccessfulSyncAt: value.lastSuccessfulSyncAt, theme };
+  return { autoGroupEnabled: value.autoGroupEnabled, minimumTabs: value.minimumTabs, openBoardOnNewTab, defaultGroupColor: value.defaultGroupColor, cloudSyncEnabled: value.cloudSyncEnabled, syncRulesEnabled: value.syncRulesEnabled, syncIgnoreListEnabled: value.syncIgnoreListEnabled, lastSuccessfulSyncAt: value.lastSuccessfulSyncAt, theme, language };
 }
 
 function parseGroupRules(value: unknown): GroupRule[] | null {
