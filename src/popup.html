@@ -10,46 +10,46 @@
   <main id="boot-view" class="boot-view" aria-live="polite" aria-busy="true">
     <span class="brand-mark" aria-hidden="true">TG</span>
     <span class="boot-spinner" aria-hidden="true"></span>
-    <p>正在恢复账户状态…</p>
+    <p data-i18n="restoringSession">正在恢复账户状态…</p>
   </main>
 
   <main id="auth-view" class="auth-view hidden">
-    <div class="auth-brand"><span class="brand-mark">TG</span><span class="eyebrow">TAB GARDEN</span><h1>欢迎来到标签花园</h1><p>登录后开始整理你的浏览空间</p></div>
+    <div class="auth-brand"><span class="brand-mark">TG</span><span class="eyebrow">TAB GARDEN</span><h1 data-i18n="welcome">欢迎来到标签花园</h1><p data-i18n="loginHint">登录后开始整理你的浏览空间</p></div>
     <form id="auth-form" class="auth-card">
-      <div class="auth-tabs" role="tablist"><button id="login-tab" class="auth-tab active" type="button">登录</button><button id="signup-tab" class="auth-tab" type="button">注册</button></div>
-      <label class="field"><span>邮箱</span><input id="auth-email" type="email" autocomplete="email" placeholder="you@example.com" required></label>
-      <label class="field"><span>密码</span><input id="auth-password" type="password" autocomplete="current-password" placeholder="至少 6 位" minlength="6" required></label>
-      <label id="confirm-field" class="field hidden"><span>确认密码</span><input id="auth-confirm" type="password" autocomplete="new-password" placeholder="再次输入密码" minlength="6"></label>
-      <label id="remember-device-row" class="remember-device"><input id="remember-device" type="checkbox"><span>在此设备记住7天</span></label>
-      <button id="auth-submit" class="primary auth-submit" type="submit">登录</button>
+      <div class="auth-tabs" role="tablist"><button id="login-tab" class="auth-tab active" type="button" data-i18n="login">登录</button><button id="signup-tab" class="auth-tab" type="button" data-i18n="signup">注册</button></div>
+      <label class="field"><span data-i18n="email">邮箱</span><input id="auth-email" type="email" autocomplete="email" placeholder="you@example.com" required></label>
+      <label class="field"><span data-i18n="password">密码</span><input id="auth-password" type="password" autocomplete="current-password" placeholder="至少 6 位" minlength="6" required></label>
+      <label id="confirm-field" class="field hidden"><span data-i18n="confirmPassword">确认密码</span><input id="auth-confirm" type="password" autocomplete="new-password" placeholder="再次输入密码" minlength="6"></label>
+      <label id="remember-device-row" class="remember-device"><input id="remember-device" type="checkbox"><span data-i18n="rememberDevice">在此设备记住7天</span></label>
+      <button id="auth-submit" class="primary auth-submit" type="submit" data-i18n="login">登录</button>
       <p id="auth-status" class="auth-message" aria-live="polite"></p>
     </form>
   </main>
 
   <main id="app-view" class="hidden">
   <header>
-    <div><span class="eyebrow">TAB GARDEN</span><h1>标签花园</h1></div>
-    <div class="header-actions"><button id="open-board" class="header-action board-action" title="打开标签看板"><span aria-hidden="true">▦</span>看板</button><button id="logout" class="header-action logout-action" title="退出登录"><span aria-hidden="true">↗</span>退出</button></div>
+    <div><span class="eyebrow">TAB GARDEN</span><h1 data-i18n="welcome">标签花园</h1></div>
+    <div class="header-actions"><button id="open-board" class="header-action board-action" data-i18n="openBoard|title" title="打开标签看板"><span aria-hidden="true">▦</span><span data-i18n="openBoard">看板</span></button><button id="logout" class="header-action logout-action" data-i18n="logout|title" title="退出登录"><span aria-hidden="true">↗</span><span data-i18n="logout">退出</span></button></div>
   </header>
 
   <section class="settings-card">
-    <label class="switch-row"><span><strong>看板自动分组</strong><small>仅在扩展看板中按网站聚合，不修改浏览器标签</small></span><input id="auto-toggle" type="checkbox"><i></i></label>
+    <label class="switch-row"><span><strong data-i18n="autoGroup">看板自动分组</strong><small data-i18n="autoGroupHint">仅在扩展看板中按网站聚合，不修改浏览器标签</small></span><input id="auto-toggle" type="checkbox"><i></i></label>
     <label class="threshold"><span>达到</span><select id="minimum-tabs"><option value="2">2</option><option value="3">3</option><option value="4">4</option></select><span>个标签页时在看板中聚合</span></label>
-    <label class="switch-row"><span><strong>深色主题</strong><small>启用深色主题显示</small></span><input id="theme-toggle" type="checkbox"><i></i></label>
+    <label class="switch-row"><span><strong data-i18n="darkTheme">深色主题</strong><small data-i18n="darkThemeHint">启用深色主题显示</small></span><input id="theme-toggle" type="checkbox"><i></i></label>
   </section>
 
   <section>
-    <div class="section-title"><h2>创建自定义分组</h2><button id="select-all" class="link">全选</button></div>
+    <div class="section-title"><h2 data-i18n="createCustomGroup">创建自定义分组</h2><button id="select-all" class="link" data-i18n="selectAll">全选</button></div>
     <div id="tabs-list" class="tabs-list"></div>
     <div class="create-row">
-      <input id="group-name" maxlength="40" placeholder="分组名称">
-      <select id="group-color" aria-label="分组颜色"><option value="blue">蓝色</option><option value="green">绿色</option><option value="purple">紫色</option><option value="orange">橙色</option><option value="red">红色</option><option value="pink">粉色</option><option value="cyan">青色</option><option value="yellow">黄色</option><option value="grey">灰色</option></select>
-      <button id="create-group" class="primary">创建</button>
+      <input id="group-name" maxlength="40" data-i18n="groupName|placeholder" placeholder="分组名称">
+      <select id="group-color" aria-label="分组颜色"><option value="blue" data-i18n="blue">蓝色</option><option value="green" data-i18n="green">绿色</option><option value="purple" data-i18n="purple">紫色</option><option value="orange" data-i18n="orange">橙色</option><option value="red" data-i18n="red">红色</option><option value="pink" data-i18n="pink">粉色</option><option value="cyan" data-i18n="cyan">青色</option><option value="yellow" data-i18n="yellow">黄色</option><option value="grey" data-i18n="grey">灰色</option></select>
+      <button id="create-group" class="primary" data-i18n="create">创建</button>
     </div>
   </section>
 
   <section>
-    <div class="section-title"><h2>自定义分组</h2></div>
+    <div class="section-title"><h2 data-i18n="customGroups">自定义分组</h2></div>
     <div id="groups-list"></div>
   </section>
   <p id="status" class="status" aria-live="polite"></p>

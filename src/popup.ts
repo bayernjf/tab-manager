@@ -1,3 +1,4 @@
+import { i18n } from "./i18n.js";
 import { DEFAULT_SETTINGS, type GroupColor, type Settings, type Theme } from "./shared.js";
 
 interface PopupTab { id?: number; title: string; url?: string; favIconUrl?: string; pinned: boolean }
@@ -54,7 +55,7 @@ function setAuthMode(mode: "login" | "signup"): void {
   $("#remember-device-row").classList.toggle("hidden", mode === "signup");
   authConfirm.required = mode === "signup";
   authPassword.autocomplete = mode === "login" ? "current-password" : "new-password";
-  authSubmit.textContent = mode === "login" ? "登录" : "创建账户";
+  authSubmit.textContent = mode === "login" ? i18n.t("login") : i18n.t("createAccount");
   authStatus.textContent = "";
 }
 
@@ -72,7 +73,7 @@ authForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   authStatus.className = "auth-message";
   if (authMode === "signup" && authPassword.value !== authConfirm.value) {
-    authStatus.textContent = "两次输入的密码不一致";
+    authStatus.textContent = i18n.t("passwordMismatch");
     authStatus.classList.add("error");
     return;
   }
@@ -85,11 +86,11 @@ authForm.addEventListener("submit", async (event) => {
     } else {
       const result = await send<{ requiresEmailConfirmation: boolean }>({ type: "auth-sign-up", email: authEmail.value, password: authPassword.value });
       if (result.requiresEmailConfirmation) {
-        setAuthMode("login");
-        authStatus.textContent = "注册成功，请查收验证邮件后登录";
-        authPassword.value = "";
-        authConfirm.value = "";
-      } else {
+          setAuthMode("login");
+          authStatus.textContent = i18n.t("signupSuccess");
+          authPassword.value = "";
+          authConfirm.value = "";
+        } else {
         showAuth(true);
         await load();
       }
@@ -114,7 +115,7 @@ function renderTabs(tabs: PopupTab[]): void {
   if (!available.length) {
     const empty = document.createElement("p");
     empty.className = "empty";
-    empty.textContent = "当前窗口没有可分组的标签页";
+    empty.textContent = i18n.t("noGroupableTabs");
     tabsList.append(empty);
     return;
   }
@@ -140,7 +141,7 @@ function renderGroups(groups: PopupGroup[]): void {
   if (!groups.length) {
     const empty = document.createElement("p");
     empty.className = "empty";
-    empty.textContent = "还没有通过插件创建的自定义分组";
+    empty.textContent = i18n.t("noCustomGroups");
     groupsList.append(empty);
     return;
   }
@@ -153,12 +154,12 @@ function renderGroups(groups: PopupGroup[]): void {
     title.textContent = group.title;
     const remove = document.createElement("button");
     remove.className = "ghost danger";
-    remove.textContent = "解散";
+    remove.textContent = i18n.t("dissolve");
     remove.addEventListener("click", async () => {
       try {
         await send({ type: "delete-custom-group", id: group.id });
         await load();
-        showStatus("自定义分组已解散");
+        showStatus(i18n.t("customGroupDissolved"));
       } catch (error) { showStatus(String(error), true); }
     });
     row.append(dot, title, remove);
@@ -191,7 +192,7 @@ async function saveSettings(): Promise<void> {
   const settings = { ...DEFAULT_SETTINGS, autoGroupEnabled: autoToggle.checked, minimumTabs: Number(minimumTabs.value), theme: themeToggle.checked ? "dark" as Theme : "light" as Theme };
   await send({ type: "update-settings", settings });
   applyTheme(settings.theme);
-  showStatus("设置已保存");
+  showStatus(i18n.t("settingsSaved"));
   await load();
 }
 
@@ -209,14 +210,14 @@ $("#create-group").addEventListener("click", async () => {
     await send({ type: "create-custom-group", tabIds, title: groupName.value, color: groupColor.value });
     groupName.value = "";
     await load();
-    showStatus("自定义分组已创建");
+    showStatus(i18n.t("customGroupCreated"));
   } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); }
 });
 
 $("#open-board").addEventListener("click", async () => {
   try {
     const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (active?.windowId == null) throw new Error("找不到当前窗口");
+    if (active?.windowId == null) throw new Error(i18n.t("cantFindWindow"));
     await send({ type: "open-tab-board", windowId: active.windowId });
     window.close();
   } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); }
