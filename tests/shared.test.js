@@ -1760,7 +1760,7 @@ test("parses only valid portable data and rejects sensitive unknown keys", () =>
 
   assert.deepEqual(parsePortableData(valid), {
     ...valid,
-    settings: { ...valid.settings, openBoardOnNewTab: false, theme: "light" },
+    settings: { ...valid.settings, openBoardOnNewTab: false, theme: "light", language: undefined },
   });
   assert.equal(parsePortableData({ ...valid, settings: { ...valid.settings, minimumTabs: 0 } }), null);
   assert.equal(parsePortableData({ ...valid, accessToken: "secret" }), null);
@@ -1845,6 +1845,7 @@ test("maps portable data explicitly without runtime-only fields", () => {
       lastSuccessfulSyncAt: "2026-07-22T00:00:00.000Z",
       openBoardOnNewTab: false,
       theme: "light",
+      language: undefined,
     },
     groupRules: [{ id: "rule-1", title: "Example", color: "blue", domains: ["example.com"], matchScope: "exact", enabled: true, sortOrder: 1 }],
     ignoredSites: [{ id: "ignore-1", domain: "ads.example.com", matchScope: "exact", sortOrder: 1 }],
@@ -1882,6 +1883,7 @@ test("converts stored state without runtime group mappings", () => {
       lastSuccessfulSyncAt: null,
       openBoardOnNewTab: false,
       theme: "light",
+      language: undefined,
     },
     groupRules: [{
       id: "rule-1",
