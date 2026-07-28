@@ -308,7 +308,7 @@ test("renders board search and source-window filter controls", async () => {
   assert.match(boardHtml, /id="window-filter"/);
   assert.match(boardScript, /boardTabMatchesQuery/);
   assert.match(boardScript, /renderWindowFilter/);
-  assert.match(boardCss, /\.board-filters/);
+  assert.match(boardCss, /\.toolbar-filters/);
 });
 
 test("groups only duplicate normalized HTTP(S) URLs and retains the first tab", () => {
@@ -670,9 +670,9 @@ test("builds a read-only board statistics handler", async () => {
 
 test("renders board statistics cards", async () => {
   const [html, script, css] = await Promise.all([readFile(new URL("../dist/board.html", import.meta.url), "utf8"), readFile(new URL("../dist/board.js", import.meta.url), "utf8"), readFile(new URL("../dist/board.css", import.meta.url), "utf8")]);
-  assert.match(html, /id="board-statistics"/);
+  assert.match(html, /id="board-stats-inline"/);
   assert.match(script, /type: "get-board-statistics"/);
-  assert.match(css, /\.board-statistics/);
+  assert.match(css, /\.board-stats-inline/);
 });
 
 test("builds local workspace save, preview, restore, and delete handlers", async () => {
