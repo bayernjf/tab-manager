@@ -634,8 +634,8 @@ test("renders a configured deferred shortcut menu", async () => {
   const [script, css] = await Promise.all([readFile(new URL("../dist/board.js", import.meta.url), "utf8"), readFile(new URL("../dist/board.css", import.meta.url), "utf8")]);
   assert.match(script, /deferredShortcutTimes/);
   assert.match(script, /defer-menu/);
-  assert.match(script, /倒计时 /);
-  assert.doesNotMatch(script, /自定义时间/);
+  assert.match(script, /i18n\.t\("countdown"\)/);
+  assert.doesNotMatch(script, /i18n\.t\("customTime"\)/);
   assert.match(css, /\.defer-menu/);
 });
 
@@ -687,15 +687,15 @@ test("builds local workspace save, preview, restore, and delete handlers", async
   assert.match(background, /renameDeviceWorkspaces/);
   assert.match(background, /getOrCreateDeviceId/);
   assert.match(background, /device: \{ id: deviceId, name: deviceName \}/);
-  assert.match(background, /请输入工作区名称/);
-  assert.match(background, /该工作区名称已存在/);
+  assert.match(background, /i18n\.t\("workspaceNameEmpty"\)/);
+  assert.match(background, /i18n\.t\("workspaceNameDuplicate"\)/);
   assert.match(background, /message\.type === "get-workspace-restore-preview"/);
   assert.match(background, /message\.type === "restore-workspace"/);
   assert.match(background, /message\.confirmed !== true/);
   assert.match(background, /chrome\.tabs\.create/);
   assert.match(background, /message\.type === "delete-workspace"/);
   assert.match(background, /message\.type === "set-device-name"/);
-  assert.match(background, /设备名称无效/);
+  assert.match(background, /i18n\.t\("deviceNameInvalid"\)/);
 });
 
 test("renders local workspace selection and restore-preview dialogs", async () => {
