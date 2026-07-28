@@ -228,13 +228,16 @@ $("#open-board").addEventListener("click", async () => {
   } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); }
 });
 
-void send<{ user: { id: string; email?: string } | null }>({ type: "auth-state" }).then(async ({ user }) => {
+void (async () => {
+  await i18n.initFromStorage();
+  i18n.applyI18n();
+  const { user } = await send<{ user: { id: string; email?: string } | null }>({ type: "auth-state" });
   showAuth(Boolean(user));
   if (user) {
     await load();
     void restoreSessionInBackground().catch((error) => showStatus(error instanceof Error ? error.message : String(error), true));
   }
-}).catch((error) => {
+})().catch((error) => {
   showAuth(false);
   authStatus.textContent = error instanceof Error ? error.message : String(error);
   authStatus.classList.add("error");

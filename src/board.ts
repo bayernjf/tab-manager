@@ -1518,6 +1518,7 @@ async function revalidateBoardSession(): Promise<void> {
 }
 
 async function init(): Promise<void> {
+  await i18n.initFromStorage();
   i18n.applyI18n();
   await load();
   if (currentState?.user) void revalidateBoardSession();

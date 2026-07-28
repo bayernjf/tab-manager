@@ -44,6 +44,8 @@ import { loadState, loadWorkspaceSnapshots, loadDeferredTabs, prepareOptionsForU
 import { getCurrentUser, getStoredUser, signIn, signOut, signUp } from "./auth.js";
 import { pushSettings, replaceBoardSyncData, replaceOptionalSyncData, restoreBoardSyncData, restoreOptionalSyncData, syncSettings, fetchWorkspaces, upsertWorkspace, deleteWorkspaceRow, renameDeviceWorkspaces } from "./sync.js";
 
+void i18n.initFromStorage();
+
 type PopupMessage =
   | { type: "auth-state" }
   | { type: "restore-session" }
@@ -768,6 +770,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const state = await loadState();
       state.settings = { ...settings, lastSuccessfulSyncAt: null };
       await saveSettings(state.settings);
+      void i18n.setLanguage(settings.language);
       const synced = await synchronizeOptionsMutation(state, { settings: true, rules: false, ignoredSites: false });
       return { ok: true, synced, settings: state.settings };
     }
@@ -864,6 +867,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const state = await loadState();
       state.settings = { ...settings, lastSuccessfulSyncAt: null };
       await saveSettings(state.settings);
+      void i18n.setLanguage(settings.language);
       const synced = await synchronizeOptionsMutation(state, { settings: true, rules: false, ignoredSites: false });
       return { ok: true, synced };
     }
