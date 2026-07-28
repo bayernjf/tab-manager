@@ -189,8 +189,8 @@ test("styles the board as the header's primary action", async () => {
 
   assert.match(popupHtml, /id="open-board" class="header-action board-action"/);
   assert.match(popupHtml, /id="logout" class="header-action logout-action"/);
-  assert.match(popupCss, /\.board-action \{[^}]*background: #386650/);
-  assert.match(popupCss, /\.logout-action \{[^}]*border: 1px solid #d9e2dc/);
+  assert.match(popupCss, /\.board-action \{[^}]*background: var\(--brand-bg\)/);
+  assert.match(popupCss, /\.logout-action \{[^}]*border: 1px solid var\(--border-logout\)/);
 });
 
 test("positions board tab close controls on the right", async () => {
@@ -200,7 +200,7 @@ test("positions board tab close controls on the right", async () => {
   assert.doesNotMatch(boardCss, /\.tab-close \{[^}]*left: 10px/);
   assert.match(boardCss, /\.tab-open \{[^}]*padding: 3px 4px/);
   assert.match(boardCss, /\.tab-row:hover \.tab-open[^}]*padding-right: 104px/);
-  assert.match(boardCss, /\.tab-defer \{[^}]*color: #8b6518/);
+  assert.match(boardCss, /\.tab-defer \{[^}]*color: var\(--text-warning\)/);
   assert.match(boardCss, /\.tab-saveworkspace \{[^}]*right: 68px/);
 });
 
@@ -266,7 +266,8 @@ test("gives GitHub's white favicon a contrasting background", async () => {
 
   assert.match(boardScript, /getSiteKey\(tab\.url\) === "github\.com"/);
   assert.match(boardScript, /github-tab-icon/);
-  assert.match(boardCss, /\.github-tab-icon \{[^}]*background: #24292f/);
+  assert.match(boardCss, /\.github-tab-icon \{[^}]*background: var\(--github-icon-bg\)/);
+  assert.match(boardCss, /--github-icon-bg: #24292f/);
 });
 
 test("identifies only Chrome's exact browser new-tab URL", () => {
@@ -1435,6 +1436,7 @@ test("converts complete Supabase settings rows to concrete local settings", () =
     sync_ignore_list_enabled: false,
     open_board_on_new_tab: true,
     deferred_shortcut_times: ["14:30", "18:00"],
+    theme: "dark",
   }), {
     autoGroupEnabled: false,
     minimumTabs: 4,
@@ -1444,6 +1446,7 @@ test("converts complete Supabase settings rows to concrete local settings", () =
     syncIgnoreListEnabled: false,
     openBoardOnNewTab: true,
     deferredShortcutTimes: ["14:30", "18:00"],
+    theme: "dark",
   });
 });
 
@@ -1504,11 +1507,12 @@ test("validates the new-tab board setting in options payloads", () => {
   assert.equal(validateOptionsSettings({ ...settings, openBoardOnNewTab: "true" }), null);
 });
 
-test("includes the new-tab board setting in sync payloads", () => {
+test("includes the new-tab board setting and theme in sync payloads", () => {
   assert.deepEqual(settingsSyncRow("user-1", {
     autoGroupEnabled: true,
     minimumTabs: 2,
     openBoardOnNewTab: true,
+    theme: "dark",
   }), {
     user_id: "user-1",
     auto_group_enabled: true,
@@ -1519,6 +1523,7 @@ test("includes the new-tab board setting in sync payloads", () => {
     sync_rules_enabled: undefined,
     sync_ignore_list_enabled: undefined,
     deferred_shortcut_times: undefined,
+    theme: "dark",
   });
 });
 
@@ -1751,7 +1756,7 @@ test("parses only valid portable data and rejects sensitive unknown keys", () =>
 
   assert.deepEqual(parsePortableData(valid), {
     ...valid,
-    settings: { ...valid.settings, openBoardOnNewTab: false },
+    settings: { ...valid.settings, openBoardOnNewTab: false, theme: "light" },
   });
   assert.equal(parsePortableData({ ...valid, settings: { ...valid.settings, minimumTabs: 0 } }), null);
   assert.equal(parsePortableData({ ...valid, accessToken: "secret" }), null);
@@ -1759,7 +1764,7 @@ test("parses only valid portable data and rejects sensitive unknown keys", () =>
   assert.equal(parsePortableData({ ...valid, groupRules: [{ ...valid.groupRules[0], domains: ["example.com", "example.com"] }] }), null);
 });
 
-test("preserves and defaults the new-tab board setting in portable data", () => {
+test("preserves and defaults the new-tab board setting and theme in portable data", () => {
   const current = {
     version: 1,
     settings: {
@@ -1771,16 +1776,21 @@ test("preserves and defaults the new-tab board setting in portable data", () => 
       syncIgnoreListEnabled: true,
       lastSuccessfulSyncAt: null,
       openBoardOnNewTab: true,
+      theme: "dark",
     },
     groupRules: [],
     ignoredSites: [],
   };
   const legacy = structuredClone(current);
   delete legacy.settings.openBoardOnNewTab;
+  delete legacy.settings.theme;
 
   assert.equal(parsePortableData(current)?.settings.openBoardOnNewTab, true);
   assert.equal(parsePortableData(legacy)?.settings.openBoardOnNewTab, false);
   assert.equal(parsePortableData({ ...current, settings: { ...current.settings, openBoardOnNewTab: "true" } }), null);
+  assert.equal(parsePortableData(current)?.settings.theme, "dark");
+  assert.equal(parsePortableData(legacy)?.settings.theme, "light");
+  assert.equal(parsePortableData({ ...current, settings: { ...current.settings, theme: "invalid" } }), null);
 });
 
 test("rejects portable data whose required fields are inherited", () => {
@@ -1813,6 +1823,7 @@ test("maps portable data explicitly without runtime-only fields", () => {
       syncIgnoreListEnabled: false,
       lastSuccessfulSyncAt: "2026-07-22T00:00:00.000Z",
       openBoardOnNewTab: false,
+      theme: "light",
     },
     [{ id: "rule-1", title: "Example", color: "blue", domains: ["example.com"], matchScope: "exact", enabled: true, sortOrder: 1, accessToken: "secret" }],
     [{ id: "ignore-1", domain: "ads.example.com", matchScope: "exact", sortOrder: 1, accessToken: "secret" }],
@@ -1829,6 +1840,7 @@ test("maps portable data explicitly without runtime-only fields", () => {
       syncIgnoreListEnabled: false,
       lastSuccessfulSyncAt: "2026-07-22T00:00:00.000Z",
       openBoardOnNewTab: false,
+      theme: "light",
     },
     groupRules: [{ id: "rule-1", title: "Example", color: "blue", domains: ["example.com"], matchScope: "exact", enabled: true, sortOrder: 1 }],
     ignoredSites: [{ id: "ignore-1", domain: "ads.example.com", matchScope: "exact", sortOrder: 1 }],
@@ -1865,6 +1877,7 @@ test("converts stored state without runtime group mappings", () => {
       syncIgnoreListEnabled: true,
       lastSuccessfulSyncAt: null,
       openBoardOnNewTab: false,
+      theme: "light",
     },
     groupRules: [{
       id: "rule-1",
