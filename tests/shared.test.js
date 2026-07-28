@@ -815,7 +815,7 @@ test("makes only the workspace manager dialog resizable", async () => {
   const resizableRule = cssRule(css, ".workspace-dialog-resizable");
   assert.match(resizableRule, /\bcontainer\s*:\s*workspace-dialog\s*\/\s*inline-size\s*;/);
   assert.match(resizableRule, /\bresize\s*:\s*both\s*;/);
-  assert.match(resizableRule, /\boverflow\s*:\s*auto\s*;/);
+  assert.match(resizableRule, /\boverflow\s*:\s*hidden\s*;/);
   assert.match(resizableRule, /\boverscroll-behavior\s*:\s*contain\s*;/);
   assert.match(resizableRule, /\bmin-width\s*:\s*[^;}]+\s*;/);
   assert.match(resizableRule, /\bmin-height\s*:\s*[^;}]+\s*;/);
@@ -836,8 +836,8 @@ test("makes only the workspace manager dialog resizable", async () => {
   assert.match(workspaceTabsRule, /\boverscroll-behavior\s*:\s*contain\s*;/);
   const workspaceListRule = cssRule(css, ".workspace-dialog-resizable .workspace-list");
   assert.match(workspaceListRule, /\bmax-height\s*:\s*none\s*;/);
-  assert.match(workspaceListRule, /\bflex\s*:\s*0\s+0\s+auto\s*;/);
-  assert.match(workspaceListRule, /\boverflow\s*:\s*visible\s*;/);
+  assert.match(workspaceListRule, /\bflex\s*:\s*1\s+1\s+0\s*;/);
+  assert.match(workspaceListRule, /\boverflow\s*:\s*auto\s*;/);
 
   const narrowDialogCss = cssBlocks(css)
     .find((block) => normalizedCssSelector(block.selector) === "@container workspace-dialog (max-width: 520px)")?.body ?? "";
@@ -861,7 +861,7 @@ test("makes only the workspace manager dialog resizable", async () => {
   const mobileResizableOpenRule = cssRule(mobileCss, ".workspace-dialog-resizable[open]");
   assert.match(mobileResizableOpenRule, /\bdisplay\s*:\s*block\s*;/);
   const mobileWorkspaceTabsRule = cssRule(mobileCss, ".workspace-dialog-resizable .workspace-tabs");
-  assert.match(mobileWorkspaceTabsRule, /\bmax-height\s*:\s*300px\s*;/);
+  assert.match(mobileWorkspaceTabsRule, /\bmax-height\s*:\s*200px\s*;/);
   const mobileToastRule = cssRule(mobileCss, ".workspace-dialog-resizable .workspace-name-toast");
   assert.match(mobileToastRule, /\bmargin-top\s*:\s*6px\s*;/);
   const mobileWorkspaceListRule = cssRule(mobileCss, ".workspace-dialog-resizable .workspace-list");
