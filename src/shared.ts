@@ -152,6 +152,12 @@ export function isTheme(value: unknown): value is Theme {
   return value === "light" || value === "dark";
 }
 
+export type Language = "zh_CN" | "en";
+
+export function isLanguage(value: unknown): value is Language {
+  return value === "zh_CN" || value === "en";
+}
+
 export interface Settings {
   autoGroupEnabled: boolean;
   minimumTabs: number;
@@ -163,6 +169,7 @@ export interface Settings {
   syncIgnoreListEnabled?: boolean;
   lastSuccessfulSyncAt?: string | null;
   theme?: Theme;
+  language?: Language;
 }
 
 export interface GroupRule {
@@ -197,6 +204,7 @@ export interface SettingsSyncRow {
   sync_ignore_list_enabled?: boolean;
   deferred_shortcut_times?: string[];
   theme?: string;
+  language?: string;
 }
 
 export interface GroupRuleSyncRow {
@@ -295,6 +303,7 @@ export const DEFAULT_SETTINGS: Settings = {
   syncIgnoreListEnabled: true,
   lastSuccessfulSyncAt: null,
   theme: "light",
+  language: undefined,
 };
 
 export function settingsFromSyncRow(value: unknown, expectedUserId?: string): Settings | null {
@@ -306,6 +315,7 @@ export function settingsFromSyncRow(value: unknown, expectedUserId?: string): Se
   const openBoardOnNewTab = value.open_board_on_new_tab === undefined ? DEFAULT_SETTINGS.openBoardOnNewTab : value.open_board_on_new_tab;
   const deferredShortcutTimes = normalizeDeferredShortcutTimes(value.deferred_shortcut_times);
   const theme = value.theme === undefined ? DEFAULT_SETTINGS.theme : isTheme(value.theme) ? value.theme : null;
+  const language = value.language === undefined ? DEFAULT_SETTINGS.language : isLanguage(value.language) ? value.language : undefined;
   if (!isGroupColor(defaultGroupColor) || typeof cloudSyncEnabled !== "boolean" || typeof syncRulesEnabled !== "boolean" || typeof syncIgnoreListEnabled !== "boolean" || typeof openBoardOnNewTab !== "boolean" || !deferredShortcutTimes || theme === null) return null;
   return {
     autoGroupEnabled: value.auto_group_enabled,
@@ -317,6 +327,7 @@ export function settingsFromSyncRow(value: unknown, expectedUserId?: string): Se
     syncIgnoreListEnabled,
     deferredShortcutTimes,
     theme,
+    language,
   };
 }
 
