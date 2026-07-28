@@ -1,99 +1,137 @@
 :root {
-  color-scheme: light;
-  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
-  --bg-body: #f5f8f4;
+  --color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "PingFang SC", sans-serif;
+  --bg-body: #f5f7f4;
   --bg-card: #fff;
+  --bg-elevated: #f6fbf8;
+  --bg-hover: #f3f7f4;
+  --bg-input: #fff;
   --bg-sidebar: #173923;
   --bg-sidebar-hover: #326645;
-  --text-primary: #203127;
+  --bg-icon-button: #edf2ee;
+  --bg-icon-button-hover: #547060;
+  --bg-danger: #f8ecec;
+  --bg-danger-hover: #c95656;
+  --bg-shortcut-count: #f0f5f1;
+  --bg-shortcut: #fbfdfb;
+  --bg-shortcut-add: #f7fbf8;
+  --bg-shortcut-add-hover: #edf7f0;
+  --bg-shortcut-remove-hover: #faeeee;
+  --text-primary: #20342c;
+  --text-secondary: #476254;
   --text-sidebar: #d9eadc;
   --text-sidebar-hover: #fff;
-  --text-muted: #64766a;
-  --text-input: #1f3d2e;
-  --text-status: #1e6b3b;
-  --text-error: #a92323;
-  --accent: #267343;
-  --accent-hover: #195c32;
-  --accent-focus: #86c99d;
-  --secondary-bg: #e4eee5;
+  --text-muted: #799286;
+  --text-dim: #6b7c72;
+  --text-input: #31463c;
+  --text-on-accent: #fff;
+  --text-status: #2f7250;
+  --text-error: #993f3f;
+  --text-danger: #a84444;
+  --text-shortcut-count: #678071;
+  --text-shortcut-add: #377255;
+  --text-shortcut-remove: #809087;
+  --text-shortcut-remove-hover: #a04f4f;
+  --text-shortcut-note: #8a9890;
+  --accent: #386650;
+  --accent-hover: #2e5945;
+  --accent-bright: #77a88a;
+  --accent-muted: #477562;
+  --accent-dim: #547060;
+  --accent-green: #2f7250;
+  --secondary-bg: #e4f0ea;
   --secondary-text: #31513d;
-  --border-default: #d9e4da;
-  --border-input: #adc4b2;
-  --border-empty: #adc4b2;
-  --shadow-card: 0 2px 8px #1739230a;
+  --border-default: #d7e0d9;
+  --border-light: #edf0ec;
+  --border-input: #cfdad2;
+  --border-hover: #77a88a;
+  --border-empty: #cfdad2;
+  --border-shortcut: #d7e4da;
+  --border-shortcut-hover: #b9d0c0;
+  --border-shortcut-focus: #4a8b68;
+  --border-shortcut-add: #b9cdbf;
+  --border-shortcut-add-hover: #71a486;
+  --shadow-card: 0 2px 8px rgba(36, 67, 51, .07);
   --shadow-shortcut: 0 2px 8px rgba(41, 74, 55, .05);
-  --shortcut-count-bg: #f0f5f1;
-  --shortcut-count-text: #678071;
-  --shortcut-bg: #fbfdfb;
-  --shortcut-border: #d7e4da;
-  --shortcut-hover: #b9d0c0;
-  --shortcut-focus: #4a8b68;
-  --shortcut-focus-shadow: 0 0 0 3px rgba(74, 139, 104, .12);
-  --shortcut-add-bg: #f7fbf8;
-  --shortcut-add-text: #377255;
-  --shortcut-add-border: #b9cdbf;
-  --shortcut-add-hover: #edf7f0;
-  --shortcut-add-hover-border: #71a486;
-  --shortcut-remove-text: #809087;
-  --shortcut-remove-hover: #faeeee;
-  --shortcut-remove-hover-text: #a04f4f;
-  --shortcut-note: #8a9890;
+  --shadow-shortcut-focus: 0 0 0 3px rgba(74, 139, 104, .12);
+  --shadow-danger: rgba(198, 91, 91, .12);
   --shortcut-note-dot: #7aaa8d;
+  --github-icon-bg: #24292f;
   color: var(--text-primary);
   background: var(--bg-body);
 }
 
 [data-theme="dark"] {
-  color-scheme: dark;
+  --color-scheme: dark;
   --bg-body: #181a20;
   --bg-card: #22262e;
+  --bg-elevated: #252a33;
+  --bg-hover: #2a2f38;
+  --bg-input: #2a3038;
   --bg-sidebar: #1a2d22;
   --bg-sidebar-hover: #2a4a36;
+  --bg-icon-button: #2a3038;
+  --bg-icon-button-hover: #4a8c6a;
+  --bg-danger: #3d2a2a;
+  --bg-danger-hover: #d46363;
+  --bg-shortcut-count: #252a33;
+  --bg-shortcut: #22262e;
+  --bg-shortcut-add: #181a20;
+  --bg-shortcut-add-hover: #252a33;
+  --bg-shortcut-remove-hover: #3d2a2a;
   --text-primary: #d8ddd8;
+  --text-secondary: #9aa4b0;
   --text-sidebar: #9db0a2;
   --text-sidebar-hover: #fff;
   --text-muted: #7a828d;
+  --text-dim: #6b737e;
   --text-input: #d8ddd8;
+  --text-on-accent: #fff;
   --text-status: #5aaa7d;
   --text-error: #d46363;
+  --text-danger: #d46363;
+  --text-shortcut-count: #7a828d;
+  --text-shortcut-add: #5aaa7d;
+  --text-shortcut-remove: #7a828d;
+  --text-shortcut-remove-hover: #d46363;
+  --text-shortcut-note: #7a828d;
   --accent: #4a8c6a;
   --accent-hover: #5aa07a;
-  --accent-focus: #5aaa7d;
+  --accent-bright: #5aaa7d;
+  --accent-muted: #5aaa7d;
+  --accent-dim: #4a8c6a;
+  --accent-green: #5aaa7d;
   --secondary-bg: #252a33;
   --secondary-text: #9aa4b0;
   --border-default: #3a404d;
+  --border-light: #313742;
   --border-input: #4a5260;
+  --border-hover: #4a8c6a;
   --border-empty: #4a5260;
-  --shadow-card: 0 2px 8px rgba(0, 0, 0, .25);
+  --border-shortcut: #3a404d;
+  --border-shortcut-hover: #4a5260;
+  --border-shortcut-focus: #4a8c6a;
+  --border-shortcut-add: #3a5a4a;
+  --border-shortcut-add-hover: #4a8c6a;
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, .35);
   --shadow-shortcut: 0 2px 8px rgba(0, 0, 0, .15);
-  --shortcut-count-bg: #252a33;
-  --shortcut-count-text: #7a828d;
-  --shortcut-bg: #22262e;
-  --shortcut-border: #3a404d;
-  --shortcut-hover: #4a5260;
-  --shortcut-focus: #4a8c6a;
-  --shortcut-focus-shadow: 0 0 0 3px rgba(74, 139, 104, .2);
-  --shortcut-add-bg: #181a20;
-  --shortcut-add-text: #5aaa7d;
-  --shortcut-add-border: #3a5a4a;
-  --shortcut-add-hover: #252a33;
-  --shortcut-add-hover-border: #4a8c6a;
-  --shortcut-remove-text: #7a828d;
-  --shortcut-remove-hover: #3d2a2a;
-  --shortcut-remove-hover-text: #d46363;
-  --shortcut-note: #7a828d;
+  --shadow-shortcut-focus: 0 0 0 3px rgba(74, 139, 104, .2);
+  --shadow-danger: rgba(0, 0, 0, .35);
   --shortcut-note-dot: #5aaa7d;
+  --github-icon-bg: transparent;
 }
 
+:root { color-scheme: var(--color-scheme); }
 * { box-sizing: border-box; }
 body { margin: 0; }
 button, input, select { font: inherit; }
-button { cursor: pointer; border: 0; border-radius: 8px; padding: .55rem .8rem; color: var(--text-on-accent); background: var(--accent); }
+button { cursor: pointer; border: 0; border-radius: 8px; padding: .55rem .8rem; color: var(--text-on-accent); background: var(--accent); transition: background .14s ease, border-color .14s ease, transform .06s ease; }
 button:hover { background: var(--accent-hover); }
 button:disabled { cursor: not-allowed; opacity: .6; }
 button:disabled:hover { background: inherit; }
-button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid var(--accent-focus); outline-offset: 2px; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid var(--accent-bright); outline-offset: 2px; }
 button.secondary { color: var(--secondary-text); background: var(--secondary-bg); margin-left: .5rem; }
+button.secondary:hover { background: var(--bg-hover); }
 .layout { display: grid; grid-template-columns: 220px minmax(0, 760px); min-height: 100vh; }
 .sidebar { padding: 28px 18px; background: var(--bg-sidebar); color: var(--text-sidebar); }
 .brand { display: block; margin: 0 10px 28px; color: inherit; font-size: 20px; font-weight: 700; text-decoration: none; }
@@ -103,12 +141,13 @@ nav { display: grid; gap: 5px; }
 .nav-link:disabled { color: var(--text-muted); }
 .nav-link:disabled:hover { background: transparent; }
 .content { width: min(100%, 820px); padding: 40px; }
-h1 { margin-top: 0; }
-h2 { margin-top: 0; font-size: 17px; }
+h1 { margin-top: 0; font-family: Georgia, serif; font-size: 26px; font-weight: 500; }
+h2 { margin-top: 0; font-size: 15px; }
 .card, .list-item { margin: 16px 0; padding: 20px; border: 1px solid var(--border-default); border-radius: 12px; background: var(--bg-card); box-shadow: var(--shadow-card); }
-.login-required { border-color: var(--accent-focus); }
+.login-required { border-color: var(--accent-bright); }
 label { display: grid; gap: 6px; margin: 12px 0; font-weight: 600; }
-input, select { width: 100%; border: 1px solid var(--border-input); border-radius: 7px; padding: .48rem .55rem; background: var(--bg-card); color: var(--text-input); }
+input, select { width: 100%; border: 1px solid var(--border-input); border-radius: 7px; padding: .48rem .55rem; background: var(--bg-input); color: var(--text-input); }
+input:focus, select:focus { outline: 0; border-color: var(--border-hover); box-shadow: 0 0 0 3px var(--shadow-shortcut-focus); }
 .switch { display: flex; align-items: center; gap: 9px; font-weight: 500; }
 .switch input { width: auto; }
 .muted { color: var(--text-muted); }
@@ -123,19 +162,21 @@ input, select { width: 100%; border: 1px solid var(--border-input); border-radiu
 .shortcut-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
 .shortcut-card-header h2 { margin-bottom: 0; }
 .shortcut-card-header .muted { margin: 5px 0 0; font-size: 13px; }
-.shortcut-count { flex: 0 0 auto; padding: 4px 8px; border-radius: 999px; color: var(--shortcut-count-text); background: var(--shortcut-count-bg); font-size: 11px; font-weight: 700; }
+.shortcut-count { flex: 0 0 auto; padding: 4px 8px; border-radius: 999px; color: var(--text-shortcut-count); background: var(--bg-shortcut-count); font-size: 11px; font-weight: 700; }
 .shortcut-editor { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 20px; }
 .deferred-shortcuts { display: contents; }
-.deferred-shortcut { display: inline-flex; height: 42px; align-items: center; gap: 3px; padding: 0 7px 0 13px; border: 1px solid var(--shortcut-border); border-radius: 999px; background: var(--shortcut-bg); box-shadow: var(--shadow-shortcut); transition: border-color .16s ease, box-shadow .16s ease, background .16s ease; }
-.deferred-shortcut:hover { border-color: var(--shortcut-hover); background: var(--bg-card); }
-.deferred-shortcut:focus-within { border-color: var(--shortcut-focus); background: var(--bg-card); box-shadow: var(--shortcut-focus-shadow); }
+.deferred-shortcut { display: inline-flex; height: 42px; align-items: center; gap: 3px; padding: 0 7px 0 13px; border: 1px solid var(--border-shortcut); border-radius: 999px; background: var(--bg-shortcut); box-shadow: var(--shadow-shortcut); transition: border-color .16s ease, box-shadow .16s ease, background .16s ease; }
+.deferred-shortcut:hover { border-color: var(--border-shortcut-hover); background: var(--bg-card); }
+.deferred-shortcut:focus-within { border-color: var(--border-shortcut-focus); background: var(--bg-card); box-shadow: var(--shadow-shortcut-focus); }
 .deferred-shortcut-input { width: 92px; padding: 0 0 0 10px; border: 0; outline: 0; color: var(--text-input); background: transparent; font-size: 16px; font-weight: 750; }
 .deferred-shortcut-input:focus-visible { outline: 0; }
-.deferred-shortcut-remove { display: grid; width: 27px; height: 27px; place-items: center; padding: 0; border-radius: 50%; color: var(--shortcut-remove-text); background: transparent; font-size: 17px; line-height: 1; }
-.deferred-shortcut-remove:hover, .deferred-shortcut-remove:focus-visible { outline: 0; color: var(--shortcut-remove-hover-text); background: var(--shortcut-remove-hover); }
+.deferred-shortcut-remove { display: grid; width: 27px; height: 27px; place-items: center; padding: 0; border-radius: 50%; color: var(--text-shortcut-remove); background: transparent; font-size: 17px; line-height: 1; }
+.deferred-shortcut-remove:hover, .deferred-shortcut-remove:focus-visible { outline: 0; color: var(--text-shortcut-remove-hover); background: var(--bg-shortcut-remove-hover); }
 .deferred-shortcut-remove:disabled, .deferred-shortcut-remove:disabled:hover { cursor: not-allowed; opacity: .45; color: var(--text-muted); background: transparent; }
-button.shortcut-add { height: 41px; margin: 0; padding: 0 14px; border: 1px dashed var(--shortcut-add-border); border-radius: 11px; color: var(--shortcut-add-text); background: var(--shortcut-add-bg); font-weight: 700; }
-button.shortcut-add:hover { border-color: var(--shortcut-add-hover-border); background: var(--shortcut-add-hover); }
-.shortcut-note { display: flex; align-items: center; gap: 7px; margin: 14px 0 0; color: var(--shortcut-note); font-size: 11px; }
+button.shortcut-add { height: 41px; margin: 0; padding: 0 14px; border: 1px dashed var(--border-shortcut-add); border-radius: 11px; color: var(--text-shortcut-add); background: var(--bg-shortcut-add); font-weight: 700; }
+button.shortcut-add:hover { border-color: var(--border-shortcut-add-hover); background: var(--bg-shortcut-add-hover); }
+.shortcut-note { display: flex; align-items: center; gap: 7px; margin: 14px 0 0; color: var(--text-shortcut-note); font-size: 11px; }
 .shortcut-note::before { width: 5px; height: 5px; border-radius: 50%; background: var(--shortcut-note-dot); content: ""; }
+.appearance-row { display: grid; gap: 16px; }
+.appearance-row label { margin: 0; }
 @media (max-width: 680px) { .layout { display: block; } .sidebar { padding: 14px; } .brand { margin: 0 0 12px; } nav { grid-template-columns: repeat(2, minmax(0, 1fr)); } .nav-link { text-align: center; } .content { padding: 24px 16px; } .list-item { display: block; } .list-actions { margin-top: 12px; } }
