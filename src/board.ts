@@ -292,7 +292,7 @@ async function saveCurrentWorkspace(): Promise<void> {
   showStatus(i18n.t("workspaceSaved"));
 }
 function showWorkspaceRestorePreview(tabs: readonly WorkspaceTab[], unavailableCount = 0): void {
-  workspaceRestoreSummary.textContent = `将打开 ${tabs.length} 个标签${unavailableCount ? `，跳过 ${unavailableCount} 个不可用页面` : ""}`;
+  workspaceRestoreSummary.textContent = unavailableCount ? i18n.t("willOpenTabsSkip", [String(tabs.length), String(unavailableCount)]) : i18n.t("willOpenTabs", [String(tabs.length)]);
   const fallback = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
   workspaceRestoreList.replaceChildren(...tabs.map((tab) => {
     const row = document.createElement("div");
@@ -318,7 +318,7 @@ function showWorkspaceRestorePreview(tabs: readonly WorkspaceTab[], unavailableC
 async function previewWorkspaceRestore(id: string): Promise<void> { const result = await send<{ preview: { tabs: WorkspaceTab[]; unavailableCount: number } }>({ type: "get-workspace-restore-preview", id }); restoreWorkspaceId = id; restoreWorkspaceTabs = null; showWorkspaceRestorePreview(result.preview.tabs, result.preview.unavailableCount); }
 function previewWorkspaceCardRestore(card: BoardSegmentCard): void {
   const tabs = card.tabs.flatMap((tab) => tab.url ? [{ title: tab.title, url: tab.url }] : []);
-  if (!tabs.length) { showStatus("该分组没有可恢复的标签", true); return; }
+  if (!tabs.length) { showStatus(i18n.t("groupHasNoRestorableTabs"), true); return; }
   restoreWorkspaceId = null;
   restoreWorkspaceTabs = tabs;
   showWorkspaceRestorePreview(tabs);
@@ -332,7 +332,7 @@ async function restoreWorkspace(): Promise<void> {
       : null;
   if (!result) return;
   workspaceRestoreDialog.close();
-  showStatus(`已打开 ${result.created} 个标签`);
+  showStatus(i18n.t("openedTabs", [String(result.created)]));
 }
 async function deleteWorkspace(id: string): Promise<void> { await send({ type: "delete-workspace", id }); await loadWorkspaces(); }
 async function renameDevice(name: string): Promise<void> {
@@ -394,7 +394,7 @@ function renderTab(tab: BoardSegmentCard["tabs"][number], targetBoardKey: BoardK
   const open = document.createElement("button");
   open.type = "button";
   open.className = "tab-open";
-  open.setAttribute("aria-label", `打开标签：${tab.title}`);
+  open.setAttribute("aria-label", `${i18n.t("openTab")}${tab.title}`);
   const icon = document.createElement("img");
   icon.className = "tab-icon";
   icon.alt = "";
@@ -405,10 +405,10 @@ function renderTab(tab: BoardSegmentCard["tabs"][number], targetBoardKey: BoardK
   title.textContent = tab.title;
   open.append(icon, title);
   open.addEventListener("click", () => void activateTab(tab.id));
-  const saveToWorkspace = makeButton("+", "tab-saveworkspace", `保存到工作区：${tab.title}`);
+  const saveToWorkspace = makeButton("+", "tab-saveworkspace", `${i18n.t("saveToWorkspace")}${tab.title}`);
   saveToWorkspace.addEventListener("click", (event) => { event.stopPropagation(); void openSaveToWorkspaceMenu(tab, saveToWorkspace); });
   saveToWorkspace.addEventListener("dragstart", (event) => { event.preventDefault(); event.stopPropagation(); });
-  const close = makeButton("×", "tab-close", `关闭标签：${tab.title}`);
+  const close = makeButton("×", "tab-close", `${i18n.t("closeTab")}${tab.title}`);
   close.addEventListener("click", (event) => {
     event.stopPropagation();
     const card = row.closest(".group-card") as HTMLElement | null;
@@ -419,7 +419,7 @@ function renderTab(tab: BoardSegmentCard["tabs"][number], targetBoardKey: BoardK
     event.preventDefault();
     event.stopPropagation();
   });
-  const defer = makeButton("◷", "tab-defer", `稍后处理：${tab.title}`);
+  const defer = makeButton("◷", "tab-defer", `${i18n.t("deferTab")}${tab.title}`);
   defer.addEventListener("click", (event) => {
     event.stopPropagation();
     const existing = row.querySelector(".defer-menu") as (HTMLDivElement & { closeRef?: () => void }) | null;
@@ -431,7 +431,7 @@ function renderTab(tab: BoardSegmentCard["tabs"][number], targetBoardKey: BoardK
     menu.closeRef = closeMenu;
     const times = currentState?.settings?.deferredShortcutTimes ?? ["09:00", "14:00", "18:00"];
     for (const time of times) {
-      const option = makeButton(`倒计时 ${time}`, "defer-option", `倒计时至 ${time}`);
+      const option = makeButton(`${i18n.t("countdown")} ${time}`, "defer-option", `${i18n.t("countdownTo")} ${time}`);
       option.addEventListener("click", () => { closeMenu(); void deferTab(tab.id, nextDeferredOccurrence(time).toISOString()); });
       menu.append(option);
     }
@@ -468,7 +468,7 @@ function renderTab(tab: BoardSegmentCard["tabs"][number], targetBoardKey: BoardK
   return row;
 }
 
-async function deferTab(tabId: number, dueAt: string): Promise<void> { try { await send({ type: "defer-board-tab", tabId, dueAt: new Date(dueAt).toISOString() }); showStatus("已加入稍后处理"); await load(); } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); } }
+async function deferTab(tabId: number, dueAt: string): Promise<void> { try { await send({ type: "defer-board-tab", tabId, dueAt: new Date(dueAt).toISOString() }); showStatus(i18n.t("addedToLater")); await load(); } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); } }
 
 async function openSaveToWorkspaceMenu(tab: BoardSegmentCard["tabs"][number], toggleButton: HTMLButtonElement): Promise<void> {
   const existing = document.querySelector(".workspace-save-menu") as (HTMLDivElement & { closeRef?: () => void }) | null;
@@ -1491,7 +1491,7 @@ newGroupForm.addEventListener("submit", (event) => {
     try {
       await send({ type: "create-board-group", title: newGroupTitle.value, color: newGroupColor.value });
       newGroupTitle.value = "";
-      showStatus("自定义分组已创建");
+      showStatus(i18n.t("customGroupCreated"));
       await load();
     } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); }
   })();
@@ -1508,7 +1508,7 @@ async function revalidateBoardSession(): Promise<void> {
     if (!result.user) {
       loginRequired.classList.remove("hidden");
       boardContent.classList.add("hidden");
-      loginMessage.textContent = "登录已过期，请重新登录。";
+      loginMessage.textContent = i18n.t("loginExpired");
       return;
     }
     await load();
