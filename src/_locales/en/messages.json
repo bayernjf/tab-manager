@@ -3,6 +3,8 @@
   "extensionDescription": { "message": "Automatically organize tabs by site while preserving custom groups.", "description": "Extension description" },
   "tabBoard": { "message": "Tab Board", "description": "Board page title" },
   "autoFill": { "message": "Auto-fill", "description": "Auto-fill option" },
+  "autoFillHint": { "message": "When off, group cards keep their current manual positions instead of auto-filling the grid top-to-bottom", "description": "Auto-fill hint" },
+  "themeToggle": { "message": "Toggle theme", "description": "Theme toggle button aria-label" },
   "workspaces": { "message": "Workspaces", "description": "Workspaces button" },
   "reviewDuplicates": { "message": "Check Duplicates", "description": "Check duplicates button" },
   "refresh": { "message": "Refresh", "description": "Refresh button" },

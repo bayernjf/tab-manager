@@ -1,5 +1,5 @@
 import { i18n } from "./i18n.js";
-import { boardCardsForDevice, boardTabMatchesQuery, formatDeferredDateTime, getSiteKey, heightUnitsForTabCount, isBoardKey, manualBoardGridRow, moveManualBoardCard, nextDeferredOccurrence, placeBoardCards, isDeferredTabDue, segmentTabs, validateWorkspaceTitle, type BoardKey, type BoardLayout, type BoardSegmentCard, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type Settings, type Theme, type WorkspaceSnapshot, type WorkspaceTab } from "./shared.js";
+import { boardCardsForDevice, boardTabMatchesQuery, formatDeferredDateTime, getSiteKey, heightUnitsForTabCount, isBoardKey, manualBoardGridRow, moveManualBoardCard, nextDeferredOccurrence, placeBoardCards, isDeferredTabDue, segmentTabs, validateWorkspaceTitle, DEFAULT_SETTINGS, type BoardKey, type BoardLayout, type BoardSegmentCard, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type Settings, type Theme, type WorkspaceSnapshot, type WorkspaceTab } from "./shared.js";
 
 interface BoardState {
   user: { id: string; email?: string } | null;
@@ -31,11 +31,13 @@ const boardGrid = $<HTMLElement>("#board-grid");
 const boardContent = $("#board-content");
 const loginRequired = $("#login-required");
 const loginMessage = $("#login-message");
-const status = $("#board-status");
 const autoFill = $<HTMLInputElement>("#auto-fill");
+const boardThemeToggle = $<HTMLButtonElement>("#board-theme-toggle");
 const newGroupForm = $<HTMLFormElement>("#new-group-form");
 const newGroupTitle = $<HTMLInputElement>("#new-group-title");
 const newGroupColor = $<HTMLSelectElement>("#new-group-color");
+const newGroupToggle = $<HTMLButtonElement>("#new-group-toggle");
+const newGroupCancel = $<HTMLButtonElement>("#new-group-cancel");
 const boardSearch = $<HTMLInputElement>("#board-search");
 const windowFilter = $<HTMLSelectElement>("#window-filter");
 const reviewDuplicates = $<HTMLButtonElement>("#review-duplicates");
@@ -50,7 +52,7 @@ const lastTabConfirmDialog = $<HTMLDialogElement>("#last-tab-confirm-dialog");
 const cancelLastTabConfirm = $<HTMLButtonElement>("#cancel-last-tab-confirm");
 const confirmLastTabConfirm = $<HTMLButtonElement>("#confirm-last-tab-confirm");
 const deferredReminders = $("#deferred-reminders"), deferredList = $("#deferred-list");
-const boardStatistics = $("#board-statistics");
+const boardStatsInline = $("#board-stats-inline");
 const scopeNav = $("#scope-nav");
 const workspaceHeader = $("#workspace-header");
 
@@ -73,8 +75,7 @@ async function send<T>(message: unknown): Promise<T> {
 }
 
 function showStatus(message: string, error = false): void {
-  status.textContent = message;
-  status.className = error ? "status error" : "status";
+  boardToast(message, error);
 }
 
 function boardToast(message: string, error = false, anchor?: HTMLElement): HTMLParagraphElement {
@@ -114,11 +115,12 @@ function renderWorkspaces(): void {
   workspaceList.replaceChildren(...workspaces.map((workspace) => {
     const row = document.createElement("div");
     row.className = "workspace-row";
-    const name = document.createElement("span");
+    const name = document.createElement("div");
+    name.className = "workspace-row-title";
     name.textContent = `${workspace.title} · ${workspace.tabs.length} ${i18n.t("tabs")}`;
-    const actions = document.createElement("div");
-    actions.className = "deferred-actions";
-    const deviceInfo = document.createElement("span");
+    const meta = document.createElement("div");
+    meta.className = "workspace-row-meta";
+    const deviceInfo = document.createElement("div");
     deviceInfo.className = "workspace-device";
     const isCurrent = !workspace.deviceName || workspace.deviceName === currentDevice?.name;
     if (isCurrent) {
@@ -131,12 +133,15 @@ function renderWorkspaces(): void {
     deviceName.className = "workspace-device-name";
     deviceName.textContent = isCurrent ? (currentDevice?.name ?? workspace.deviceName ?? i18n.t("thisDevice")) : (workspace.deviceName ?? i18n.t("otherDevice"));
     deviceInfo.append(deviceName);
+    const actions = document.createElement("div");
+    actions.className = "deferred-actions";
     const restore = makeButton(i18n.t("restore"), "deferred-action deferred-open", `${i18n.t("restore")} ${workspace.title}`);
     restore.addEventListener("click", () => void previewWorkspaceRestore(workspace.id));
     const remove = makeButton(i18n.t("delete"), "deferred-action deferred-delete", `${i18n.t("delete")} ${workspace.title}`);
     remove.addEventListener("click", () => void deleteWorkspace(workspace.id));
-    actions.append(deviceInfo, restore, remove);
-    row.append(name, actions);
+    actions.append(restore, remove);
+    meta.append(deviceInfo, actions);
+    row.append(name, meta);
     return row;
   }));
 }
@@ -247,7 +252,44 @@ function makeWorkspaceDialogDraggable(): void {
     event.preventDefault();
   });
 }
-async function openWorkspaceDialog(): Promise<void> { renderWorkspaceTabs(); workspaceDialog.showModal(); syncWorkspaceDialogResizeAnchor(); makeWorkspaceDialogDraggable(); workspaceName.focus(); await loadWorkspaces(); }
+function makeWorkspaceDialogResizable(): void {
+  const resizer = workspaceDialog.querySelector(".workspace-dialog-resizer") as HTMLElement | null;
+  const leftPanel = workspaceDialog.querySelector(".workspace-dialog-left") as HTMLElement | null;
+  const rightPanel = workspaceDialog.querySelector(".workspace-dialog-right") as HTMLElement | null;
+  if (!resizer || !leftPanel || !rightPanel) return;
+  let isResizing = false;
+  let startX = 0;
+  let startLeftWidth = 0;
+  const onMouseMove = (event: MouseEvent) => {
+    if (!isResizing) return;
+    const dx = event.clientX - startX;
+    const dialogRect = workspaceDialog.getBoundingClientRect();
+    const minLeftWidth = 220;
+    const minRightWidth = 200;
+    const resizerWidth = 6;
+    const maxLeftWidth = dialogRect.width - minRightWidth - resizerWidth;
+    const newLeftWidth = Math.min(Math.max(minLeftWidth, startLeftWidth + dx), maxLeftWidth);
+    leftPanel.style.width = `${newLeftWidth}px`;
+    leftPanel.style.flex = "none";
+  };
+  const onMouseUp = () => {
+    isResizing = false;
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
+    document.body.style.userSelect = "";
+  };
+  resizer.addEventListener("mousedown", (event) => {
+    if (window.innerWidth <= WORKSPACE_DIALOG_MOBILE_MAX_WIDTH) return;
+    isResizing = true;
+    startX = event.clientX;
+    startLeftWidth = leftPanel.getBoundingClientRect().width;
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    document.body.style.userSelect = "none";
+    event.preventDefault();
+  });
+}
+async function openWorkspaceDialog(): Promise<void> { renderWorkspaceTabs(); workspaceDialog.showModal(); syncWorkspaceDialogResizeAnchor(); makeWorkspaceDialogDraggable(); makeWorkspaceDialogResizable(); workspaceName.focus(); await loadWorkspaces(); }
 function clearWorkspaceNameError(): void {
   workspaceNameError.hidden = true;
   workspaceNameError.textContent = "";
@@ -622,7 +664,26 @@ async function renderDeferredTabs(): Promise<void> {
   deferredList.replaceChildren(...tabs.map(renderDeferredRow));
 }
 
-async function renderBoardStatistics(): Promise<void> { const stats = await send<{ eligibleTabCount: number; duplicateTabCount: number; deferredTabCount?: number; dueDeferredCount?: number }>({ type: "get-board-statistics" }); const deferredTabCount = stats.deferredTabCount ?? stats.dueDeferredCount ?? 0; boardStatistics.replaceChildren(...[[i18n.t("webTabs"), stats.eligibleTabCount], [i18n.t("duplicatePages"), stats.duplicateTabCount], [i18n.t("dueReminders"), deferredTabCount]].map(([label, value]) => { const card = document.createElement("div"); const number = document.createElement("strong"); number.textContent = String(value); const text = document.createElement("span"); text.textContent = String(label); card.append(number, text); return card; })); }
+async function renderBoardStatistics(): Promise<void> {
+  const stats = await send<{ eligibleTabCount: number; duplicateTabCount: number; deferredTabCount?: number; dueDeferredCount?: number }>({ type: "get-board-statistics" });
+  const deferredTabCount = stats.deferredTabCount ?? stats.dueDeferredCount ?? 0;
+  boardStatsInline.replaceChildren(
+    ...[
+      [i18n.t("webTabs"), stats.eligibleTabCount],
+      [i18n.t("duplicatePages"), stats.duplicateTabCount],
+      [i18n.t("dueReminders"), deferredTabCount],
+    ].map(([label, value]) => {
+      const item = document.createElement("span");
+      item.className = "stat-item";
+      const number = document.createElement("strong");
+      number.textContent = String(value);
+      const text = document.createElement("span");
+      text.textContent = String(label);
+      item.append(number, text);
+      return item;
+    }),
+  );
+}
 
 function renderCard(card: BoardSegmentCard, rank: number, automatic: boolean, placement: { slot: number; compositeHeight: 1 | 2 }): HTMLElement {
   const article = document.createElement("article");
@@ -1201,10 +1262,10 @@ async function returnToCurrent(): Promise<void> {
 
 function setWorkspaceMode(on: boolean): void {
   boardContent.classList.toggle("workspace-mode", on);
-  newGroupForm.classList.toggle("hidden", on);
+  newGroupForm.parentElement!.classList.toggle("hidden", on);
   windowFilter.classList.toggle("hidden", on);
   reviewDuplicates.classList.toggle("hidden", on);
-  boardStatistics.classList.toggle("hidden", on);
+  boardStatsInline.classList.toggle("hidden", on);
   // 仅在工作区模式隐藏；切回“当前”时不主动显示，由 renderDeferredTabs 按数据决定，避免空列表先弹出再隐藏的闪烁。
   if (on) deferredReminders.classList.add("hidden");
   workspaceHeader.classList.toggle("hidden", !on);
@@ -1247,6 +1308,7 @@ function renderWorkspaceHeader(): void {
 
 function applyTheme(theme: Theme): void {
   document.documentElement.setAttribute("data-theme", theme);
+  boardThemeToggle.setAttribute("aria-pressed", String(theme === "dark"));
 }
 
 async function load(): Promise<void> {
@@ -1452,6 +1514,17 @@ async function saveAutoFill(enabled: boolean): Promise<void> {
   }
 }
 
+async function saveBoardTheme(theme: Theme): Promise<void> {
+  const current = { ...DEFAULT_SETTINGS };
+  if (currentState?.settings) {
+    Object.assign(current, currentState.settings);
+  }
+  current.theme = theme;
+  await send({ type: "update-settings", settings: current });
+  applyTheme(theme);
+  if (currentState) currentState.settings = current;
+}
+
 async function refresh(): Promise<void> {
   if (scopeMode === "workspace" && loadedWorkspace) await loadWorkspaceBoard(loadedWorkspace.id);
   else await load();
@@ -1483,14 +1556,33 @@ closeDuplicateReview.addEventListener("click", () => duplicateReviewDialog.close
 cancelDuplicateReview.addEventListener("click", () => duplicateReviewDialog.close());
 confirmDuplicateReview.addEventListener("click", () => void closeReviewedDuplicates());
 autoFill.addEventListener("change", () => void saveAutoFill(autoFill.checked));
+boardThemeToggle.addEventListener("click", () => {
+  const isDark = boardThemeToggle.getAttribute("aria-pressed") === "true";
+  void saveBoardTheme(isDark ? "light" : "dark").catch((error) => {
+    applyTheme(isDark ? "light" : "dark");
+    showStatus(error instanceof Error ? error.message : String(error), true);
+  });
+});
 boardSearch.addEventListener("input", () => { if (scopeMode === "workspace") renderWorkspaceBoard(); else if (currentState) renderBoard(currentState); });
 windowFilter.addEventListener("change", () => currentState && renderBoard(currentState));
+newGroupToggle.addEventListener("click", () => {
+  newGroupToggle.classList.add("hidden");
+  newGroupForm.classList.remove("hidden");
+  newGroupTitle.focus();
+});
+newGroupCancel.addEventListener("click", () => {
+  newGroupForm.classList.add("hidden");
+  newGroupToggle.classList.remove("hidden");
+  newGroupTitle.value = "";
+});
 newGroupForm.addEventListener("submit", (event) => {
   event.preventDefault();
   void (async () => {
     try {
       await send({ type: "create-board-group", title: newGroupTitle.value, color: newGroupColor.value });
       newGroupTitle.value = "";
+      newGroupForm.classList.add("hidden");
+      newGroupToggle.classList.remove("hidden");
       showStatus(i18n.t("customGroupCreated"));
       await load();
     } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); }

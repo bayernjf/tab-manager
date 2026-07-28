@@ -3,6 +3,8 @@
   "extensionDescription": { "message": "按网站自动整理标签页，同时保留用户自定义分组。", "description": "扩展描述" },
   "tabBoard": { "message": "标签看板", "description": "看板页面标题" },
   "autoFill": { "message": "自动填充", "description": "自动填充选项" },
+  "autoFillHint": { "message": "关闭后分组卡保持当前手动排列位置，不按顺序自动补位填满", "description": "自动填充提示" },
+  "themeToggle": { "message": "切换主题", "description": "切换主题按钮 aria-label" },
   "workspaces": { "message": "工作区", "description": "工作区按钮" },
   "reviewDuplicates": { "message": "检查重复", "description": "检查重复按钮" },
   "refresh": { "message": "刷新", "description": "刷新按钮" },
