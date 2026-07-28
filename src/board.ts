@@ -1,4 +1,5 @@
-import { boardCardsForDevice, boardTabMatchesQuery, formatDeferredDateTime, getSiteKey, heightUnitsForTabCount, isBoardKey, manualBoardGridRow, moveManualBoardCard, nextDeferredOccurrence, placeBoardCards, isDeferredTabDue, segmentTabs, validateWorkspaceTitle, type BoardKey, type BoardLayout, type BoardSegmentCard, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type Settings, type WorkspaceSnapshot, type WorkspaceTab } from "./shared.js";
+import { i18n } from "./i18n.js";
+import { boardCardsForDevice, boardTabMatchesQuery, formatDeferredDateTime, getSiteKey, heightUnitsForTabCount, isBoardKey, manualBoardGridRow, moveManualBoardCard, nextDeferredOccurrence, placeBoardCards, isDeferredTabDue, segmentTabs, validateWorkspaceTitle, type BoardKey, type BoardLayout, type BoardSegmentCard, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type Settings, type Theme, type WorkspaceSnapshot, type WorkspaceTab } from "./shared.js";
 
 interface BoardState {
   user: { id: string; email?: string } | null;
@@ -114,7 +115,7 @@ function renderWorkspaces(): void {
     const row = document.createElement("div");
     row.className = "workspace-row";
     const name = document.createElement("span");
-    name.textContent = `${workspace.title} · ${workspace.tabs.length} 个标签`;
+    name.textContent = `${workspace.title} · ${workspace.tabs.length} ${i18n.t("tabs")}`;
     const actions = document.createElement("div");
     actions.className = "deferred-actions";
     const deviceInfo = document.createElement("span");
@@ -123,16 +124,16 @@ function renderWorkspaces(): void {
     if (isCurrent) {
       const badge = document.createElement("span");
       badge.className = "workspace-device-badge";
-      badge.textContent = "当前设备";
+      badge.textContent = i18n.t("currentDevice");
       deviceInfo.append(badge);
     }
     const deviceName = document.createElement("span");
     deviceName.className = "workspace-device-name";
-    deviceName.textContent = isCurrent ? (currentDevice?.name ?? workspace.deviceName ?? "本设备") : (workspace.deviceName ?? "其他设备");
+    deviceName.textContent = isCurrent ? (currentDevice?.name ?? workspace.deviceName ?? i18n.t("thisDevice")) : (workspace.deviceName ?? i18n.t("otherDevice"));
     deviceInfo.append(deviceName);
-    const restore = makeButton("恢复", "deferred-action deferred-open", `恢复 ${workspace.title}`);
+    const restore = makeButton(i18n.t("restore"), "deferred-action deferred-open", `${i18n.t("restore")} ${workspace.title}`);
     restore.addEventListener("click", () => void previewWorkspaceRestore(workspace.id));
-    const remove = makeButton("删除", "deferred-action deferred-delete", `删除 ${workspace.title}`);
+    const remove = makeButton(i18n.t("delete"), "deferred-action deferred-delete", `${i18n.t("delete")} ${workspace.title}`);
     remove.addEventListener("click", () => void deleteWorkspace(workspace.id));
     actions.append(deviceInfo, restore, remove);
     row.append(name, actions);
@@ -266,16 +267,16 @@ function showWorkspaceNameError(message: string): void {
 async function saveCurrentWorkspace(): Promise<void> {
   const title = validateWorkspaceTitle(workspaceName.value, workspaces.filter((workspace) => workspace.deviceName === currentDevice?.name).map((workspace) => workspace.title));
   if (title.status === "empty") {
-    showWorkspaceNameError("请输入工作区名称");
+    showWorkspaceNameError(i18n.t("workspaceNameEmpty"));
     return;
   }
   if (title.status === "duplicate") {
-    showWorkspaceNameError("该工作区名称已存在");
+    showWorkspaceNameError(i18n.t("workspaceNameDuplicate"));
     return;
   }
-  if (title.status !== "valid") { showWorkspaceNameError("工作区名称不能超过 80 字符"); return; }
-  const tabs = Array.from(workspaceTabs.querySelectorAll<HTMLInputElement>("input:checked")).map((input) => ({ title: input.dataset.title ?? "未命名标签页", url: input.dataset.url ?? "", index: Number(input.dataset.index ?? 0) }));
-  if (tabs.length === 0) { showWorkspaceError("请至少选择一个标签"); return; }
+  if (title.status !== "valid") { showWorkspaceNameError(i18n.t("workspaceNameTooLong")); return; }
+  const tabs = Array.from(workspaceTabs.querySelectorAll<HTMLInputElement>("input:checked")).map((input) => ({ title: input.dataset.title ?? i18n.t("unnamedTab"), url: input.dataset.url ?? "", index: Number(input.dataset.index ?? 0) }));
+  if (tabs.length === 0) { showWorkspaceError(i18n.t("selectAtLeastOneTab")); return; }
   try {
     await send({ type: "save-workspace", title: title.title, tabs });
   } catch (error) {
@@ -288,7 +289,7 @@ async function saveCurrentWorkspace(): Promise<void> {
   workspaceName.value = "";
   clearWorkspaceNameError();
   await loadWorkspaces();
-  showStatus("工作区已保存");
+  showStatus(i18n.t("workspaceSaved"));
 }
 function showWorkspaceRestorePreview(tabs: readonly WorkspaceTab[], unavailableCount = 0): void {
   workspaceRestoreSummary.textContent = `将打开 ${tabs.length} 个标签${unavailableCount ? `，跳过 ${unavailableCount} 个不可用页面` : ""}`;
@@ -481,10 +482,10 @@ async function openSaveToWorkspaceMenu(tab: BoardSegmentCard["tabs"][number], to
   saveToast.hidden = true;
   const description = document.createElement("p");
   description.className = "workspace-save-desc";
-  description.textContent = "选择要保存到的工作区";
+  description.textContent = i18n.t("selectWorkspace");
   const loading = document.createElement("p");
   loading.className = "empty";
-  loading.textContent = "加载中…";
+  loading.textContent = i18n.t("loading");
   menu.append(description, loading);
   document.body.append(menu, saveToast);
   positionWorkspaceSaveMenu(menu, toggleButton, saveToast);
@@ -506,14 +507,14 @@ async function openSaveToWorkspaceMenu(tab: BoardSegmentCard["tabs"][number], to
   };
   const renderOptions = () => {
     const options = workspaces.map((workspace) => {
-      const option = makeButton("", "workspace-save-option", `保存到 ${workspace.title}`);
+      const option = makeButton("", "workspace-save-option", `${i18n.t("saveToWorkspace")}${workspace.title}`);
       appendWorkspaceListItemDetails(option, workspace);
       option.addEventListener("click", async () => {
         option.disabled = true;
         try {
           await send({ type: "add-tab-to-workspace", id: workspace.id, tab: { title: tab.title, url: tab.url ?? "" } });
           workspaces = workspaces.map((item) => item.id === workspace.id ? { ...item, tabs: [...item.tabs, { title: tab.title, url: tab.url ?? "" }] } : item);
-          showSaveToast(`已保存到 ${workspace.title}`);
+          showSaveToast(i18n.t("workspaceSavedTo", [workspace.title]));
           renderOptions();
           positionWorkspaceSaveMenu(menu, toggleButton, saveToast);
         } catch (error) {
@@ -545,9 +546,9 @@ async function openSaveToWorkspaceMenu(tab: BoardSegmentCard["tabs"][number], to
       workspaces = result.workspaces;
     }
     if (!workspaces.length) {
-      const result = await send<{ workspace: WorkspaceSnapshot }>({ type: "save-workspace", title: "默认", tabs: [{ title: tab.title, url: tab.url ?? "" }] });
+      const result = await send<{ workspace: WorkspaceSnapshot }>({ type: "save-workspace", title: i18n.t("default"), tabs: [{ title: tab.title, url: tab.url ?? "" }] });
       workspaces = [result.workspace];
-      showSaveToast("已保存到默认工作区");
+      showSaveToast(i18n.t("saveToDefault"));
     }
     renderOptions();
     positionWorkspaceSaveMenu(menu, toggleButton, saveToast);
@@ -594,17 +595,17 @@ function renderDeferredRow(tab: DeferredTab): HTMLElement {
   const due = isDeferredTabDue(tab);
   const reminderStatus = document.createElement("span");
   reminderStatus.className = `deferred-status ${due ? "due" : "scheduled"}`;
-  reminderStatus.textContent = due ? `已到期 · ${formatDeferredDateTime(tab.dueAt)}` : `${formatDeferredDateTime(tab.dueAt)} 提醒`;
+  reminderStatus.textContent = due ? `${i18n.t("due")} · ${formatDeferredDateTime(tab.dueAt)}` : `${formatDeferredDateTime(tab.dueAt)} ${i18n.t("reminder")}`;
 
   const actions = document.createElement("div");
   actions.className = "deferred-actions";
-  const open = makeButton("打开", "deferred-action deferred-open", `打开 ${tab.title}`);
+  const open = makeButton(i18n.t("open"), "deferred-action deferred-open", `${i18n.t("open")} ${tab.title}`);
   open.addEventListener("click", async () => {
     const current = await chrome.tabs.getCurrent();
     await send({ type: "open-deferred-tab", id: tab.id, windowId: current?.windowId });
     await Promise.all([renderDeferredTabs(), renderBoardStatistics()]);
   });
-  const remove = makeButton("删除", "deferred-action deferred-delete", `删除 ${tab.title}`);
+  const remove = makeButton(i18n.t("delete"), "deferred-action deferred-delete", `${i18n.t("delete")} ${tab.title}`);
   remove.addEventListener("click", async () => {
     await send({ type: "delete-deferred-tab", id: tab.id });
     await Promise.all([renderDeferredTabs(), renderBoardStatistics()]);
@@ -621,7 +622,7 @@ async function renderDeferredTabs(): Promise<void> {
   deferredList.replaceChildren(...tabs.map(renderDeferredRow));
 }
 
-async function renderBoardStatistics(): Promise<void> { const stats = await send<{ eligibleTabCount: number; duplicateTabCount: number; deferredTabCount?: number; dueDeferredCount?: number }>({ type: "get-board-statistics" }); const deferredTabCount = stats.deferredTabCount ?? stats.dueDeferredCount ?? 0; boardStatistics.replaceChildren(...[["网页标签", stats.eligibleTabCount], ["重复页面", stats.duplicateTabCount], ["待恢复提醒", deferredTabCount]].map(([label, value]) => { const card = document.createElement("div"); const number = document.createElement("strong"); number.textContent = String(value); const text = document.createElement("span"); text.textContent = String(label); card.append(number, text); return card; })); }
+async function renderBoardStatistics(): Promise<void> { const stats = await send<{ eligibleTabCount: number; duplicateTabCount: number; deferredTabCount?: number; dueDeferredCount?: number }>({ type: "get-board-statistics" }); const deferredTabCount = stats.deferredTabCount ?? stats.dueDeferredCount ?? 0; boardStatistics.replaceChildren(...[[i18n.t("webTabs"), stats.eligibleTabCount], [i18n.t("duplicatePages"), stats.duplicateTabCount], [i18n.t("dueReminders"), deferredTabCount]].map(([label, value]) => { const card = document.createElement("div"); const number = document.createElement("strong"); number.textContent = String(value); const text = document.createElement("span"); text.textContent = String(label); card.append(number, text); return card; })); }
 
 function renderCard(card: BoardSegmentCard, rank: number, automatic: boolean, placement: { slot: number; compositeHeight: 1 | 2 }): HTMLElement {
   const article = document.createElement("article");
@@ -674,16 +675,16 @@ function renderCard(card: BoardSegmentCard, rank: number, automatic: boolean, pl
   if (card.segmentCount > 1) {
     const segment = document.createElement("span");
     segment.className = "segment";
-    segment.textContent = `第 ${card.segmentIndex + 1}/${card.segmentCount} 段`;
+    segment.textContent = i18n.t("segment", [String(card.segmentIndex + 1), String(card.segmentCount)]);
     heading.append(segment);
   }
   if (card.kind === "custom" && card.segmentIndex === 0) {
     const tools = document.createElement("div");
     tools.className = "card-tools";
-    const remove = makeButton("×", "icon-button danger", `删除分组 ${card.title}`);
+    const remove = makeButton("×", "icon-button danger", `${i18n.t("deleteGroup")} ${card.title}`);
     remove.addEventListener("click", () => {
       const id = card.boardKey.slice("custom:".length);
-      if (!window.confirm(`确定删除“${card.title}”吗？其中的标签页将变为未分组。`)) return;
+      if (!window.confirm(i18n.t("confirmDeleteGroup", [card.title]))) return;
       void deleteGroup(id);
     });
     tools.append(remove);
@@ -695,7 +696,7 @@ function renderCard(card: BoardSegmentCard, rank: number, automatic: boolean, pl
   else {
     const empty = document.createElement("p");
     empty.className = "empty";
-    empty.textContent = "拖放标签到这里";
+    empty.textContent = i18n.t("dropTabsHere");
     tabs.append(empty);
   }
   article.append(heading, tabs);
@@ -708,7 +709,7 @@ function renderWindowFilter(state: BoardState): void {
   for (const tab of state.groups.flatMap((card) => card.tabs)) {
     if (tab.windowId !== undefined && tab.windowLabel) windows.set(tab.windowId, tab.windowLabel);
   }
-  windowFilter.replaceChildren(new Option("全部窗口", ""), ...[...windows.entries()].map(([windowId, label]) => new Option(label, String(windowId))));
+  windowFilter.replaceChildren(new Option(i18n.t("allWindows"), ""), ...[...windows.entries()].map(([windowId, label]) => new Option(label, String(windowId))));
   windowFilter.value = windows.has(Number(selected)) ? selected : "";
 }
 
@@ -735,7 +736,7 @@ function renderBoard(state: BoardState): void {
     boardGrid.style.gridTemplateColumns = "1fr";
     const empty = document.createElement("p");
     empty.className = "empty board-empty";
-    empty.textContent = "没有匹配的标签";
+    empty.textContent = i18n.t("noMatchingTabs");
     boardGrid.append(empty);
     return;
   }
@@ -761,7 +762,7 @@ function duplicateCloseCount(groups: readonly DuplicateBoardTabGroup[]): number 
 function renderDuplicateReview(groups: readonly DuplicateBoardTabGroup[]): void {
   duplicateGroups = [...groups];
   const closeCount = duplicateCloseCount(groups);
-  duplicateReviewSummary.textContent = closeCount ? `发现 ${groups.length} 组完全相同的网址，将保留每组的第一条标签。` : "没有发现完全相同的网址。";
+  duplicateReviewSummary.textContent = closeCount ? i18n.t("duplicateSummary", [String(groups.length)]) : i18n.t("noDuplicates");
   duplicateReviewList.replaceChildren(...groups.map((group) => {
     const section = document.createElement("section");
     section.className = "duplicate-set";
@@ -775,7 +776,7 @@ function renderDuplicateReview(groups: readonly DuplicateBoardTabGroup[]): void 
       const badge = document.createElement("span");
       const retained = tab.id === group.retainedTabId;
       badge.className = retained ? "duplicate-badge keep" : "duplicate-badge close";
-      badge.textContent = retained ? "保留" : "关闭";
+      badge.textContent = retained ? i18n.t("keep") : i18n.t("close");
       const title = document.createElement("span");
       title.className = "duplicate-tab-title";
       title.textContent = tab.title;
@@ -786,7 +787,7 @@ function renderDuplicateReview(groups: readonly DuplicateBoardTabGroup[]): void 
     return section;
   }));
   confirmDuplicateReview.disabled = closeCount === 0;
-  confirmDuplicateReview.textContent = closeCount ? `关闭 ${closeCount} 个重复标签` : "没有可关闭的重复标签";
+  confirmDuplicateReview.textContent = closeCount ? i18n.t("closeDuplicateTabs", [String(closeCount)]) : i18n.t("noDuplicatesToClose");
 }
 
 async function openDuplicateReview(): Promise<void> {
@@ -809,7 +810,7 @@ async function closeReviewedDuplicates(): Promise<void> {
     confirmDuplicateReview.disabled = true;
     const result = await send<DuplicateCloseResult>({ type: "close-board-duplicates", groups, confirmed: true });
     duplicateReviewDialog.close();
-    showStatus(result.skipped ? `已关闭 ${result.closed} 个重复标签，跳过 ${result.skipped} 个已变化标签` : `已关闭 ${result.closed} 个重复标签`);
+    showStatus(result.skipped ? i18n.t("closedDuplicatesSkipped", [String(result.closed), String(result.skipped)]) : i18n.t("closedDuplicates", [String(result.closed)]));
     await load();
   } catch (error) {
     showStatus(error instanceof Error ? error.message : String(error), true);
@@ -821,9 +822,9 @@ function renderScopeNav(): void {
   scopeNav.replaceChildren();
   const scopes = document.createElement("div");
   scopes.className = "scope-nav-scopes";
-  const currentBtn = makeScopeButton("current", "当前");
+  const currentBtn = makeScopeButton("current", i18n.t("current"));
   currentBtn.addEventListener("click", () => void returnToCurrent());
-  const workspaceBtn = makeScopeButton("workspace", "从工作区加载");
+  const workspaceBtn = makeScopeButton("workspace", i18n.t("loadFromWorkspace"));
   workspaceBtn.addEventListener("click", () => toggleWorkspacePopover(workspaceBtn));
   scopes.append(currentBtn, workspaceBtn);
   scopeNav.append(scopes);
@@ -845,12 +846,12 @@ function toggleWorkspacePopover(anchorButton: HTMLButtonElement): void {
   popover.className = "workspace-popover";
   const header = document.createElement("p");
   header.className = "workspace-popover-header";
-  header.textContent = "选择工作区";
+  header.textContent = i18n.t("selectWorkspace");
   const list = document.createElement("div");
   list.className = "workspace-popover-list";
   const loading = document.createElement("p");
   loading.className = "workspace-popover-empty";
-  loading.textContent = "加载中…";
+  loading.textContent = i18n.t("loading");
   list.append(loading);
   popover.append(header, list);
   document.body.append(popover);
@@ -896,10 +897,10 @@ function appendWorkspaceListItemDetails(item: HTMLElement, workspace: WorkspaceS
   title.textContent = workspace.title;
   const count = document.createElement("span");
   count.className = "workspace-popover-item-count";
-  count.textContent = `${workspace.tabs.length} 个标签`;
+  count.textContent = `${workspace.tabs.length} ${i18n.t("tabs")}`;
   const device = document.createElement("span");
   device.className = "workspace-popover-item-device";
-  device.textContent = workspace.deviceName ?? "本设备";
+  device.textContent = workspace.deviceName ?? i18n.t("thisDevice");
   item.append(title, count, device);
 }
 
@@ -908,7 +909,7 @@ function renderWorkspacePopoverList(list: HTMLElement, popover: HTMLElement & { 
   if (!workspaces.length) {
     const empty = document.createElement("p");
     empty.className = "workspace-popover-empty";
-    empty.textContent = "暂无工作区";
+    empty.textContent = i18n.t("noWorkspaces");
     list.append(empty);
     return;
   }
@@ -917,7 +918,7 @@ function renderWorkspacePopoverList(list: HTMLElement, popover: HTMLElement & { 
     item.type = "button";
     item.className = "workspace-popover-item";
     item.classList.toggle("selected", loadedWorkspace?.id === workspace.id);
-    item.setAttribute("aria-label", `加载工作区 ${workspace.title}`);
+    item.setAttribute("aria-label", `${i18n.t("loadFromWorkspace")} ${workspace.title}`);
     appendWorkspaceListItemDetails(item, workspace);
     item.addEventListener("click", () => { popover.closeRef?.(); void loadWorkspaceBoard(workspace.id); });
     list.append(item);
@@ -961,7 +962,7 @@ function renderWorkspaceBoard(): void {
     boardGrid.style.gridTemplateColumns = "1fr";
     const empty = document.createElement("p");
     empty.className = "empty board-empty";
-    empty.textContent = query ? "没有匹配的标签" : "该工作区没有标签";
+    empty.textContent = query ? i18n.t("noMatchingTabs") : i18n.t("workspaceHasNoTabs");
     boardGrid.append(empty);
     return;
   }
@@ -994,12 +995,12 @@ function renderWorkspaceCard(card: BoardSegmentCard, placement: { slot: number; 
   if (card.segmentCount > 1) {
     const segment = document.createElement("span");
     segment.className = "segment";
-    segment.textContent = `第 ${card.segmentIndex + 1}/${card.segmentCount} 段`;
+    segment.textContent = i18n.t("segment", [String(card.segmentIndex + 1), String(card.segmentCount)]);
     heading.append(segment);
   }
   const actions = document.createElement("div");
   actions.className = "deferred-actions";
-  const restore = makeButton("恢复", "deferred-action deferred-open", `恢复 ${card.title} 的标签`);
+  const restore = makeButton(i18n.t("restore"), "deferred-action deferred-open", `${i18n.t("restore")} ${card.title} ${i18n.t("tabs")}`);
   restore.addEventListener("click", () => previewWorkspaceCardRestore(card));
   actions.append(restore);
   heading.append(actions);
@@ -1009,7 +1010,7 @@ function renderWorkspaceCard(card: BoardSegmentCard, placement: { slot: number; 
   else {
     const empty = document.createElement("p");
     empty.className = "empty";
-    empty.textContent = "暂无标签";
+    empty.textContent = i18n.t("noTabsYet");
     tabs.append(empty);
   }
   article.append(heading, tabs);
@@ -1036,7 +1037,7 @@ function renderWorkspaceTab(tab: BoardSegmentCard["tabs"][number]): HTMLElement 
   const open = document.createElement("button");
   open.type = "button";
   open.className = "tab-open";
-  open.setAttribute("aria-label", `打开标签：${tab.title}`);
+  open.setAttribute("aria-label", `${i18n.t("openTab")}${tab.title}`);
   const icon = document.createElement("img");
   icon.className = "tab-icon";
   icon.alt = "";
@@ -1050,9 +1051,9 @@ function renderWorkspaceTab(tab: BoardSegmentCard["tabs"][number]): HTMLElement 
   open.append(icon, titleEl);
   if (tab.url) open.addEventListener("click", () => void chrome.tabs.create({ url: tab.url }));
   else open.disabled = true;
-  const edit = makeButton("✎", "tab-edit", `编辑标签：${tab.title}`);
+  const edit = makeButton("✎", "tab-edit", `${i18n.t("edit")}${i18n.t("tab")}: ${tab.title}`);
   edit.addEventListener("click", (event) => { event.stopPropagation(); beginEditWorkspaceTab(row, flatIndex, tab); });
-  const close = makeButton("×", "tab-close", `从工作区删除：${tab.title}`);
+  const close = makeButton("×", "tab-close", `${i18n.t("delete")}${i18n.t("tab")}: ${tab.title}`);
   close.addEventListener("click", (event) => {
     event.stopPropagation();
     const card = row.closest(".group-card") as HTMLElement | null;
@@ -1092,15 +1093,15 @@ function beginEditWorkspaceTab(row: HTMLElement, flatIndex: number, tab: BoardSe
   titleInput.type = "text";
   titleInput.className = "workspace-edit-input";
   titleInput.value = tab.title;
-  titleInput.placeholder = "标题";
+  titleInput.placeholder = i18n.t("title");
   const urlInput = document.createElement("input");
   urlInput.type = "url";
   urlInput.className = "workspace-edit-input";
   urlInput.value = tab.url ?? "";
-  urlInput.placeholder = "网址";
-  const save = makeButton("保存", "button workspace-edit-save", "保存");
+  urlInput.placeholder = i18n.t("url");
+  const save = makeButton(i18n.t("save"), "button workspace-edit-save", i18n.t("save"));
   save.addEventListener("click", (event) => { event.stopPropagation(); void saveWorkspaceTabEdit(flatIndex, titleInput.value, urlInput.value); });
-  const cancel = makeButton("取消", "button secondary workspace-edit-cancel", "取消");
+  const cancel = makeButton(i18n.t("cancel"), "button secondary workspace-edit-cancel", i18n.t("cancel"));
   cancel.addEventListener("click", (event) => { event.stopPropagation(); renderWorkspaceBoard(); });
   row.append(titleInput, urlInput, save, cancel);
   titleInput.focus();
@@ -1110,7 +1111,7 @@ async function saveWorkspaceTabEdit(flatIndex: number, title: string, url: strin
   if (!loadedWorkspace) return;
   try {
     await send({ type: "update-workspace-tab", id: loadedWorkspace.id, index: flatIndex, title, url });
-    showStatus("标签已更新");
+    showStatus(i18n.t("tabUpdated"));
     await loadWorkspaceBoard(loadedWorkspace.id);
   } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); }
 }
@@ -1136,7 +1137,7 @@ async function deleteWorkspaceTab(flatIndex: number, anchor?: HTMLElement): Prom
       cancelLastTabConfirm.disabled = true;
       try {
         await send({ type: "delete-workspace", id: workspaceId });
-        boardToast("工作区已删除", false, anchor);
+        boardToast(i18n.t("workspaceDeleted"), false, anchor);
         loadedWorkspace = null;
         workspaceCards = [];
         scopeMode = "current";
@@ -1164,7 +1165,7 @@ async function deleteWorkspaceTab(flatIndex: number, anchor?: HTMLElement): Prom
 
   try {
     await send({ type: "remove-workspace-tab", id: workspaceId, index: flatIndex });
-    boardToast("标签已从工作区删除", false, anchor);
+    boardToast(i18n.t("tabRemovedFromWorkspace"), false, anchor);
     await loadWorkspaceBoard(workspaceId);
     await loadWorkspaces();
   } catch (error) { boardToast(error instanceof Error ? error.message : String(error), true, anchor); }
@@ -1174,7 +1175,7 @@ async function addWorkspaceTab(url: string, title: string): Promise<void> {
   if (!loadedWorkspace) return;
   try {
     await send({ type: "add-tab-to-workspace", id: loadedWorkspace.id, tab: { title, url } });
-    showStatus("标签已添加到工作区");
+    showStatus(i18n.t("tabAddedToWorkspace"));
     await loadWorkspaceBoard(loadedWorkspace.id);
     await loadWorkspaces();
   } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); }
@@ -1216,19 +1217,19 @@ function renderWorkspaceHeader(): void {
   info.className = "workspace-header-info";
   const tabCount = workspaceCards.reduce((sum, card) => sum + card.tabs.length, 0);
   const deviceSuffix = loadedWorkspace.deviceName ? `（${loadedWorkspace.deviceName}）` : "";
-  info.textContent = `工作区：${loadedWorkspace.title}${deviceSuffix} · ${tabCount} 个标签 · 保存于 ${formatDeferredDateTime(loadedWorkspace.createdAt)}`;
+  info.textContent = `${i18n.t("workspace")}：${loadedWorkspace.title}${deviceSuffix} · ${tabCount} ${i18n.t("tabs")} · ${i18n.t("savedAt")} ${formatDeferredDateTime(loadedWorkspace.createdAt)}`;
   const addForm = document.createElement("form");
   addForm.className = "workspace-add-form";
   const urlInput = document.createElement("input");
   urlInput.type = "url";
   urlInput.className = "workspace-add-url";
-  urlInput.placeholder = "新增标签网址";
+  urlInput.placeholder = i18n.t("newTabUrl");
   urlInput.required = true;
   const titleInput = document.createElement("input");
   titleInput.type = "text";
   titleInput.className = "workspace-add-title";
-  titleInput.placeholder = "标题（可选）";
-  const addBtn = makeButton("添加", "button", "添加到工作区");
+  titleInput.placeholder = i18n.t("titleOptional");
+  const addBtn = makeButton(i18n.t("add"), "button", `${i18n.t("add")}${i18n.t("workspace")}`);
   addBtn.type = "submit";
   addForm.append(urlInput, titleInput, addBtn);
   addForm.addEventListener("submit", (event) => {
@@ -1239,20 +1240,25 @@ function renderWorkspaceHeader(): void {
     urlInput.value = "";
     titleInput.value = "";
   });
-  const back = makeButton("返回当前", "button secondary", "返回当前看板");
+  const back = makeButton(i18n.t("returnToCurrent"), "button secondary", i18n.t("returnToCurrentBoard"));
   back.addEventListener("click", () => void returnToCurrent());
   workspaceHeader.append(info, addForm, back);
+}
+
+function applyTheme(theme: Theme): void {
+  document.documentElement.setAttribute("data-theme", theme);
 }
 
 async function load(): Promise<void> {
   const boardTab = await chrome.tabs.getCurrent();
   const state = await send<BoardState>({ type: "get-board-state", windowId: boardTab?.windowId });
   currentState = state;
+  applyTheme(state.settings?.theme ?? "light");
   const needsLogin = state.loginRequired || !state.user;
   loginRequired.classList.toggle("hidden", !needsLogin);
   boardContent.classList.toggle("hidden", needsLogin);
   if (needsLogin) {
-    loginMessage.textContent = state.message || "请先登录后使用标签看板。";
+    loginMessage.textContent = state.message || i18n.t("loginMessage");
     return;
   }
   renderScopeNav();
@@ -1313,7 +1319,7 @@ async function moveTab(tabId: number, targetBoardKey: BoardKey, position: "befor
     applyOptimisticTabMove(tabId, targetBoardKey, position, targetSegmentIndex, targetTabId);
     renderBoard(currentState);
     await send({ type: "move-board-tab", drop: { tabId, targetBoardKey, position, ...(targetTabId === undefined ? {} : { targetTabId }) } });
-    showStatus("标签已移动");
+    showStatus(i18n.t("tabMoved"));
   } catch (error) {
     currentState = snapshot;
     renderBoard(currentState);
@@ -1330,7 +1336,7 @@ async function activateTab(tabId: number): Promise<void> {
 async function closeTab(tabId: number, anchor?: HTMLElement): Promise<void> {
   try {
     await send({ type: "close-board-tab", tabId });
-    boardToast("标签已关闭", false, anchor);
+    boardToast(i18n.t("tabClosed"), false, anchor);
     await load();
   } catch (error) { boardToast(error instanceof Error ? error.message : String(error), true, anchor); }
 }
@@ -1396,7 +1402,7 @@ async function moveGroup(boardKey: BoardKey, targetBoardKey: BoardKey, rank: num
       applyOptimisticGroupReorder(boardKey, targetBoardKey);
       renderBoard(currentState);
       await send({ type: "move-board-group", boardKey, rank });
-      showStatus("分组顺序已保存");
+      showStatus(i18n.t("groupOrderSaved"));
     } else {
       const newLayouts = computeManualGroupMove(boardKey, targetBoardKey);
       if (newLayouts?.length) {
@@ -1404,8 +1410,8 @@ async function moveGroup(boardKey: BoardKey, targetBoardKey: BoardKey, rank: num
         renderBoard(currentState);
       }
       if (newLayouts?.length) await persistManualGroupMove(newLayouts);
-      else if (!newLayouts) throw new Error("目标分组已变化，请刷新看板后重试");
-      showStatus("手动位置已保存");
+      else if (!newLayouts) throw new Error(i18n.t("targetGroupChanged"));
+      showStatus(i18n.t("manualPositionSaved"));
     }
   } catch (error) {
     currentState = snapshot;
@@ -1417,7 +1423,7 @@ async function moveGroup(boardKey: BoardKey, targetBoardKey: BoardKey, rank: num
 async function deleteGroup(id: string): Promise<void> {
   try {
     await send({ type: "delete-board-group", id, confirmed: true });
-    showStatus("自定义分组已删除");
+    showStatus(i18n.t("customGroupDeleted"));
     await load();
   } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); }
 }
@@ -1438,7 +1444,7 @@ async function saveAutoFill(enabled: boolean): Promise<void> {
         : { boardKey: card.boardKey, deviceClass: deviceClass(), rank: card.rank, autoFill: false, manualLane: position.lane, manualSlot: position.slot },
     })];
   }));
-    showStatus(enabled ? "已启用自动填充" : "已关闭自动填充");
+    showStatus(enabled ? i18n.t("autoFillEnabled") : i18n.t("autoFillDisabled"));
     await load();
   } catch (error) {
     autoFill.checked = !enabled;
@@ -1512,6 +1518,7 @@ async function revalidateBoardSession(): Promise<void> {
 }
 
 async function init(): Promise<void> {
+  i18n.applyI18n();
   await load();
   if (currentState?.user) void revalidateBoardSession();
 }

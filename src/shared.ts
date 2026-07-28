@@ -146,6 +146,18 @@ const MATCH_SCOPES: readonly MatchScope[] = ["exact", "domain-and-subdomains"];
 const DEVICE_CLASSES: readonly DeviceClass[] = ["desktop", "tablet", "mobile"];
 const MAX_PORTABLE_RECORDS = 100;
 
+export type Theme = "light" | "dark";
+
+export function isTheme(value: unknown): value is Theme {
+  return value === "light" || value === "dark";
+}
+
+export type Language = "zh_CN" | "en";
+
+export function isLanguage(value: unknown): value is Language {
+  return value === "zh_CN" || value === "en";
+}
+
 export interface Settings {
   autoGroupEnabled: boolean;
   minimumTabs: number;
@@ -156,6 +168,8 @@ export interface Settings {
   syncRulesEnabled?: boolean;
   syncIgnoreListEnabled?: boolean;
   lastSuccessfulSyncAt?: string | null;
+  theme?: Theme;
+  language?: Language;
 }
 
 export interface GroupRule {
@@ -189,6 +203,8 @@ export interface SettingsSyncRow {
   sync_rules_enabled?: boolean;
   sync_ignore_list_enabled?: boolean;
   deferred_shortcut_times?: string[];
+  theme?: string;
+  language?: string;
 }
 
 export interface GroupRuleSyncRow {
@@ -219,6 +235,7 @@ interface PortableSettings {
   syncRulesEnabled: boolean;
   syncIgnoreListEnabled: boolean;
   lastSuccessfulSyncAt: string | null;
+  theme: Theme;
 }
 
 export interface PortableData {
@@ -285,6 +302,8 @@ export const DEFAULT_SETTINGS: Settings = {
   syncRulesEnabled: true,
   syncIgnoreListEnabled: true,
   lastSuccessfulSyncAt: null,
+  theme: "light",
+  language: undefined,
 };
 
 export function settingsFromSyncRow(value: unknown, expectedUserId?: string): Settings | null {
@@ -295,7 +314,9 @@ export function settingsFromSyncRow(value: unknown, expectedUserId?: string): Se
   const syncIgnoreListEnabled = value.sync_ignore_list_enabled === undefined ? DEFAULT_SETTINGS.syncIgnoreListEnabled : value.sync_ignore_list_enabled;
   const openBoardOnNewTab = value.open_board_on_new_tab === undefined ? DEFAULT_SETTINGS.openBoardOnNewTab : value.open_board_on_new_tab;
   const deferredShortcutTimes = normalizeDeferredShortcutTimes(value.deferred_shortcut_times);
-  if (!isGroupColor(defaultGroupColor) || typeof cloudSyncEnabled !== "boolean" || typeof syncRulesEnabled !== "boolean" || typeof syncIgnoreListEnabled !== "boolean" || typeof openBoardOnNewTab !== "boolean" || !deferredShortcutTimes) return null;
+  const theme = value.theme === undefined ? DEFAULT_SETTINGS.theme : isTheme(value.theme) ? value.theme : null;
+  const language = value.language === undefined ? DEFAULT_SETTINGS.language : isLanguage(value.language) ? value.language : undefined;
+  if (!isGroupColor(defaultGroupColor) || typeof cloudSyncEnabled !== "boolean" || typeof syncRulesEnabled !== "boolean" || typeof syncIgnoreListEnabled !== "boolean" || typeof openBoardOnNewTab !== "boolean" || !deferredShortcutTimes || theme === null) return null;
   return {
     autoGroupEnabled: value.auto_group_enabled,
     minimumTabs: value.minimum_tabs,
@@ -305,6 +326,8 @@ export function settingsFromSyncRow(value: unknown, expectedUserId?: string): Se
     syncRulesEnabled,
     syncIgnoreListEnabled,
     deferredShortcutTimes,
+    theme,
+    language,
   };
 }
 
@@ -860,6 +883,7 @@ export function toPortableData(settings: Settings, groupRules: readonly GroupRul
       syncRulesEnabled: settings.syncRulesEnabled ?? DEFAULT_SETTINGS.syncRulesEnabled!,
       syncIgnoreListEnabled: settings.syncIgnoreListEnabled ?? DEFAULT_SETTINGS.syncIgnoreListEnabled!,
       lastSuccessfulSyncAt: settings.lastSuccessfulSyncAt ?? null,
+      theme: settings.theme ?? DEFAULT_SETTINGS.theme!,
     },
     groupRules: groupRules.map((rule) => ({
       id: rule.id,
@@ -938,7 +962,7 @@ export function canConfirmOptionsImport(previewUserId: string | null, currentUse
 
 export function validateOptionsSettings(value: unknown): Settings | null {
   if (!isPlainObject(value)) return null;
-  const allowedKeys = ["autoGroupEnabled", "minimumTabs", "openBoardOnNewTab", "deferredShortcutTimes", "defaultGroupColor", "cloudSyncEnabled", "syncRulesEnabled", "syncIgnoreListEnabled", "lastSuccessfulSyncAt"];
+  const allowedKeys = ["autoGroupEnabled", "minimumTabs", "openBoardOnNewTab", "deferredShortcutTimes", "defaultGroupColor", "cloudSyncEnabled", "syncRulesEnabled", "syncIgnoreListEnabled", "lastSuccessfulSyncAt", "theme"];
   if (Object.keys(value).some((key) => !allowedKeys.includes(key))) return null;
   const parsed = parsePortableSettings({
     autoGroupEnabled: value.autoGroupEnabled,
@@ -949,6 +973,7 @@ export function validateOptionsSettings(value: unknown): Settings | null {
     syncRulesEnabled: value.syncRulesEnabled,
     syncIgnoreListEnabled: value.syncIgnoreListEnabled,
     lastSuccessfulSyncAt: null,
+    theme: value.theme,
   });
   const deferredShortcutTimes = normalizeDeferredShortcutTimes(value.deferredShortcutTimes);
   return parsed && deferredShortcutTimes ? { ...parsed, deferredShortcutTimes, lastSuccessfulSyncAt: null } : null;
@@ -1043,11 +1068,14 @@ function isSortOrder(value: unknown): value is number {
 
 function parsePortableSettings(value: unknown): PortableSettings | null {
   const requiredKeys = ["autoGroupEnabled", "minimumTabs", "defaultGroupColor", "cloudSyncEnabled", "syncRulesEnabled", "syncIgnoreListEnabled", "lastSuccessfulSyncAt"];
-  const currentKeys = [...requiredKeys, "openBoardOnNewTab"];
+  const currentKeys = [...requiredKeys, "openBoardOnNewTab", "theme"];
   if (!isPlainObject(value) || (!hasOnlyKeys(value, requiredKeys) && !hasOnlyKeys(value, currentKeys))) return null;
   const openBoardOnNewTab = value.openBoardOnNewTab === undefined ? DEFAULT_SETTINGS.openBoardOnNewTab : value.openBoardOnNewTab;
+  const themeValue = value.theme === undefined ? DEFAULT_SETTINGS.theme : value.theme;
+  if (!isTheme(themeValue)) return null;
+  const theme = themeValue;
   if (typeof value.autoGroupEnabled !== "boolean" || !isMinimumTabs(value.minimumTabs) || !isGroupColor(value.defaultGroupColor) || typeof value.cloudSyncEnabled !== "boolean" || typeof value.syncRulesEnabled !== "boolean" || typeof value.syncIgnoreListEnabled !== "boolean" || typeof openBoardOnNewTab !== "boolean" || !isSyncTimestamp(value.lastSuccessfulSyncAt)) return null;
-  return { autoGroupEnabled: value.autoGroupEnabled, minimumTabs: value.minimumTabs, openBoardOnNewTab, defaultGroupColor: value.defaultGroupColor, cloudSyncEnabled: value.cloudSyncEnabled, syncRulesEnabled: value.syncRulesEnabled, syncIgnoreListEnabled: value.syncIgnoreListEnabled, lastSuccessfulSyncAt: value.lastSuccessfulSyncAt };
+  return { autoGroupEnabled: value.autoGroupEnabled, minimumTabs: value.minimumTabs, openBoardOnNewTab, defaultGroupColor: value.defaultGroupColor, cloudSyncEnabled: value.cloudSyncEnabled, syncRulesEnabled: value.syncRulesEnabled, syncIgnoreListEnabled: value.syncIgnoreListEnabled, lastSuccessfulSyncAt: value.lastSuccessfulSyncAt, theme };
 }
 
 function parseGroupRules(value: unknown): GroupRule[] | null {

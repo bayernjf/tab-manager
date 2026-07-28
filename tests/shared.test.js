@@ -139,8 +139,8 @@ test("includes the new-tab board setting in the built options page", async () =>
   const optionsHtml = await readFile(new URL("../dist/options.html", import.meta.url), "utf8");
 
   assert.match(optionsHtml, /<input id="new-tab-board" type="checkbox" aria-describedby="new-tab-board-description">/);
-  assert.match(optionsHtml, /新标签页打开看板/);
-  assert.match(optionsHtml, /<p id="new-tab-board-description" class="muted">启用后，点击 \+ 或按 Ctrl\/Cmd\+T 会打开 Tab Garden 看板；关闭后保持 Chrome\/Edge 原生新标签页不变。<\/p>/);
+  assert.match(optionsHtml, /data-i18n="openBoardOnNewTab"/);
+  assert.match(optionsHtml, /<p id="new-tab-board-description" class="muted" data-i18n="openBoardOnNewTabHint">/);
 });
 
 test("opens the board in the popup's current window", async () => {
@@ -189,8 +189,8 @@ test("styles the board as the header's primary action", async () => {
 
   assert.match(popupHtml, /id="open-board" class="header-action board-action"/);
   assert.match(popupHtml, /id="logout" class="header-action logout-action"/);
-  assert.match(popupCss, /\.board-action \{[^}]*background: #386650/);
-  assert.match(popupCss, /\.logout-action \{[^}]*border: 1px solid #d9e2dc/);
+  assert.match(popupCss, /\.board-action \{[^}]*background: var\(--brand-bg\)/);
+  assert.match(popupCss, /\.logout-action \{[^}]*border: 1px solid var\(--border-logout\)/);
 });
 
 test("positions board tab close controls on the right", async () => {
@@ -200,7 +200,7 @@ test("positions board tab close controls on the right", async () => {
   assert.doesNotMatch(boardCss, /\.tab-close \{[^}]*left: 10px/);
   assert.match(boardCss, /\.tab-open \{[^}]*padding: 3px 4px/);
   assert.match(boardCss, /\.tab-row:hover \.tab-open[^}]*padding-right: 104px/);
-  assert.match(boardCss, /\.tab-defer \{[^}]*color: #8b6518/);
+  assert.match(boardCss, /\.tab-defer \{[^}]*color: var\(--text-warning\)/);
   assert.match(boardCss, /\.tab-saveworkspace \{[^}]*right: 68px/);
 });
 
@@ -211,8 +211,8 @@ test("shows close-tab feedback as a fixed toast centered on the group heading", 
   ]);
   const closeFn = script.slice(script.indexOf("async function closeTab"), script.indexOf("function applyOptimisticGroupReorder"));
 
-  assert.match(closeFn, /boardToast\("标签已关闭"/);
-  assert.match(closeFn, /boardToast\(error instanceof Error \? error\.message : String\(error\), true/);
+  assert.match(closeFn, /boardToast\(i18n\.t\("tabClosed"\), false, anchor\)/);
+  assert.match(closeFn, /boardToast\(error instanceof Error \? error\.message : String\(error\), true, anchor\)/);
   assert.doesNotMatch(closeFn, /showStatus\("标签已关闭"\)/);
   assert.match(script, /row\.closest\("\.group-card"\)/);
   assert.match(script, /card\?\.querySelector\("\.card-title"\)/);
@@ -232,7 +232,7 @@ test("shows workspace tab deletion feedback as a toast centered on the group hea
   const script = await readFile(new URL("../dist/board.js", import.meta.url), "utf8");
   const deleteFn = script.slice(script.indexOf("async function deleteWorkspaceTab"), script.indexOf("async function addWorkspaceTab"));
 
-  assert.match(deleteFn, /boardToast\("标签已从工作区删除"/);
+  assert.match(deleteFn, /boardToast\(i18n\.t\("tabRemovedFromWorkspace"\)/);
   assert.match(deleteFn, /boardToast\(error instanceof Error \? error\.message : String\(error\), true/);
   assert.doesNotMatch(deleteFn, /showStatus\("标签已从工作区删除"\)/);
   assert.match(script, /void deleteWorkspaceTab\(flatIndex, heading \?\? close\)/);
@@ -250,12 +250,12 @@ test("confirms last-tab deletion also removes the workspace", async () => {
   assert.match(deleteFn, /confirmLastTabConfirm\.disabled = false/);
   assert.match(deleteFn, /cancelLastTabConfirm\.disabled = false/);
   assert.match(deleteFn, /await send\(\{ type: "delete-workspace", id: workspaceId \}\)/);
-  assert.match(deleteFn, /boardToast\("工作区已删除"/);
+  assert.match(deleteFn, /boardToast\(i18n\.t\("workspaceDeleted"\)/);
   assert.match(deleteFn, /loadedWorkspace = null/);
   assert.match(deleteFn, /lastTabConfirmDialog\.close/);
   assert.match(deleteFn, /const cleanup = \(\) =>/);
   assert.match(html, /last-tab-confirm-dialog/);
-  assert.match(html, /该工作区也将被删除/);
+  assert.match(html, /data-i18n="workspaceWillBeDeleted"/);
 });
 
 test("gives GitHub's white favicon a contrasting background", async () => {
@@ -266,7 +266,8 @@ test("gives GitHub's white favicon a contrasting background", async () => {
 
   assert.match(boardScript, /getSiteKey\(tab\.url\) === "github\.com"/);
   assert.match(boardScript, /github-tab-icon/);
-  assert.match(boardCss, /\.github-tab-icon \{[^}]*background: #24292f/);
+  assert.match(boardCss, /\.github-tab-icon \{[^}]*background: var\(--github-icon-bg\)/);
+  assert.match(boardCss, /--github-icon-bg: #24292f/);
 });
 
 test("identifies only Chrome's exact browser new-tab URL", () => {
@@ -528,10 +529,10 @@ test("renders a compact accessible deferred shortcut editor", async () => {
   assert.match(html, /id="deferred-shortcut-note"/);
   assert.match(script, /const MAX_DEFERRED_SHORTCUTS = 5/);
   assert.match(script, /className = "deferred-shortcut"/);
-  assert.match(script, /input\.ariaLabel = "快捷提醒时刻"/);
-  assert.match(script, /remove\.ariaLabel = "删除此快捷提醒时间"/);
-  assert.match(script, /input\.ariaLabel = `快捷提醒 \$\{index \+ 1\} 时刻`;/);
-  assert.match(script, /remove\.ariaLabel = `删除第 \$\{index \+ 1\} 个快捷提醒`;/);
+  assert.match(script, /input\.ariaLabel = i18n\.t\("shortcutTimes"\)/);
+  assert.match(script, /remove\.ariaLabel = i18n\.t\("delete"\)/);
+  assert.match(script, /input\.ariaLabel = i18n\.t\("shortcutTimes"\) \+ ` \$\{index \+ 1\}`/);
+  assert.match(script, /remove\.ariaLabel = i18n\.t\("delete"\) \+ ` \$\{index \+ 1\}`/);
   assert.match(script, /deferredShortcutCount\.textContent = `\$\{count\} \/ \$\{MAX_DEFERRED_SHORTCUTS\}`;/);
   assert.match(script, /if \(count >= MAX_DEFERRED_SHORTCUTS\)\s*return;/);
   assert.match(script, /addDeferredShortcut\.hidden = count >= MAX_DEFERRED_SHORTCUTS/);
@@ -576,7 +577,7 @@ test("shows save-to-workspace feedback in a fixed toast above the menu", async (
   assert.doesNotMatch(menu, /menu\.(?:append|replaceChildren)\([^)]*saveToast/);
   assert.match(menu, /className = error \? "workspace-save-toast error" : "workspace-save-toast success"/);
   assert.match(menu, /saveToast\.hidden = false/);
-  assert.match(menu, /showSaveToast\(`已保存到 \$\{workspace\.title\}`\)/);
+  assert.match(menu, /showSaveToast\(i18n\.t\("workspaceSavedTo", \[workspace\.title\]\)/);
   assert.match(menu, /showSaveToast\(error instanceof Error \? error\.message : String\(error\), true\)/);
   assert.match(menu, /positionWorkspaceSaveMenu\(menu, toggleButton, saveToast\)/);
   assert.match(menu, /saveToast\.remove\(\)/);
@@ -708,13 +709,13 @@ test("renders local workspace selection and restore-preview dialogs", async () =
   assert.match(html, /id="workspace-restore-dialog"/);
   assert.match(html, /class="workspace-name-field"/);
   assert.match(html, /class="workspace-controls"/);
-  assert.match(html, /<label\b(?=[^>]*\bclass="workspace-select-all")[^>]*>\s*<input\b(?=[^>]*\bid="workspace-select-all")(?=[^>]*\btype="checkbox")(?=[^>]*\bchecked)[^>]*>\s*全选\s*<\/label>/);
+  assert.match(html, /<label\b(?=[^>]*\bclass="workspace-select-all")[^>]*>\s*<input\b(?=[^>]*\bid="workspace-select-all")(?=[^>]*\btype="checkbox")(?=[^>]*\bchecked)[^>]*>\s*<span[^>]*data-i18n="selectAll">/);
   assert.match(html, /<input\b(?=[^>]*\bid="workspace-name")(?=[^>]*\baria-describedby="workspace-name-error")(?=[^>]*\baria-invalid="false")[^>]*>/);
   assert.match(html, /<p\b(?=[^>]*\bid="workspace-name-error")(?=[^>]*\bclass="workspace-name-toast")(?=[^>]*\brole="alert")(?=[^>]*\bhidden)[^>]*><\/p>/);
   assert.match(script, /type: "save-workspace"/);
   assert.match(script, /validateWorkspaceTitle\(workspaceName\.value, workspaces\.filter\(\(workspace\) => workspace\.deviceName === currentDevice\?\.name\)\.map\(\(workspace\) => workspace\.title\)\)/);
-  assert.match(script, /showWorkspaceNameError\("请输入工作区名称"\)/);
-  assert.match(script, /showWorkspaceNameError\("该工作区名称已存在"\)/);
+  assert.match(script, /showWorkspaceNameError\(i18n\.t\("workspaceNameEmpty"\)\)/);
+  assert.match(script, /showWorkspaceNameError\(i18n\.t\("workspaceNameDuplicate"\)\)/);
   assert.match(script, /workspaceName\.addEventListener\("input", clearWorkspaceNameError\)/);
   assert.match(script, /workspaceDialog\.addEventListener\("close", clearWorkspaceNameError\)/);
   assert.match(script, /function workspaceTabInputs\(\)/);
@@ -733,8 +734,8 @@ test("renders local workspace selection and restore-preview dialogs", async () =
   const validationCall = "validateWorkspaceTitle(workspaceName.value, workspaces.filter((workspace) => workspace.deviceName === currentDevice?.name).map((workspace) => workspace.title))";
   const saveMessage = 'await send({ type: "save-workspace"';
   assert.ok(saveCurrentWorkspace.indexOf(validationCall) < saveCurrentWorkspace.indexOf(saveMessage));
-  assert.match(saveCurrentWorkspace, /if \(title\.status === "empty"\) \{\s*showWorkspaceNameError\("请输入工作区名称"\);\s*return;\s*\}/);
-  assert.match(saveCurrentWorkspace, /if \(title\.status === "duplicate"\) \{\s*showWorkspaceNameError\("该工作区名称已存在"\);\s*return;\s*\}/);
+  assert.match(saveCurrentWorkspace, /if \(title\.status === "empty"\) \{\s*showWorkspaceNameError\(i18n\.t\("workspaceNameEmpty"\)\);\s*return;\s*\}/);
+  assert.match(saveCurrentWorkspace, /if \(title\.status === "duplicate"\) \{\s*showWorkspaceNameError\(i18n\.t\("workspaceNameDuplicate"\)\);\s*return;\s*\}/);
 
   const catchStart = /catch\s*\(error\)\s*\{/.exec(saveCurrentWorkspace)?.index ?? -1;
   const catchEnd = saveCurrentWorkspace.indexOf("  workspaceName.value", catchStart);
@@ -761,7 +762,7 @@ test("renders local workspace selection and restore-preview dialogs", async () =
   assert.match(showWorkspaceNameError, /workspaceName\.setAttribute\("aria-invalid", "true"\)/);
   assert.match(showWorkspaceNameError, /workspaceName\.focus\(\)/);
 
-  const successStatements = ["workspaceName.value = \"\";", "clearWorkspaceNameError();", "await loadWorkspaces();", "showStatus(\"工作区已保存\");"];
+  const successStatements = ["workspaceName.value = \"\";", "clearWorkspaceNameError();", "await loadWorkspaces();", 'showStatus(i18n.t("workspaceSaved"));'];
   let priorStatement = -1;
   for (const statement of successStatements) {
     const statementIndex = saveCurrentWorkspace.indexOf(statement);
@@ -772,9 +773,9 @@ test("renders local workspace selection and restore-preview dialogs", async () =
   assert.match(script, /type: "get-workspace-restore-preview"/);
   assert.match(script, /type: "restore-workspace"/);
   assert.match(script, /className = "deferred-actions"/);
-  assert.match(script, /makeButton\("恢复", "deferred-action deferred-open"/);
-  assert.match(script, /makeButton\("删除", "deferred-action deferred-delete"/);
-  assert.match(script, /当前设备/);
+  assert.match(script, /makeButton\(i18n\.t\("restore"\), "deferred-action deferred-open"/);
+  assert.match(script, /makeButton\(i18n\.t\("delete"\), "deferred-action deferred-delete"/);
+  assert.match(script, /i18n\.t\("currentDevice"\)/);
   assert.match(script, /workspace-device/);
   assert.match(css, /\.workspace-device/);
   assert.match(css, /\.workspace-device-badge/);
@@ -1435,6 +1436,8 @@ test("converts complete Supabase settings rows to concrete local settings", () =
     sync_ignore_list_enabled: false,
     open_board_on_new_tab: true,
     deferred_shortcut_times: ["14:30", "18:00"],
+    theme: "dark",
+    language: undefined,
   }), {
     autoGroupEnabled: false,
     minimumTabs: 4,
@@ -1444,6 +1447,8 @@ test("converts complete Supabase settings rows to concrete local settings", () =
     syncIgnoreListEnabled: false,
     openBoardOnNewTab: true,
     deferredShortcutTimes: ["14:30", "18:00"],
+    theme: "dark",
+    language: undefined,
   });
 });
 
@@ -1504,11 +1509,13 @@ test("validates the new-tab board setting in options payloads", () => {
   assert.equal(validateOptionsSettings({ ...settings, openBoardOnNewTab: "true" }), null);
 });
 
-test("includes the new-tab board setting in sync payloads", () => {
+test("includes the new-tab board setting and theme in sync payloads", () => {
   assert.deepEqual(settingsSyncRow("user-1", {
     autoGroupEnabled: true,
     minimumTabs: 2,
     openBoardOnNewTab: true,
+    theme: "dark",
+    language: undefined,
   }), {
     user_id: "user-1",
     auto_group_enabled: true,
@@ -1519,6 +1526,8 @@ test("includes the new-tab board setting in sync payloads", () => {
     sync_rules_enabled: undefined,
     sync_ignore_list_enabled: undefined,
     deferred_shortcut_times: undefined,
+    theme: "dark",
+    language: undefined,
   });
 });
 
@@ -1751,7 +1760,7 @@ test("parses only valid portable data and rejects sensitive unknown keys", () =>
 
   assert.deepEqual(parsePortableData(valid), {
     ...valid,
-    settings: { ...valid.settings, openBoardOnNewTab: false },
+    settings: { ...valid.settings, openBoardOnNewTab: false, theme: "light" },
   });
   assert.equal(parsePortableData({ ...valid, settings: { ...valid.settings, minimumTabs: 0 } }), null);
   assert.equal(parsePortableData({ ...valid, accessToken: "secret" }), null);
@@ -1759,7 +1768,7 @@ test("parses only valid portable data and rejects sensitive unknown keys", () =>
   assert.equal(parsePortableData({ ...valid, groupRules: [{ ...valid.groupRules[0], domains: ["example.com", "example.com"] }] }), null);
 });
 
-test("preserves and defaults the new-tab board setting in portable data", () => {
+test("preserves and defaults the new-tab board setting and theme in portable data", () => {
   const current = {
     version: 1,
     settings: {
@@ -1771,16 +1780,21 @@ test("preserves and defaults the new-tab board setting in portable data", () => 
       syncIgnoreListEnabled: true,
       lastSuccessfulSyncAt: null,
       openBoardOnNewTab: true,
+      theme: "dark",
     },
     groupRules: [],
     ignoredSites: [],
   };
   const legacy = structuredClone(current);
   delete legacy.settings.openBoardOnNewTab;
+  delete legacy.settings.theme;
 
   assert.equal(parsePortableData(current)?.settings.openBoardOnNewTab, true);
   assert.equal(parsePortableData(legacy)?.settings.openBoardOnNewTab, false);
   assert.equal(parsePortableData({ ...current, settings: { ...current.settings, openBoardOnNewTab: "true" } }), null);
+  assert.equal(parsePortableData(current)?.settings.theme, "dark");
+  assert.equal(parsePortableData(legacy)?.settings.theme, "light");
+  assert.equal(parsePortableData({ ...current, settings: { ...current.settings, theme: "invalid" } }), null);
 });
 
 test("rejects portable data whose required fields are inherited", () => {
@@ -1813,6 +1827,7 @@ test("maps portable data explicitly without runtime-only fields", () => {
       syncIgnoreListEnabled: false,
       lastSuccessfulSyncAt: "2026-07-22T00:00:00.000Z",
       openBoardOnNewTab: false,
+      theme: "light",
     },
     [{ id: "rule-1", title: "Example", color: "blue", domains: ["example.com"], matchScope: "exact", enabled: true, sortOrder: 1, accessToken: "secret" }],
     [{ id: "ignore-1", domain: "ads.example.com", matchScope: "exact", sortOrder: 1, accessToken: "secret" }],
@@ -1829,6 +1844,7 @@ test("maps portable data explicitly without runtime-only fields", () => {
       syncIgnoreListEnabled: false,
       lastSuccessfulSyncAt: "2026-07-22T00:00:00.000Z",
       openBoardOnNewTab: false,
+      theme: "light",
     },
     groupRules: [{ id: "rule-1", title: "Example", color: "blue", domains: ["example.com"], matchScope: "exact", enabled: true, sortOrder: 1 }],
     ignoredSites: [{ id: "ignore-1", domain: "ads.example.com", matchScope: "exact", sortOrder: 1 }],
@@ -1865,6 +1881,7 @@ test("converts stored state without runtime group mappings", () => {
       syncIgnoreListEnabled: true,
       lastSuccessfulSyncAt: null,
       openBoardOnNewTab: false,
+      theme: "light",
     },
     groupRules: [{
       id: "rule-1",
