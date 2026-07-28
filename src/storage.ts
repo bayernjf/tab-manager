@@ -1,3 +1,4 @@
+import { i18n } from "./i18n.js";
 import {
   DEFAULT_SETTINGS,
   detectBrowserKind,
@@ -107,10 +108,10 @@ export async function getOrCreateDeviceName(): Promise<string> {
 function defaultDeviceName(): string {
   const userAgent = navigator.userAgent ?? "";
   const browser = detectBrowserKind(userAgent) === "edge" ? "Edge" : "Chrome";
-  let deviceType = "本";
-  if (/Mac/i.test(userAgent)) deviceType = "Mac";
-  else if (/Win/i.test(userAgent)) deviceType = "Win";
-  else if (/CrOS/i.test(userAgent)) deviceType = "ChromeOS";
-  else if (/Linux/i.test(userAgent)) deviceType = "Linux";
-  return `${deviceType}设备-${browser}`;
+  let deviceType = i18n.t("deviceThis");
+  if (/Mac/i.test(userAgent)) deviceType = i18n.t("deviceMac");
+  else if (/Win/i.test(userAgent)) deviceType = i18n.t("deviceWin");
+  else if (/CrOS/i.test(userAgent)) deviceType = i18n.t("deviceChromeOS");
+  else if (/Linux/i.test(userAgent)) deviceType = i18n.t("deviceLinux");
+  return `${deviceType}-${browser}`;
 }
