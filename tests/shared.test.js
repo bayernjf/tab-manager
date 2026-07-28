@@ -1509,7 +1509,7 @@ test("validates the new-tab board setting in options payloads", () => {
   assert.equal(validateOptionsSettings({ ...settings, openBoardOnNewTab: "true" }), null);
 });
 
-test("includes the new-tab board setting in sync payloads", () => {
+test("includes the new-tab board setting and theme in sync payloads", () => {
   assert.deepEqual(settingsSyncRow("user-1", {
     autoGroupEnabled: true,
     minimumTabs: 2,
@@ -1526,6 +1526,8 @@ test("includes the new-tab board setting in sync payloads", () => {
     sync_rules_enabled: undefined,
     sync_ignore_list_enabled: undefined,
     deferred_shortcut_times: undefined,
+    theme: "dark",
+    language: undefined,
   });
 });
 
