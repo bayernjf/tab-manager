@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS, type GroupColor, type Settings } from "./shared.js";
+import { DEFAULT_SETTINGS, type GroupColor, type Settings, type Theme } from "./shared.js";
 
 interface PopupTab { id?: number; title: string; url?: string; favIconUrl?: string; pinned: boolean }
 interface PopupGroup { id: string; title: string; color: GroupColor }
@@ -15,6 +15,7 @@ const groupsList = $("#groups-list");
 const status = $("#status");
 const autoToggle = $<HTMLInputElement>("#auto-toggle");
 const minimumTabs = $<HTMLSelectElement>("#minimum-tabs");
+const themeToggle = $<HTMLInputElement>("#theme-toggle");
 const groupName = $<HTMLInputElement>("#group-name");
 const groupColor = $<HTMLSelectElement>("#group-color");
 const bootView = $("#boot-view");
@@ -28,6 +29,10 @@ const rememberDevice = $<HTMLInputElement>("#remember-device");
 const authStatus = $("#auth-status");
 const authSubmit = $<HTMLButtonElement>("#auth-submit");
 let authMode: "login" | "signup" = "login";
+
+function applyTheme(theme: Theme): void {
+  document.documentElement.setAttribute("data-theme", theme);
+}
 
 async function send<T>(message: unknown): Promise<T> {
   const response = await chrome.runtime.sendMessage(message) as T & { error?: string };
@@ -165,6 +170,8 @@ async function load(): Promise<void> {
   const state = await send<PopupState>({ type: "get-popup-state" });
   autoToggle.checked = state.settings.autoGroupEnabled;
   minimumTabs.value = String(state.settings.minimumTabs);
+  themeToggle.checked = state.settings.theme === "dark";
+  applyTheme(state.settings.theme ?? "light");
   renderTabs(state.tabs);
   renderGroups(state.customGroups);
 }
@@ -181,14 +188,16 @@ async function restoreSessionInBackground(): Promise<void> {
 }
 
 async function saveSettings(): Promise<void> {
-  const settings = { ...DEFAULT_SETTINGS, autoGroupEnabled: autoToggle.checked, minimumTabs: Number(minimumTabs.value) };
+  const settings = { ...DEFAULT_SETTINGS, autoGroupEnabled: autoToggle.checked, minimumTabs: Number(minimumTabs.value), theme: themeToggle.checked ? "dark" as Theme : "light" as Theme };
   await send({ type: "update-settings", settings });
+  applyTheme(settings.theme);
   showStatus("设置已保存");
   await load();
 }
 
 autoToggle.addEventListener("change", () => void saveSettings().catch((error) => showStatus(String(error), true)));
 minimumTabs.addEventListener("change", () => void saveSettings().catch((error) => showStatus(String(error), true)));
+themeToggle.addEventListener("change", () => void saveSettings().catch((error) => showStatus(String(error), true)));
 
 $("#select-all").addEventListener("click", () => {
   document.querySelectorAll<HTMLInputElement>('#tabs-list input[type="checkbox"]').forEach((input) => { input.checked = true; });
