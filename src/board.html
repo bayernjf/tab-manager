@@ -48,16 +48,22 @@
       <span class="workspace-device-prefix" data-i18n="thisDevice">本设备</span>
       <input id="workspace-device-name" class="workspace-device-input" type="text" maxlength="60" aria-label="本设备名称" spellcheck="false">
     </div>
-    <div class="workspace-controls">
-      <div class="workspace-name-field">
-        <input id="workspace-name" maxlength="80" data-i18n="workspaceNamePlaceholder|placeholder" placeholder="工作区名称" aria-describedby="workspace-name-error" aria-invalid="false">
-        <p id="workspace-name-error" class="workspace-name-toast" role="alert" hidden></p>
+    <div class="workspace-dialog-body">
+      <div class="workspace-dialog-left">
+        <div class="workspace-controls">
+          <div class="workspace-name-field">
+            <input id="workspace-name" maxlength="80" data-i18n="workspaceNamePlaceholder|placeholder" placeholder="工作区名称" aria-describedby="workspace-name-error" aria-invalid="false">
+            <p id="workspace-name-error" class="workspace-name-toast" role="alert" hidden></p>
+          </div>
+        </div>
+        <label class="workspace-select-all"><input id="workspace-select-all" type="checkbox" checked><span data-i18n="selectAll">全选</span></label>
+        <div id="workspace-tabs" class="workspace-tabs"></div>
+        <button id="save-workspace" class="button" type="button" data-i18n="saveSelectedTabs">保存选中标签</button>
+      </div>
+      <div class="workspace-dialog-right">
+        <div id="workspace-list" class="workspace-list"></div>
       </div>
     </div>
-    <label class="workspace-select-all"><input id="workspace-select-all" type="checkbox" checked><span data-i18n="selectAll">全选</span></label>
-    <div id="workspace-tabs" class="workspace-tabs"></div>
-    <button id="save-workspace" class="button" type="button" data-i18n="saveSelectedTabs">保存选中标签</button>
-    <div id="workspace-list" class="workspace-list"></div>
   </dialog>
   <dialog id="workspace-restore-dialog" class="workspace-dialog" aria-labelledby="workspace-restore-title">
     <h2 id="workspace-restore-title" data-i18n="restoreWorkspace">恢复工作区</h2><p id="workspace-restore-summary"></p><div id="workspace-restore-list" class="workspace-tabs workspace-restore-list"></div>
