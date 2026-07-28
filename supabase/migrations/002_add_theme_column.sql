@@ -1,4 +1,4 @@
--- Add theme column to user_settings for dark/light theme preference.
+-- Add theme and language columns to user_settings.
 
 alter table public.user_settings
 add column if not exists theme text not null default 'light'
@@ -6,3 +6,6 @@ add column if not exists theme text not null default 'light'
 
 create index if not exists user_settings_theme_idx
   on public.user_settings(user_id, theme);
+
+alter table public.user_settings
+add column if not exists language text;
