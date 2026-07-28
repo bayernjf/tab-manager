@@ -179,4 +179,5 @@ button.shortcut-add:hover { border-color: var(--border-shortcut-add-hover); back
 .shortcut-note::before { width: 5px; height: 5px; border-radius: 50%; background: var(--shortcut-note-dot); content: ""; }
 .appearance-row { display: grid; gap: 16px; }
 .appearance-row label { margin: 0; }
+#appearance-form button[type="submit"] { margin-top: 20px; }
 @media (max-width: 680px) { .layout { display: block; } .sidebar { padding: 14px; } .brand { margin: 0 0 12px; } nav { grid-template-columns: repeat(2, minmax(0, 1fr)); } .nav-link { text-align: center; } .content { padding: 24px 16px; } .list-item { display: block; } .list-actions { margin-top: 12px; } }
