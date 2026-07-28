@@ -1,4 +1,4 @@
-import { boardCardsForDevice, boardTabMatchesQuery, formatDeferredDateTime, getSiteKey, heightUnitsForTabCount, isBoardKey, manualBoardGridRow, moveManualBoardCard, nextDeferredOccurrence, placeBoardCards, isDeferredTabDue, segmentTabs, validateWorkspaceTitle, type BoardKey, type BoardLayout, type BoardSegmentCard, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type Settings, type WorkspaceSnapshot, type WorkspaceTab } from "./shared.js";
+import { boardCardsForDevice, boardTabMatchesQuery, formatDeferredDateTime, getSiteKey, heightUnitsForTabCount, isBoardKey, manualBoardGridRow, moveManualBoardCard, nextDeferredOccurrence, placeBoardCards, isDeferredTabDue, segmentTabs, validateWorkspaceTitle, type BoardKey, type BoardLayout, type BoardSegmentCard, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type Settings, type Theme, type WorkspaceSnapshot, type WorkspaceTab } from "./shared.js";
 
 interface BoardState {
   user: { id: string; email?: string } | null;
@@ -1244,10 +1244,15 @@ function renderWorkspaceHeader(): void {
   workspaceHeader.append(info, addForm, back);
 }
 
+function applyTheme(theme: Theme): void {
+  document.documentElement.setAttribute("data-theme", theme);
+}
+
 async function load(): Promise<void> {
   const boardTab = await chrome.tabs.getCurrent();
   const state = await send<BoardState>({ type: "get-board-state", windowId: boardTab?.windowId });
   currentState = state;
+  applyTheme(state.settings?.theme ?? "light");
   const needsLogin = state.loginRequired || !state.user;
   loginRequired.classList.toggle("hidden", !needsLogin);
   boardContent.classList.toggle("hidden", needsLogin);
