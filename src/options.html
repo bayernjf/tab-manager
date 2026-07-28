@@ -11,59 +11,59 @@
       <aside class="sidebar" aria-label="设置导航">
         <a class="brand" href="#account">Tab Garden</a>
         <nav>
-          <button class="nav-link active" type="button" data-panel="account" aria-controls="account" aria-current="page">账户与同步</button>
-          <button class="nav-link" type="button" data-panel="rules" aria-controls="rules">域名分组规则</button>
-          <button class="nav-link" type="button" data-panel="ignored" aria-controls="ignored">忽略网站</button>
-          <button class="nav-link" type="button" data-panel="appearance" aria-controls="appearance">默认外观</button>
-          <button class="nav-link" type="button" data-panel="data" aria-controls="data">导入与导出</button>
-          <button class="nav-link" type="button" data-panel="privacy" aria-controls="privacy">高级同步与隐私</button>
+          <button class="nav-link active" type="button" data-panel="account" aria-controls="account" aria-current="page" data-i18n="accountAndSync">账户与同步</button>
+          <button class="nav-link" type="button" data-panel="rules" aria-controls="rules" data-i18n="domainRules">域名分组规则</button>
+          <button class="nav-link" type="button" data-panel="ignored" aria-controls="ignored" data-i18n="ignoredSites">忽略网站</button>
+          <button class="nav-link" type="button" data-panel="appearance" aria-controls="appearance" data-i18n="appearance">默认外观</button>
+          <button class="nav-link" type="button" data-panel="data" aria-controls="data" data-i18n="importExport">导入与导出</button>
+          <button class="nav-link" type="button" data-panel="privacy" aria-controls="privacy" data-i18n="privacy">高级同步与隐私</button>
         </nav>
       </aside>
       <section class="content" aria-live="polite">
         <p id="status" class="status" role="status"></p>
         <section id="account" class="panel" tabindex="-1">
-          <h1>账户与同步</h1>
-          <div id="account-card" class="card"><h2>账户</h2><p id="account-email">正在读取账户状态…</p><p id="account-state" class="muted"></p><button id="sync-now" type="button">立即同步</button><button id="sign-out" class="secondary" type="button">退出登录</button></div>
+          <h1 data-i18n="accountAndSync">账户与同步</h1>
+          <div id="account-card" class="card"><h2 data-i18n="account">账户</h2><p id="account-email" data-i18n="readingAccount">正在读取账户状态…</p><p id="account-state" class="muted"></p><button id="sync-now" type="button" data-i18n="syncNow">立即同步</button><button id="sign-out" class="secondary" type="button" data-i18n="signOut">退出登录</button></div>
           <div id="login-required" class="card login-required" role="region" aria-labelledby="login-required-title" hidden>
-            <h2 id="login-required-title">请先登录</h2>
-            <p>登录后才能管理分组规则、忽略网站、外观、导入导出和同步设置。</p>
-            <button id="open-login" type="button">打开扩展弹窗登录</button>
-            <p id="login-instruction" class="muted" hidden>如果未打开弹窗，请点击浏览器工具栏中的 Tab Garden 图标，然后在弹窗中登录。</p>
+            <h2 id="login-required-title" data-i18n="pleaseLogin">请先登录</h2>
+            <p data-i18n="loginRequiredHint">登录后才能管理分组规则、忽略网站、外观、导入导出和同步设置。</p>
+            <button id="open-login" type="button" data-i18n="openLoginPopup">打开扩展弹窗登录</button>
+            <p id="login-instruction" class="muted" hidden data-i18n="loginInstruction">如果未打开弹窗，请点击浏览器工具栏中的 Tab Garden 图标，然后在弹窗中登录。</p>
           </div>
         </section>
         <section id="rules" class="panel" tabindex="-1" hidden>
-          <h1>域名分组规则</h1><p class="muted">命中的网站会按规则创建自动分组。</p>
-          <form id="rule-form" class="card"><input id="rule-id" type="hidden"><label>规则标题 <input id="rule-title" maxlength="40" required></label><label>网站域名 <input id="rule-domains" placeholder="example.com, docs.example.com" required></label><label>匹配范围 <select id="rule-scope"><option value="domain-and-subdomains">域名及其子域名</option><option value="exact">仅精确域名</option></select></label><label>颜色 <select id="rule-color"></select></label><label class="switch"><input id="rule-enabled" type="checkbox" checked> 启用此规则</label><div><button id="rule-submit" type="submit">添加规则</button><button id="rule-cancel" class="secondary" type="button" hidden>取消编辑</button></div></form>
-          <div id="rules-list" class="list" aria-label="分组规则列表"></div>
+          <h1 data-i18n="domainRules">域名分组规则</h1><p class="muted" data-i18n="domainRulesHint">命中的网站会按规则创建自动分组。</p>
+          <form id="rule-form" class="card"><input id="rule-id" type="hidden"><label data-i18n="ruleTitle">规则标题 <input id="rule-title" maxlength="40" required></label><label data-i18n="siteDomains">网站域名 <input id="rule-domains" placeholder="example.com, docs.example.com" required></label><label data-i18n="matchScope">匹配范围 <select id="rule-scope"><option value="domain-and-subdomains" data-i18n="domainAndSubdomains">域名及其子域名</option><option value="exact" data-i18n="exact">仅精确域名</option></select></label><label data-i18n="color">颜色 <select id="rule-color"></select></label><label class="switch"><input id="rule-enabled" type="checkbox" checked> <span data-i18n="enableRule">启用此规则</span></label><div><button id="rule-submit" type="submit" data-i18n="addRule">添加规则</button><button id="rule-cancel" class="secondary" type="button" hidden data-i18n="cancel">取消编辑</button></div></form>
+          <div id="rules-list" class="list" data-i18n="ruleList|aria-label" aria-label="分组规则列表"></div>
         </section>
         <section id="ignored" class="panel" tabindex="-1" hidden>
-          <h1>忽略网站</h1><p class="muted">这些网站不会参与自动分组。</p>
-          <form id="ignored-form" class="card"><label>网站域名 <input id="ignored-domain" placeholder="example.com" required></label><label>匹配范围 <select id="ignored-scope"><option value="domain-and-subdomains">域名及其子域名</option><option value="exact">仅精确域名</option></select></label><button type="submit">添加网站</button></form>
-          <div id="ignored-list" class="list" aria-label="忽略网站列表"></div>
+          <h1 data-i18n="ignoredSites">忽略网站</h1><p class="muted" data-i18n="ignoredSitesHint">这些网站不会参与自动分组。</p>
+          <form id="ignored-form" class="card"><label data-i18n="siteDomain">网站域名 <input id="ignored-domain" placeholder="example.com" required></label><label data-i18n="matchScope">匹配范围 <select id="ignored-scope"><option value="domain-and-subdomains" data-i18n="domainAndSubdomains">域名及其子域名</option><option value="exact" data-i18n="exact">仅精确域名</option></select></label><button type="submit" data-i18n="addSite">添加网站</button></form>
+          <div id="ignored-list" class="list" data-i18n="ignoredList|aria-label" aria-label="忽略网站列表"></div>
         </section>
         <section id="appearance" class="panel" tabindex="-1" hidden>
-          <h1>默认外观</h1>
-          <form id="appearance-form" class="card"><h2>默认分组颜色</h2><label>颜色 <select id="default-color" name="defaultColor"></select></label><button type="submit">保存默认颜色</button></form>
+          <h1 data-i18n="appearance">默认外观</h1>
+          <form id="appearance-form" class="card"><h2 data-i18n="defaultGroupColor">默认分组颜色</h2><label data-i18n="color">颜色 <select id="default-color" name="defaultColor"></select></label><button type="submit" data-i18n="saveDefaultColor">保存默认颜色</button></form>
         </section>
         <section id="data" class="panel" tabindex="-1" hidden>
-          <h1>导入与导出</h1><div class="card"><h2>导出</h2><p class="muted">下载设置、分组规则和忽略网站的 JSON 备份。</p><button id="export-data" type="button">导出数据</button></div><div class="card"><h2>导入</h2><p class="muted">选择之前导出的 JSON 文件；确认前不会修改当前设置。</p><label for="import-file">选择 JSON 导入文件</label><input id="import-file" type="file" accept="application/json,.json"><p id="import-preview" class="muted" aria-live="polite"></p><button id="confirm-import" type="button" disabled>确认导入</button><button id="cancel-import" class="secondary" type="button" disabled>取消</button></div>
+          <h1 data-i18n="importExport">导入与导出</h1><div class="card"><h2 data-i18n="export">导出</h2><p class="muted" data-i18n="exportHint">下载设置、分组规则和忽略网站的 JSON 备份。</p><button id="export-data" type="button" data-i18n="exportData">导出数据</button></div><div class="card"><h2 data-i18n="import">导入</h2><p class="muted" data-i18n="importHint">选择之前导出的 JSON 文件；确认前不会修改当前设置。</p><label for="import-file" data-i18n="selectJsonFile">选择 JSON 导入文件</label><input id="import-file" type="file" accept="application/json,.json"><p id="import-preview" class="muted" aria-live="polite"></p><button id="confirm-import" type="button" disabled data-i18n="confirmImport">确认导入</button><button id="cancel-import" class="secondary" type="button" disabled data-i18n="cancel">取消</button></div>
         </section>
         <section id="privacy" class="panel" tabindex="-1" hidden>
-          <h1>高级同步与隐私</h1>
-          <form id="settings-form"><section class="card"><h2>同步范围</h2><label class="switch"><input id="cloud-sync" type="checkbox"> 启用云端同步</label><label class="switch"><input id="rules-sync" type="checkbox"> 同步分组规则</label><label class="switch"><input id="ignore-sync" type="checkbox"> 同步忽略网站</label></section><section class="card"><h2>新标签页</h2><label class="switch"><input id="new-tab-board" type="checkbox" aria-describedby="new-tab-board-description"> 新标签页打开看板</label><p id="new-tab-board-description" class="muted">启用后，点击 + 或按 Ctrl/Cmd+T 会打开 Tab Garden 看板；关闭后保持 Chrome/Edge 原生新标签页不变。</p></section><section class="card shortcut-card">
+          <h1 data-i18n="privacy">高级同步与隐私</h1>
+          <form id="settings-form"><section class="card"><h2 data-i18n="syncScope">同步范围</h2><label class="switch"><input id="cloud-sync" type="checkbox"> <span data-i18n="cloudSync">启用云端同步</span></label><label class="switch"><input id="rules-sync" type="checkbox"> <span data-i18n="syncRules">同步分组规则</span></label><label class="switch"><input id="ignore-sync" type="checkbox"> <span data-i18n="syncIgnore">同步忽略网站</span></label></section><section class="card"><h2 data-i18n="newTab">新标签页</h2><label class="switch"><input id="new-tab-board" type="checkbox" aria-describedby="new-tab-board-description"> <span data-i18n="openBoardOnNewTab">新标签页打开看板</span></label><p id="new-tab-board-description" class="muted" data-i18n="openBoardOnNewTabHint">启用后，点击 + 或按 Ctrl/Cmd+T 会打开 Tab Garden 看板；关闭后保持 Chrome/Edge 原生新标签页不变。</p></section><section class="card shortcut-card">
             <div class="shortcut-card-header">
               <div>
-                <h2>快捷提醒时间</h2>
-                <p class="muted">在“稍后处理”菜单中显示倒计时，需要多久后提醒。</p>
+                <h2 data-i18n="shortcutTimes">快捷提醒时间</h2>
+                <p class="muted" data-i18n="shortcutTimesHint">在“稍后处理”菜单中显示倒计时，需要多久后提醒。</p>
               </div>
               <span id="deferred-shortcut-count" class="shortcut-count" aria-live="polite">0 / 5</span>
             </div>
             <div class="shortcut-editor">
               <div id="deferred-shortcuts" class="deferred-shortcuts"></div>
-              <button id="add-deferred-shortcut" class="shortcut-add" type="button">＋ 添加倒计时</button>
+              <button id="add-deferred-shortcut" class="shortcut-add" type="button" data-i18n="addShortcut">＋ 添加倒计时</button>
             </div>
-            <p id="deferred-shortcut-note" class="shortcut-note">选择倒计时时间，保存时自动去重。</p>
-          </section><button type="submit">保存同步设置</button></form>
+            <p id="deferred-shortcut-note" class="shortcut-note" data-i18n="shortcutNote">选择倒计时时间，保存时自动去重。</p>
+          </section><button type="submit" data-i18n="saveSyncSettings">保存同步设置</button></form>
         </section>
       </section>
     </main>
