@@ -59,6 +59,7 @@ export function settingsSyncRow(userId: string, settings: Settings): SettingsSyn
     sync_rules_enabled: settings.syncRulesEnabled,
     sync_ignore_list_enabled: settings.syncIgnoreListEnabled,
     deferred_shortcut_times: settings.deferredShortcutTimes,
+    theme: settings.theme,
   };
 }
 
@@ -78,13 +79,14 @@ export async function pushSettings(userId: string, settings: Settings): Promise<
       sync_rules_enabled: concreteSettings.syncRulesEnabled,
       sync_ignore_list_enabled: concreteSettings.syncIgnoreListEnabled,
       deferred_shortcut_times: concreteSettings.deferredShortcutTimes,
+      theme: concreteSettings.theme,
     }),
   });
 }
 
 export async function syncSettings(userId: string): Promise<Settings> {
   const rows = await databaseRequest<SettingsSyncRow[]>(
-    `/user_settings?user_id=eq.${encodeURIComponent(userId)}&select=user_id,auto_group_enabled,minimum_tabs,open_board_on_new_tab,default_group_color,cloud_sync_enabled,sync_rules_enabled,sync_ignore_list_enabled,deferred_shortcut_times&limit=1`,
+    `/user_settings?user_id=eq.${encodeURIComponent(userId)}&select=user_id,auto_group_enabled,minimum_tabs,open_board_on_new_tab,default_group_color,cloud_sync_enabled,sync_rules_enabled,sync_ignore_list_enabled,deferred_shortcut_times,theme&limit=1`,
   );
   if (rows[0]) {
     const remoteSettings = settingsFromSyncRow(rows[0], userId);
