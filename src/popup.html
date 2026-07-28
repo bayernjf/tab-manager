@@ -29,13 +29,12 @@
   <main id="app-view" class="hidden">
   <header>
     <div><span class="eyebrow">TAB GARDEN</span><h1 data-i18n="welcome">标签花园</h1></div>
-    <div class="header-actions"><button id="open-board" class="header-action board-action" data-i18n="openBoard|title" title="打开标签看板"><span aria-hidden="true">▦</span><span data-i18n="openBoard">看板</span></button><button id="logout" class="header-action logout-action" data-i18n="logout|title" title="退出登录"><span aria-hidden="true">↗</span><span data-i18n="logout">退出</span></button></div>
+    <div class="header-actions"><button id="theme-toggle" class="header-action theme-action" type="button" aria-pressed="false"><span aria-hidden="true">🌓</span><span data-i18n="darkTheme">深色</span></button><button id="open-board" class="header-action board-action" data-i18n="openBoard|title" title="打开标签看板"><span aria-hidden="true">▦</span><span data-i18n="openBoard">看板</span></button><button id="logout" class="header-action logout-action" data-i18n="logout|title" title="退出登录"><span aria-hidden="true">↗</span><span data-i18n="logout">退出</span></button></div>
   </header>
 
   <section class="settings-card">
     <label class="switch-row"><span><strong data-i18n="autoGroup">看板自动分组</strong><small data-i18n="autoGroupHint">仅在扩展看板中按网站聚合，不修改浏览器标签</small></span><input id="auto-toggle" type="checkbox"><i></i></label>
     <label class="threshold"><span>达到</span><select id="minimum-tabs"><option value="2">2</option><option value="3">3</option><option value="4">4</option></select><span>个标签页时在看板中聚合</span></label>
-    <label class="switch-row"><span><strong data-i18n="darkTheme">深色主题</strong><small data-i18n="darkThemeHint">启用深色主题显示</small></span><input id="theme-toggle" type="checkbox"><i></i></label>
   </section>
 
   <section>
