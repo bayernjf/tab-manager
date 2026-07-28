@@ -93,7 +93,7 @@ export const i18n = {
       const key = element.getAttribute("data-i18n");
       if (!key) return;
 
-      const attrMatch = key.match(/^([^|]+)\|([a-z]+)$/);
+      const attrMatch = key.match(/^([^|]+)\|([a-z-]+)$/);
       const actualKey = attrMatch ? attrMatch[1]! : key;
       const attrName = attrMatch ? attrMatch[2]! : "textContent";
 
@@ -126,7 +126,8 @@ export const i18n = {
     if (lang) {
       currentMessages = await loadLanguagePack(lang);
     } else {
-      currentMessages = {};
+      const detected = this.detectLanguage();
+      currentMessages = await loadLanguagePack(detected);
     }
     languageLoaded = true;
   },
