@@ -522,7 +522,7 @@ test("renders a compact accessible deferred shortcut editor", async () => {
     readFile(new URL("../dist/options.css", import.meta.url), "utf8"),
   ]);
 
-  const shortcutCardClasses = html.match(/<section class="([^"]*\bshortcut-card\b[^"]*)"/)?.[1]?.split(/\s+/);
+  const shortcutCardClasses = html.match(/<section[^>]*\bclass="([^"]*\bshortcut-card\b[^"]*)"/)?.[1]?.split(/\s+/);
   assert.ok(shortcutCardClasses?.includes("card"));
   assert.ok(shortcutCardClasses.includes("shortcut-card"));
   assert.match(html, /<[^>]+(?=[^>]*\bid="deferred-shortcut-count")(?=[^>]*\baria-live="polite")[^>]*>/);
