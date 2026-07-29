@@ -12,6 +12,8 @@ import {
   previewPortableImport,
   syncFailureStatus,
   toPortableDataFromState,
+  toWorkspacePortableData,
+  previewWorkspacePortableImport,
   updateGroupRuleFromInput,
   validateBoardLayout,
   validateBoardTabDrop,
@@ -21,6 +23,9 @@ import {
   validateWorkspaceTitle,
   validateWorkspaceTab,
   validateWorkspaceSnapshot,
+  validateRecentlyClosedTab,
+  validateTabProcessInfo,
+  validateWorkspacePortableData,
   workspaceRestorePreview,
   workspaceTab,
   appendWorkspaceTab,
@@ -39,8 +44,44 @@ import {
   type PortableImportPreview,
   type Settings,
   type WorkspaceSnapshot,
+  type DeferredTab,
+  type RecentlyClosedTab,
+  type TabProcessInfo,
+  type WorkspaceHistory,
+  type WorkspacePortableImportPreview,
+  isDeferredTabDue,
+  formatDeferredDateTime,
+  MAX_WORKSPACE_HISTORY_VERSIONS,
 } from "./shared.js";
-import { loadState, loadWorkspaceSnapshots, loadDeferredTabs, prepareOptionsForUser, saveBoardAssignments, saveBoardCustomGroups, saveBoardLayouts, saveDeferredTabs, saveOptionsData, saveSettings, saveWorkspaceSnapshots, getOrCreateDeviceId, getOrCreateDeviceName } from "./storage.js";
+import {
+  loadState,
+  loadWorkspaceSnapshots,
+  loadDeferredTabs,
+  prepareOptionsForUser,
+  saveBoardAssignments,
+  saveBoardCustomGroups,
+  saveBoardLayouts,
+  saveDeferredTabs,
+  saveOptionsData,
+  saveSettings,
+  saveWorkspaceSnapshots,
+  getOrCreateDeviceId,
+  getOrCreateDeviceName,
+  loadRecentlyClosedTabs,
+  saveRecentlyClosedTabs,
+  appendRecentlyClosedTab,
+  removeRecentlyClosedTab,
+  clearRecentlyClosedTabs,
+  loadTabProcesses,
+  saveTabProcesses,
+  upsertTabProcess,
+  clearTabProcesses,
+  loadWorkspaceHistory,
+  loadAllWorkspaceHistories,
+  saveWorkspaceHistory,
+  saveWorkspaceVersion,
+  deleteWorkspaceHistory,
+} from "./storage.js";
 import { getCurrentUser, getStoredUser, signIn, signOut, signUp } from "./auth.js";
 import { pushSettings, replaceBoardSyncData, replaceOptionalSyncData, restoreBoardSyncData, restoreOptionalSyncData, syncSettings, fetchWorkspaces, upsertWorkspace, deleteWorkspaceRow, renameDeviceWorkspaces } from "./sync.js";
 
@@ -95,14 +136,31 @@ type PopupMessage =
   | { type: "move-board-group"; boardKey: unknown; rank: unknown }
   | { type: "create-board-group"; title: unknown; color: unknown }
   | { type: "delete-board-group"; id: unknown; confirmed?: boolean }
-  | { type: "save-board-layout"; layout: unknown };
+  | { type: "save-board-layout"; layout: unknown }
+  | { type: "get-recently-closed" }
+  | { type: "restore-recently-closed"; id: unknown; windowId: unknown }
+  | { type: "remove-recently-closed"; id: unknown }
+  | { type: "clear-recently-closed" }
+  | { type: "get-tab-processes" }
+  | { type: "refresh-tab-processes" }
+  | { type: "get-workspace-history"; id: unknown }
+  | { type: "save-workspace-history-version"; id: unknown; note?: unknown }
+  | { type: "restore-workspace-history-version"; id: unknown; version: unknown; windowId: unknown; confirmed?: boolean }
+  | { type: "export-workspaces-json" }
+  | { type: "import-workspaces-json"; data?: unknown; confirmed?: boolean; cancelled?: boolean };
 
 interface PendingOptionsImport {
   preview: PortableImportPreview;
   userId: string;
 }
 
+interface PendingWorkspaceImport {
+  preview: WorkspacePortableImportPreview;
+  userId: string;
+}
+
 let pendingOptionsImport: PendingOptionsImport | null = null;
+let pendingWorkspaceImport: PendingWorkspaceImport | null = null;
 
 function safeRecordId(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && value.length <= 128;
@@ -394,6 +452,80 @@ async function syncBoardMutation(state: Awaited<ReturnType<typeof loadState>>, i
   }
 }
 
+const DEFERRED_CHECK_ALARM = "deferred-tab-check";
+const NOTIFICATION_DEFERRED_PREFIX = "deferred:";
+let notifiedDeferredIds = new Set<string>();
+
+async function checkDueDeferredTabs(): Promise<void> {
+  const tabs = await loadDeferredTabs();
+  const now = Date.now();
+  const dueTabs = tabs.filter((tab) => isDeferredTabDue(tab, now) && !notifiedDeferredIds.has(tab.id));
+  if (dueTabs.length === 0) return;
+
+  for (const tab of dueTabs) {
+    const notificationId = `${NOTIFICATION_DEFERRED_PREFIX}${tab.id}`;
+    const title = i18n.t("deferredDueTitle") || "Reminder";
+    const message = `${tab.title}\n${i18n.t("deferredDueScheduled") || "Scheduled at"}: ${formatDeferredDateTime(tab.dueAt)}`;
+    const favIcon = tab.favIconUrl?.startsWith("http:") || tab.favIconUrl?.startsWith("https:") || tab.favIconUrl?.startsWith("data:")
+      ? tab.favIconUrl
+      : "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    try {
+      await chrome.notifications.create(notificationId, {
+        type: "basic",
+        iconUrl: favIcon,
+        title,
+        message,
+        priority: 2,
+        requireInteraction: false,
+      } as chrome.notifications.NotificationCreateOptions);
+      notifiedDeferredIds.add(tab.id);
+    } catch {
+      // Notification creation may fail on platforms without support; skip silently.
+    }
+  }
+}
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === DEFERRED_CHECK_ALARM) {
+    void checkDueDeferredTabs();
+  }
+});
+
+chrome.notifications.onClicked.addListener(async (notificationId) => {
+  if (!notificationId.startsWith(NOTIFICATION_DEFERRED_PREFIX)) return;
+  const deferredId = notificationId.slice(NOTIFICATION_DEFERRED_PREFIX.length);
+  try {
+    await chrome.notifications.clear(notificationId);
+  } catch {
+    // Clear may fail if already dismissed; proceed anyway.
+  }
+  const tabs = await loadDeferredTabs();
+  const tab = tabs.find((item) => item.id === deferredId);
+  if (!tab) return;
+  const [currentWindow] = await chrome.windows.getAll({ windowTypes: ["normal"] });
+  const windowId = currentWindow?.id;
+  if (windowId == null) return;
+  await chrome.tabs.create({ windowId, url: tab.url, active: true });
+  await saveDeferredTabs(tabs.filter((item) => item.id !== deferredId));
+  notifiedDeferredIds.delete(deferredId);
+  if (currentWindow?.id != null) {
+    await chrome.windows.update(currentWindow.id, { focused: true }).catch(() => {});
+  }
+});
+
+chrome.notifications.onClosed.addListener((notificationId) => {
+  if (!notificationId.startsWith(NOTIFICATION_DEFERRED_PREFIX)) return;
+  const deferredId = notificationId.slice(NOTIFICATION_DEFERRED_PREFIX.length);
+  notifiedDeferredIds.delete(deferredId);
+});
+
+async function ensureDeferredCheckAlarm(): Promise<void> {
+  const existing = await chrome.alarms.get(DEFERRED_CHECK_ALARM).catch(() => undefined);
+  if (existing) return;
+  await chrome.alarms.create(DEFERRED_CHECK_ALARM, { periodInMinutes: 1 });
+  void checkDueDeferredTabs();
+}
+
 chrome.tabs.onCreated.addListener((tab) => {
   void (async () => {
     try {
@@ -405,6 +537,125 @@ chrome.tabs.onCreated.addListener((tab) => {
       // Leave the newly created tab unchanged when local storage or Chrome rejects the update.
     }
   })();
+});
+
+chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
+  void (async () => {
+    try {
+      if (removeInfo.isWindowClosing) return;
+      const tab = await chrome.tabs.get(tabId).catch(() => null);
+      if (!tab || !tab.url || !getSiteKey(tab.url)) return;
+      const rawInfo = removeInfo as { isWindowClosing: boolean; sessionId?: unknown };
+      const closed: RecentlyClosedTab = {
+        id: crypto.randomUUID(),
+        title: tab.title || "未命名标签页",
+        url: tab.url,
+        ...(tab.favIconUrl ? { favIconUrl: tab.favIconUrl } : {}),
+        closedAt: new Date().toISOString(),
+        ...(typeof rawInfo.sessionId === "string" ? { sessionId: rawInfo.sessionId } : {}),
+      };
+      const validated = validateRecentlyClosedTab(closed);
+      if (validated) await appendRecentlyClosedTab(validated).catch(() => {});
+    } catch {
+      // Ignore storage failures for recently closed tracking.
+    }
+  })();
+});
+
+chrome.commands.onCommand.addListener((command) => {
+  void (async () => {
+    if (command === "open-tab-board") {
+      try {
+        const window = await chrome.windows.getCurrent();
+        if (window.id == null || window.type !== "normal") return;
+        const boardUrl = chrome.runtime.getURL("board.html");
+        const existing = await chrome.tabs.query({ url: boardUrl });
+        const target = existing[0];
+        if (target && typeof target.id === "number") {
+          if (target.windowId != null && target.windowId !== window.id) await chrome.windows.update(target.windowId, { focused: true }).catch(() => {});
+          await chrome.tabs.update(target.id, { active: true }).catch(() => {});
+          return;
+        }
+        await chrome.tabs.create({ windowId: window.id, url: boardUrl });
+      } catch {
+        // Ignore command execution failures.
+      }
+      return;
+    }
+    if (command === "defer-active-tab") {
+      try {
+        const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (active?.id == null || !active.url || !getSiteKey(active.url) || active.pinned) return;
+        const user = await getStoredUser();
+        if (!user) return;
+        const state = await loadState();
+        const defaultTimes = state.settings.deferredShortcutTimes?.[0] ?? "09:00";
+        const now = new Date();
+        const [hours, minutes] = defaultTimes.split(":").map(Number) as [number, number];
+        const due = new Date(now);
+        due.setHours(hours, minutes, 0, 0);
+        if (due.getTime() <= now.getTime()) due.setDate(due.getDate() + 1);
+        const tab = boardTab(active);
+        if (!tab?.url) return;
+        const deferred = validateDeferredTab({ id: crypto.randomUUID(), title: tab.title, url: tab.url, favIconUrl: tab.favIconUrl, dueAt: due.toISOString(), createdAt: new Date().toISOString() });
+        if (!deferred) return;
+        await saveDeferredTabs([...await loadDeferredTabs(), deferred]);
+        await chrome.tabs.remove(active.id);
+      } catch {
+        // Ignore command execution failures.
+      }
+      return;
+    }
+    if (command === "save-workspace") {
+      try {
+        const user = await getStoredUser();
+        if (!user) return;
+        const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+        const windowId = active?.windowId;
+        if (windowId == null) return;
+        const window = await chrome.windows.get(windowId);
+        if (window.type !== "normal") return;
+        const tabs = await chrome.tabs.query({ windowId });
+        const eligible = tabs.filter((tab) => tab.id != null && !tab.pinned && getSiteKey(tab.url));
+        if (eligible.length === 0) return;
+        const [deviceId, deviceName] = await Promise.all([getOrCreateDeviceId(), getOrCreateDeviceName()]);
+        const state = await loadState();
+        const useCloud = state.settings.cloudSyncEnabled === true;
+        const existing = await loadAllWorkspaces(user.id, useCloud);
+        const existingTitles = existing.filter((workspace) => workspace.deviceName === deviceName).map((workspace) => workspace.title);
+        const baseTitle = i18n.t("cmdSaveWorkspace") || "快速保存";
+        let titleObj = validateWorkspaceTitle(baseTitle, existingTitles);
+        if (titleObj.status === "duplicate") {
+          let counter = 2;
+          while (titleObj.status === "duplicate" && counter <= 100) {
+            titleObj = validateWorkspaceTitle(`${baseTitle} ${counter}`, existingTitles);
+            counter += 1;
+          }
+        }
+        if (titleObj.status !== "valid") return;
+        const validations = eligible.map((tab) => validateWorkspaceTab({ title: tab.title || "未命名标签页", url: tab.url }));
+        const validTabs = validations.flatMap((v) => v.status === "valid" ? [v.tab] : []);
+        if (validTabs.length === 0) return;
+        const snapshot = validateWorkspaceSnapshot({ id: crypto.randomUUID(), title: titleObj.title, createdAt: new Date().toISOString(), tabs: validTabs, deviceId, deviceName });
+        if (!snapshot) return;
+        if (useCloud) await upsertWorkspace(user.id, snapshot).catch(() => {});
+        await saveWorkspaceSnapshots([...existing, snapshot]).catch(() => {});
+      } catch {
+        // Ignore command execution failures.
+      }
+      return;
+    }
+  })();
+});
+
+void ensureDeferredCheckAlarm();
+
+chrome.runtime.onInstalled.addListener(() => {
+  void ensureDeferredCheckAlarm();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  void ensureDeferredCheckAlarm();
 });
 
 chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendResponse) => {
@@ -664,10 +915,11 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       if (!tab || window.type !== "normal") throw new Error(i18n.t("reminderNotFound"));
       await chrome.tabs.create({ windowId: message.windowId, url: tab.url });
       await saveDeferredTabs(deferredTabs.filter((item) => item.id !== message.id));
+      notifiedDeferredIds.delete(message.id);
       return { ok: true };
     }
-    if (message.type === "reschedule-deferred-tab") { await requireBoardUser(); const dueAt = message.dueAt; if (!safeRecordId(message.id) || typeof dueAt !== "string" || Date.parse(dueAt) <= Date.now()) throw new Error(i18n.t("reminderTimeInvalid")); const tabs = (await loadDeferredTabs()).map((tab) => tab.id === message.id ? { ...tab, dueAt } : tab); await saveDeferredTabs(tabs); return { ok: true }; }
-    if (message.type === "delete-deferred-tab") { await requireBoardUser(); if (!safeRecordId(message.id)) throw new Error(i18n.t("reminderNotFound")); await saveDeferredTabs((await loadDeferredTabs()).filter((tab) => tab.id !== message.id)); return { ok: true }; }
+    if (message.type === "reschedule-deferred-tab") { await requireBoardUser(); const dueAt = message.dueAt; if (!safeRecordId(message.id) || typeof dueAt !== "string" || Date.parse(dueAt) <= Date.now()) throw new Error(i18n.t("reminderTimeInvalid")); const tabs = (await loadDeferredTabs()).map((tab) => tab.id === message.id ? { ...tab, dueAt } : tab); await saveDeferredTabs(tabs); notifiedDeferredIds.delete(message.id); return { ok: true }; }
+    if (message.type === "delete-deferred-tab") { await requireBoardUser(); if (!safeRecordId(message.id)) throw new Error(i18n.t("reminderNotFound")); await saveDeferredTabs((await loadDeferredTabs()).filter((tab) => tab.id !== message.id)); notifiedDeferredIds.delete(message.id); return { ok: true }; }
     if (message.type === "activate-board-tab") {
       await requireBoardUser();
       if (typeof message.tabId !== "number" || !Number.isInteger(message.tabId) || message.tabId <= 0) throw new Error(i18n.t("invalidTabData"));
@@ -897,6 +1149,178 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       if (boardKey) state.boardAssignments = Object.fromEntries(Object.entries(state.boardAssignments).filter(([, assignment]) => assignment.boardKey !== boardKey));
       await Promise.all([saveBoardAssignments(state.boardAssignments), saveBoardCustomGroups(state.boardCustomGroups)]);
       return { ok: true };
+    }
+    if (message.type === "get-recently-closed") {
+      await requireBoardUser();
+      return { tabs: await loadRecentlyClosedTabs() };
+    }
+    if (message.type === "restore-recently-closed") {
+      await requireBoardUser();
+      if (!safeRecordId(message.id)) throw new Error("记录不存在");
+      if (typeof message.windowId !== "number" || !Number.isInteger(message.windowId)) throw new Error("窗口无效");
+      const tabs = await loadRecentlyClosedTabs();
+      const tab = tabs.find((item) => item.id === message.id);
+      const window = await chrome.windows.get(message.windowId);
+      if (!tab || window.type !== "normal") throw new Error("记录或窗口不存在");
+      if (tab.sessionId) {
+        try {
+          await chrome.sessions.restore(tab.sessionId);
+        } catch {
+          await chrome.tabs.create({ windowId: message.windowId, url: tab.url });
+        }
+      } else {
+        await chrome.tabs.create({ windowId: message.windowId, url: tab.url });
+      }
+      await removeRecentlyClosedTab(tab.id);
+      return { ok: true };
+    }
+    if (message.type === "remove-recently-closed") {
+      await requireBoardUser();
+      if (!safeRecordId(message.id)) throw new Error("记录 ID 无效");
+      await removeRecentlyClosedTab(message.id);
+      return { ok: true };
+    }
+    if (message.type === "clear-recently-closed") {
+      await requireBoardUser();
+      await clearRecentlyClosedTabs();
+      return { ok: true };
+    }
+    if (message.type === "get-tab-processes") {
+      await requireBoardUser();
+      return { processes: await loadTabProcesses(), capturedAt: new Date().toISOString() };
+    }
+    if (message.type === "refresh-tab-processes") {
+      await requireBoardUser();
+      const windows = await chrome.windows.getAll({ populate: true, windowTypes: ["normal"] });
+      const captured = new Date().toISOString();
+      const processes: TabProcessInfo[] = [];
+      const chromeAny = chrome as typeof chrome & {
+        processes?: {
+          getProcessIdForTab(tabId: number): Promise<number>;
+          getProcessInfo(processIds: number[], includeMemory: boolean): Promise<Record<number, { privateMemory?: number; cpu?: number }>>;
+        };
+      };
+      for (const window of windows) {
+        for (const tab of window.tabs ?? []) {
+          if (tab.id == null) continue;
+          const info: TabProcessInfo = {
+            tabId: tab.id,
+            title: tab.title || "未命名标签页",
+            ...(tab.url ? { url: tab.url } : {}),
+            capturedAt: captured,
+          };
+          if (chromeAny.processes) {
+            try {
+              const proc = await chromeAny.processes.getProcessIdForTab(tab.id).catch(() => -1);
+              if (proc && proc > 0) {
+                info.processId = proc;
+                const processInfo = await chromeAny.processes.getProcessInfo([proc], false).catch(() => ({})) as Record<number, { privateMemory?: number; cpu?: number }>;
+                const p = processInfo[proc];
+                if (p) {
+                  if (typeof p.privateMemory === "number") info.memoryKB = Math.round(p.privateMemory / 1024);
+                  if (typeof p.cpu === "number") info.cpuUsage = Math.min(100, Math.max(0, p.cpu));
+                }
+              }
+            } catch {
+              // Process API may be unavailable; skip silently.
+            }
+          }
+          const validated = validateTabProcessInfo(info);
+          if (validated) processes.push(validated);
+        }
+      }
+      await saveTabProcesses(processes);
+      return { processes, capturedAt: captured };
+    }
+    if (message.type === "get-workspace-history") {
+      const user = await requireBoardUser();
+      if (!safeRecordId(message.id)) throw new Error("工作区不存在");
+      const history = await loadWorkspaceHistory(message.id);
+      return {
+        history, maxVersions: MAX_WORKSPACE_HISTORY_VERSIONS };
+    }
+    if (message.type === "save-workspace-history-version") {
+      const user = await requireBoardUser();
+      if (!safeRecordId(message.id)) throw new Error("工作区不存在");
+      const state = await loadState();
+      const useCloud = state.settings.cloudSyncEnabled === true;
+      const workspace = (await loadAllWorkspaces(user.id, useCloud)).find((ws) => ws.id === message.id);
+      if (!workspace) throw new Error("工作区不存在");
+      const note = typeof message.note === "string" ? message.note : undefined;
+      const updated = await saveWorkspaceVersion(message.id, workspace, note);
+      return { ok: true, history: updated };
+    }
+    if (message.type === "restore-workspace-history-version") {
+      const user = await requireBoardUser();
+      if (message.confirmed !== true) throw new Error("请确认恢复历史版本");
+      if (!safeRecordId(message.id) || typeof message.version !== "number" || !Number.isInteger(message.version) || message.version < 1) throw new Error("参数无效");
+      if (typeof message.windowId !== "number" || !Number.isInteger(message.windowId)) throw new Error("窗口无效");
+      const history = await loadWorkspaceHistory(message.id);
+      const version = history?.versions.find((v) => v.version === message.version);
+      const window = await chrome.windows.get(message.windowId);
+      if (!version || window.type !== "normal") throw new Error("历史版本或窗口不存在");
+      const preview = workspaceRestorePreview(version.snapshot);
+      for (const tab of preview.tabs) await chrome.tabs.create({ windowId: message.windowId, url: tab.url, active: false });
+      return { ok: true, created: preview.tabs.length, unavailableCount: preview.unavailableCount };
+    }
+    if (message.type === "export-workspaces-json") {
+      const user = await requireBoardUser();
+      const state = await loadState();
+      const workspaces = await loadAllWorkspaces(user.id, state.settings.cloudSyncEnabled === true);
+      return { data: toWorkspacePortableData(workspaces) };
+    }
+    if (message.type === "import-workspaces-json") {
+      if (message.cancelled) {
+        pendingWorkspaceImport = null;
+        return { ok: true, cancelled: true };
+      }
+      if (!message.confirmed) {
+        const user = await getCurrentUser();
+        if (!user) throw new Error("请先登录后再导入工作区");
+        const preview = previewWorkspacePortableImport(message.data);
+        if (!preview) {
+          pendingWorkspaceImport = null;
+          throw new Error("导入文件格式无效");
+        }
+        pendingWorkspaceImport = { preview, userId: user.id };
+        return { ok: true, preview: { workspaceCount: preview.workspaceCount, totalTabs: preview.totalTabs } };
+      }
+      const currentUser = await getCurrentUser();
+      if (!pendingWorkspaceImport || !currentUser || !canConfirmOptionsImport(pendingWorkspaceImport.userId, currentUser.id ?? null)) {
+        pendingWorkspaceImport = null;
+        throw new Error("导入预览已失效，请重新预览后再确认");
+      }
+      const state = await loadState();
+      const useCloud = state.settings.cloudSyncEnabled === true;
+      const existing = await loadAllWorkspaces(currentUser.id, useCloud);
+      const imported = pendingWorkspaceImport.preview.data.workspaces;
+      const merged: WorkspaceSnapshot[] = [...existing];
+      for (const ws of imported) {
+        const titleValidation = validateWorkspaceTitle(ws.title, merged.map((m) => m.title));
+        if (titleValidation.status === "valid") {
+          const newWs = { ...ws, id: crypto.randomUUID() };
+          merged.push(newWs);
+          if (useCloud) await upsertWorkspace(currentUser.id, newWs).catch(() => {});
+          continue;
+        }
+        if (titleValidation.status === "duplicate") {
+          let counter = 2;
+          let adjusted: ReturnType<typeof validateWorkspaceTitle> = titleValidation;
+          while (adjusted.status === "duplicate" && counter <= 100) {
+            adjusted = validateWorkspaceTitle(`${ws.title} (${counter})`, merged.map((m) => m.title));
+            counter += 1;
+          }
+          if (adjusted.status === "valid") {
+            const newWs = { ...ws, id: crypto.randomUUID(), title: adjusted.title };
+            merged.push(newWs);
+            if (useCloud) await upsertWorkspace(currentUser.id, newWs).catch(() => {});
+          }
+        }
+      }
+      pendingWorkspaceImport = null;
+      await saveWorkspaceSnapshots(merged).catch(() => {});
+      const synced = useCloud;
+      return { ok: true, synced, importedCount: imported.length, totalCount: merged.length };
     }
     return { ok: false };
   })().then(sendResponse, (error: unknown) => sendResponse({ error: error instanceof Error ? error.message : String(error) }));
