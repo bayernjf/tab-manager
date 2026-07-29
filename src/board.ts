@@ -464,12 +464,19 @@ function renderTab(tab: BoardSegmentCard["tabs"][number], targetBoardKey: BoardK
   const defer = makeButton("◷", "tab-defer", `${i18n.t("deferTab")}${tab.title}`);
   defer.addEventListener("click", (event) => {
     event.stopPropagation();
-    const existing = row.querySelector(".defer-menu") as (HTMLDivElement & { closeRef?: () => void }) | null;
+    const existing = document.querySelector(".defer-menu") as (HTMLDivElement & { closeRef?: () => void }) | null;
     if (existing) { existing.closeRef?.(); return; }
     const menu = document.createElement("div") as HTMLDivElement & { closeRef?: () => void };
     menu.className = "defer-menu";
     let onOutside: ((event: MouseEvent) => void) | null = null;
-    const closeMenu = () => { menu.remove(); if (onOutside) document.removeEventListener("mousedown", onOutside, true); };
+    let onScroll: ((event: Event) => void) | null = null;
+    let onResize: (() => void) | null = null;
+    const closeMenu = () => {
+      menu.remove();
+      if (onOutside) document.removeEventListener("mousedown", onOutside, true);
+      if (onScroll) document.removeEventListener("scroll", onScroll, true);
+      if (onResize) window.removeEventListener("resize", onResize);
+    };
     menu.closeRef = closeMenu;
     const times = currentState?.settings?.deferredShortcutTimes ?? ["09:00", "14:00", "18:00"];
     for (const time of times) {
@@ -477,9 +484,22 @@ function renderTab(tab: BoardSegmentCard["tabs"][number], targetBoardKey: BoardK
       option.addEventListener("click", () => { closeMenu(); void deferTab(tab.id, nextDeferredOccurrence(time).toISOString()); });
       menu.append(option);
     }
+    const addOption = makeButton(i18n.t("addShortcut"), "defer-option defer-option-add", i18n.t("addShortcut"));
+    addOption.addEventListener("click", () => {
+      closeMenu();
+      void chrome.tabs.create({ url: chrome.runtime.getURL("options.html#shortcut-times") });
+    });
+    menu.append(addOption);
+    document.body.append(menu);
+    positionDeferMenu(menu, defer);
     onOutside = (event: MouseEvent) => { if (!menu.contains(event.target as Node) && !defer.contains(event.target as Node)) closeMenu(); };
-    setTimeout(() => { if (onOutside) document.addEventListener("mousedown", onOutside, true); }, 0);
-    row.append(menu);
+    onScroll = () => positionDeferMenu(menu, defer);
+    onResize = () => positionDeferMenu(menu, defer);
+    setTimeout(() => {
+      if (onOutside) document.addEventListener("mousedown", onOutside, true);
+      if (onScroll) document.addEventListener("scroll", onScroll, true);
+      if (onResize) window.addEventListener("resize", onResize);
+    }, 0);
   });
   row.append(saveToWorkspace, defer, close, open);
   row.addEventListener("dragstart", (event) => {
@@ -620,6 +640,20 @@ function positionWorkspaceSaveMenu(menu: HTMLElement, toggleButton: HTMLElement,
     toast.style.top = `${menuTop - toast.offsetHeight - toastGap}px`;
     toast.style.left = `${menuLeft}px`;
   }
+}
+
+function positionDeferMenu(menu: HTMLElement, toggleButton: HTMLElement): void {
+  const rect = toggleButton.getBoundingClientRect();
+  const margin = 4;
+  const spaceBelow = window.innerHeight - rect.bottom - margin;
+  const spaceAbove = rect.top - margin;
+  const top = menu.offsetHeight <= spaceBelow || spaceBelow >= spaceAbove
+    ? rect.bottom + margin
+    : rect.top - menu.offsetHeight - margin;
+  const menuTop = Math.max(margin, Math.min(top, window.innerHeight - menu.offsetHeight - margin));
+  const menuLeft = Math.max(margin, Math.min(rect.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - margin));
+  menu.style.top = `${menuTop}px`;
+  menu.style.left = `${menuLeft}px`;
 }
 
 function renderDeferredRow(tab: DeferredTab): HTMLElement {

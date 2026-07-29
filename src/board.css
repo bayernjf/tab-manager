@@ -301,7 +301,9 @@ button.scope-nav-scope[aria-pressed="true"] { background: var(--accent); color: 
 .icon-button.danger:hover { color: var(--text-on-accent); background: var(--bg-danger-hover); }
 .tabs { overflow: visible; max-height: none; }
 .tab-row { position: relative; min-height: 34px; padding: 3px 6px; border-bottom: 1px solid var(--border-tab-row); color: var(--text-primary); font-size: 12px; transition: background .14s ease; }
-.defer-menu { position: absolute; z-index: 4; top: 33px; right: 8px; display: grid; min-width: 116px; gap: 4px; padding: 6px; border: 1px solid var(--border-menu); border-radius: 9px; background: var(--bg-menu); box-shadow: var(--shadow-defer); }.defer-option { padding: 6px 8px; border: 0; border-radius: 6px; color: var(--text-warning-dim); background: var(--bg-defer-option); font-size: 11px; text-align: left; }.defer-option:hover { color: var(--text-on-accent); background: var(--bg-defer-option-hover); }
+.defer-menu { position: fixed; z-index: 50; display: grid; min-width: 116px; gap: 4px; padding: 6px; border: 1px solid var(--border-menu); border-radius: 9px; background: var(--bg-menu); box-shadow: var(--shadow-defer); }.defer-option { padding: 6px 8px; border: 0; border-radius: 6px; color: var(--text-warning-dim); background: var(--bg-defer-option); font-size: 11px; text-align: left; }.defer-option:hover { color: var(--text-on-accent); background: var(--bg-defer-option-hover); }
+.defer-option-add { margin-top: 2px; padding-top: 7px; border-top: 1px dashed var(--border-menu); border-radius: 0 0 6px 6px; color: var(--text-secondary); background: transparent; text-align: center; }
+.defer-option-add:hover { color: var(--text-on-accent); background: var(--accent); }
 .tab-row:last-child { border-bottom: 0; }
 .tab-row:hover, .tab-row:focus-within { background: var(--bg-hover); }
 .tab-row.dragging { opacity: .45; }
