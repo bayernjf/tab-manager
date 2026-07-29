@@ -15,6 +15,11 @@
       </div>
       <div class="board-actions">
         <button id="board-theme-toggle" class="icon-button theme-toggle" type="button" data-i18n="themeToggle|aria-label" aria-label="切换主题" aria-pressed="false"><span aria-hidden="true">🌓</span></button>
+        <button id="view-toggle-board" class="button secondary view-toggle" type="button" data-i18n="boardView" aria-pressed="true">看板</button>
+        <button id="view-toggle-timeline" class="button secondary view-toggle" type="button" data-i18n="timelineView" aria-pressed="false">时间线</button>
+        <button id="toggle-select-mode" class="button secondary" type="button" data-i18n="selectMode">批量选择</button>
+        <button id="recently-closed-btn" class="button secondary" type="button" data-i18n="recentlyClosed">最近关闭</button>
+        <button id="memory-usage-btn" class="button secondary" type="button" data-i18n="memoryUsage">内存占用</button>
         <label class="auto-fill has-tooltip" id="auto-fill-wrapper">
           <input id="auto-fill" type="checkbox" checked>
           <span data-i18n="autoFill">自动填充</span>
@@ -31,6 +36,24 @@
     </section>
     <section id="board-content" class="hidden" aria-label="标签看板">
       <section id="deferred-reminders" class="deferred-reminders hidden" aria-labelledby="deferred-title"><h2 id="deferred-title" data-i18n="deferredReminders">待恢复提醒</h2><div id="deferred-list"></div></section>
+      <div id="batch-action-bar" class="batch-action-bar hidden" role="toolbar" aria-label="批量操作">
+        <label class="batch-select-all-wrapper"><input id="batch-select-all" type="checkbox"><span data-i18n="selectAllTabs">全选</span></label>
+        <span id="batch-selected-count" class="batch-selected-count" data-i18n="selectedCount">已选 0 个标签</span>
+        <div class="batch-actions">
+          <button id="batch-close-btn" class="button secondary" type="button" data-i18n="batchClose">批量关闭</button>
+          <button id="batch-defer-btn" class="button secondary" type="button" data-i18n="batchDefer">批量稍后处理</button>
+          <button id="batch-move-btn" class="button secondary" type="button" data-i18n="batchMoveTo">移动到分组</button>
+          <button id="exit-select-mode" class="button secondary" type="button" data-i18n="exitSelectMode">退出选择</button>
+        </div>
+      </div>
+      <div id="timeline-toolbar" class="timeline-toolbar hidden">
+        <label class="timeline-sort-label"><span data-i18n="timelineByCreated">排序方式</span>
+          <select id="timeline-sort">
+            <option value="created" data-i18n="timelineByCreated">按创建时间</option>
+            <option value="due" data-i18n="timelineByDue">按提醒时间</option>
+          </select>
+        </label>
+      </div>
       <div class="board-toolbar">
         <div class="toolbar-filters" role="search">
           <label><span class="sr-only">搜索标签</span><input id="board-search" type="search" data-i18n="searchTabs|placeholder" placeholder="搜索标题、网址或域名" autocomplete="off"></label>
@@ -103,6 +126,37 @@
     <footer class="duplicate-review-actions">
       <button id="cancel-last-tab-confirm" class="button secondary" type="button" data-i18n="cancel">取消</button>
       <button id="confirm-last-tab-confirm" class="button" type="button" data-i18n="delete">删除</button>
+    </footer>
+  </dialog>
+  <dialog id="recently-closed-dialog" class="duplicate-review" aria-labelledby="recently-closed-title">
+    <header class="duplicate-review-header">
+      <div><span class="eyebrow">TAB GARDEN</span><h2 id="recently-closed-title" data-i18n="recentlyClosedTitle">最近关闭的标签</h2></div>
+      <button id="close-recently-closed" class="icon-button" type="button" data-i18n="closeDuplicateReview|aria-label" aria-label="关闭最近关闭">×</button>
+    </header>
+    <div id="recently-closed-list" class="duplicate-review-list"></div>
+    <footer class="duplicate-review-actions">
+      <button id="cancel-recently-closed" class="button secondary" type="button" data-i18n="cancel">取消</button>
+    </footer>
+  </dialog>
+  <dialog id="memory-usage-dialog" class="duplicate-review" aria-labelledby="memory-title">
+    <header class="duplicate-review-header">
+      <div><span class="eyebrow">TAB GARDEN</span><h2 id="memory-title" data-i18n="memoryTitle">内存占用排序</h2></div>
+      <button id="close-memory-usage" class="icon-button" type="button" aria-label="关闭内存占用">×</button>
+    </header>
+    <div id="memory-usage-list" class="duplicate-review-list"></div>
+    <footer class="duplicate-review-actions">
+      <button id="close-top-memory" class="button secondary" type="button" data-i18n="closeTopUsers">关闭占用前 5 的标签</button>
+      <button id="cancel-memory-usage" class="button secondary" type="button" data-i18n="cancel">取消</button>
+    </footer>
+  </dialog>
+  <dialog id="batch-move-dialog" class="duplicate-review" aria-labelledby="batch-move-title">
+    <header class="duplicate-review-header">
+      <div><span class="eyebrow">TAB GARDEN</span><h2 id="batch-move-title" data-i18n="batchMoveTo">移动到分组</h2></div>
+      <button id="close-batch-move" class="icon-button" type="button" aria-label="关闭移动到分组">×</button>
+    </header>
+    <div id="batch-move-list" class="duplicate-review-list"></div>
+    <footer class="duplicate-review-actions">
+      <button id="cancel-batch-move" class="button secondary" type="button" data-i18n="cancel">取消</button>
     </footer>
   </dialog>
   <script type="module" src="board.js"></script>
