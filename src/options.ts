@@ -42,6 +42,24 @@ async function removeIgnored(id: string): Promise<void> { if (!window.confirm(i1
 for (const select of [defaultColor, ruleColor]) populateColors(select);
 document.querySelectorAll<HTMLButtonElement>(".nav-link").forEach((button) => button.addEventListener("click", () => { const target = button.dataset.panel; if (!target) return; document.querySelectorAll<HTMLElement>(".panel").forEach((panel) => { panel.hidden = panel.id !== target; }); document.querySelectorAll<HTMLButtonElement>(".nav-link").forEach((item) => { const active = item === button; item.classList.toggle("active", active); item.setAttribute("aria-current", active ? "page" : "false"); }); $<HTMLElement>("#" + target).focus(); }));
 openLogin.addEventListener("click", () => void (async () => { loginInstruction.hidden = true; try { await chrome.action.openPopup(); } catch { loginInstruction.hidden = false; showStatus(i18n.t("loginInstruction"), true); } })());
+function activatePanelFromHash(): void {
+  const hash = window.location.hash.replace(/^#/, "");
+  if (!hash) return;
+  const shortcutJump = hash === "shortcut-times";
+  const target = shortcutJump ? "privacy" : hash;
+  const navBtn = document.querySelector<HTMLButtonElement>(`.nav-link[data-panel="${target}"]`);
+  if (!navBtn || navBtn.disabled) return;
+  navBtn.click();
+  if (shortcutJump) {
+    const card = document.getElementById("shortcut-times-card");
+    if (!card) return;
+    requestAnimationFrame(() => {
+      card.scrollIntoView({ behavior: "smooth", block: "center" });
+      card.classList.add("highlight");
+      setTimeout(() => card.classList.remove("highlight"), 1600);
+    });
+  }
+}
 addDeferredShortcut.addEventListener("click", () => { const count = deferredShortcuts.querySelectorAll(".deferred-shortcut-input").length; if (count >= MAX_DEFERRED_SHORTCUTS) return; const row = createShortcutInput("09:00"); deferredShortcuts.append(row); updateShortcutEditorState(); const input = row.querySelector<HTMLInputElement>(".deferred-shortcut-input"); input?.focus(); });
 $("#settings-form").addEventListener("submit", (event) => { event.preventDefault(); void (async () => { try { await send({ type: "save-options-settings", settings: settingsPayload() }); await load(); showStatus(i18n.t("settingsSaved")); } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); } })(); });
 $("#appearance-form").addEventListener("submit", (event) => { event.preventDefault(); void (async () => { try { const payload = settingsPayload(); const previousLanguage = state?.settings.language; await send({ type: "save-options-settings", settings: payload }); applyTheme(payload.theme ?? "light"); if (payload.language !== previousLanguage) { await i18n.setLanguage(payload.language); i18n.applyI18n(); } await load(); showStatus(i18n.t("appearanceSaved")); } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); } })(); });
@@ -57,5 +75,6 @@ cancelImport.addEventListener("click", () => void (async () => { await send({ ty
 void (async () => {
   await i18n.initFromStorage();
   i18n.applyI18n();
-  void load().then(() => { if (state?.status.authenticated) void syncBackground(); }).catch((error) => showStatus(error instanceof Error ? error.message : String(error), true));
+  void load().then(() => { if (state?.status.authenticated) { activatePanelFromHash(); void syncBackground(); } }).catch((error) => showStatus(error instanceof Error ? error.message : String(error), true));
 })();
+window.addEventListener("hashchange", () => activatePanelFromHash());
