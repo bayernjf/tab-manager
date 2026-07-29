@@ -1140,3 +1140,134 @@ export function siteTitle(siteKey: string): string {
   if (!firstPart) return siteKey;
   return firstPart.charAt(0).toUpperCase() + firstPart.slice(1);
 }
+
+export const MAX_WORKSPACE_HISTORY_VERSIONS = 10;
+export const MAX_RECENTLY_CLOSED_TABS = 50;
+
+export interface RecentlyClosedTab {
+  id: string;
+  title: string;
+  url: string;
+  favIconUrl?: string;
+  closedAt: string;
+  sessionId?: string;
+}
+
+export interface TabProcessInfo {
+  tabId: number;
+  title: string;
+  url?: string;
+  processId?: number;
+  memoryKB?: number;
+  cpuUsage?: number;
+  capturedAt: string;
+}
+
+export interface WorkspaceVersion {
+  version: number;
+  snapshot: WorkspaceSnapshot;
+  savedAt: string;
+  note?: string;
+}
+
+export interface WorkspaceHistory {
+  workspaceId: string;
+  versions: WorkspaceVersion[];
+}
+
+export interface WorkspacePortableData {
+  version: 1;
+  type: "workspaces";
+  exportedAt: string;
+  workspaces: WorkspaceSnapshot[];
+}
+
+export function validateRecentlyClosedTab(value: unknown): RecentlyClosedTab | null {
+  if (!isPlainObject(value) || !isRecordId(value.id) || typeof value.closedAt !== "string" || !Number.isFinite(Date.parse(value.closedAt))) return null;
+  const tab = workspaceTab(value);
+  if (!tab) return null;
+  const favIconUrl = typeof value.favIconUrl === "string" && value.favIconUrl.length <= 4_000 ? value.favIconUrl : undefined;
+  const sessionId = typeof value.sessionId === "string" && value.sessionId ? value.sessionId : undefined;
+  return { id: value.id, title: tab.title, url: tab.url, ...(favIconUrl ? { favIconUrl } : {}), closedAt: value.closedAt, ...(sessionId ? { sessionId } : {}) };
+}
+
+export function isRecentlyClosedTab(value: unknown): value is RecentlyClosedTab {
+  return validateRecentlyClosedTab(value) !== null;
+}
+
+export function validateTabProcessInfo(value: unknown): TabProcessInfo | null {
+  if (!isPlainObject(value) || typeof value.tabId !== "number" || !Number.isInteger(value.tabId) || value.tabId <= 0 || typeof value.title !== "string" || typeof value.capturedAt !== "string" || !Number.isFinite(Date.parse(value.capturedAt))) return null;
+  const url = typeof value.url === "string" && value.url.length <= 4_000 ? value.url : undefined;
+  const processId = typeof value.processId === "number" && Number.isInteger(value.processId) && value.processId >= 0 ? value.processId : undefined;
+  const memoryKB = typeof value.memoryKB === "number" && Number.isFinite(value.memoryKB) && value.memoryKB >= 0 ? value.memoryKB : undefined;
+  const cpuUsage = typeof value.cpuUsage === "number" && Number.isFinite(value.cpuUsage) && value.cpuUsage >= 0 && value.cpuUsage <= 100 ? value.cpuUsage : undefined;
+  return { tabId: value.tabId, title: value.title.trim() || value.title, ...(url ? { url } : {}), ...(processId !== undefined ? { processId } : {}), ...(memoryKB !== undefined ? { memoryKB } : {}), ...(cpuUsage !== undefined ? { cpuUsage } : {}), capturedAt: value.capturedAt };
+}
+
+export function isTabProcessInfo(value: unknown): value is TabProcessInfo {
+  return validateTabProcessInfo(value) !== null;
+}
+
+export function validateWorkspaceVersion(value: unknown): WorkspaceVersion | null {
+  if (!isPlainObject(value) || typeof value.version !== "number" || !Number.isInteger(value.version) || value.version < 1 || typeof value.savedAt !== "string" || !Number.isFinite(Date.parse(value.savedAt))) return null;
+  const snapshot = validateWorkspaceSnapshot(value.snapshot);
+  if (!snapshot) return null;
+  const note = typeof value.note === "string" && value.note.trim() && value.note.length <= 200 ? value.note.trim() : undefined;
+  return { version: value.version, snapshot, savedAt: value.savedAt, ...(note ? { note } : {}) };
+}
+
+export function validateWorkspaceHistory(value: unknown): WorkspaceHistory | null {
+  if (!isPlainObject(value) || !isRecordId(value.workspaceId) || !Array.isArray(value.versions) || value.versions.length > MAX_WORKSPACE_HISTORY_VERSIONS) return null;
+  const versions = value.versions.map(validateWorkspaceVersion);
+  if (!versions.every((version): version is WorkspaceVersion => version !== null)) return null;
+  const versionNumbers = versions.map((v) => v.version);
+  if (new Set(versionNumbers).size !== versionNumbers.length) return null;
+  return { workspaceId: value.workspaceId, versions };
+}
+
+export function appendWorkspaceVersion(history: WorkspaceHistory | null, snapshot: WorkspaceSnapshot, note?: string): WorkspaceHistory {
+  const workspaceId = history?.workspaceId ?? snapshot.id;
+  const existing = history?.versions ?? [];
+  const nextVersion = existing.length > 0 ? Math.max(...existing.map((v) => v.version)) + 1 : 1;
+  const newVersion: WorkspaceVersion = { version: nextVersion, snapshot, savedAt: new Date().toISOString(), ...(note?.trim() ? { note: note.trim().slice(0, 200) } : {}) };
+  const updated = [...existing, newVersion];
+  if (updated.length > MAX_WORKSPACE_HISTORY_VERSIONS) {
+    updated.splice(0, updated.length - MAX_WORKSPACE_HISTORY_VERSIONS);
+  }
+  return { workspaceId, versions: updated };
+}
+
+export function validateWorkspacePortableData(value: unknown): WorkspacePortableData | null {
+  if (!isPlainObject(value) || value.version !== 1 || value.type !== "workspaces" || typeof value.exportedAt !== "string" || !Number.isFinite(Date.parse(value.exportedAt)) || !Array.isArray(value.workspaces) || value.workspaces.length > 200) return null;
+  const workspaces = value.workspaces.map(validateWorkspaceSnapshot);
+  if (!workspaces.every((ws): ws is WorkspaceSnapshot => ws !== null)) return null;
+  const ids = new Set(workspaces.map((ws) => ws.id));
+  if (ids.size !== workspaces.length) return null;
+  return { version: 1, type: "workspaces", exportedAt: value.exportedAt, workspaces };
+}
+
+export function toWorkspacePortableData(workspaces: readonly WorkspaceSnapshot[]): WorkspacePortableData {
+  return { version: 1, type: "workspaces", exportedAt: new Date().toISOString(), workspaces: workspaces.map((ws) => ({ ...ws, tabs: ws.tabs.map((tab) => ({ ...tab })) })) };
+}
+
+export type WorkspacePortableImportPreview = {
+  data: WorkspacePortableData;
+  workspaceCount: number;
+  totalTabs: number;
+};
+
+export function previewWorkspacePortableImport(value: unknown): WorkspacePortableImportPreview | null {
+  let parsedValue = value;
+  if (typeof value === "string") {
+    if (value.length > 5_000_000) return null;
+    try {
+      parsedValue = JSON.parse(value) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  const data = validateWorkspacePortableData(parsedValue);
+  if (!data) return null;
+  const totalTabs = data.workspaces.reduce((sum, ws) => sum + ws.tabs.length, 0);
+  return { data, workspaceCount: data.workspaces.length, totalTabs };
+}
