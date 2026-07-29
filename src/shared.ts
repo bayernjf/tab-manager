@@ -481,12 +481,10 @@ export function normalizeDeferredShortcutTimes(value: unknown): string[] | null 
 }
 
 export function nextDeferredOccurrence(hhmm: string, now: Date = new Date(), t?: (key: string, args?: string[]) => string): Date {
-  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hhmm)) throw new Error(t ? t("invalidTime", [hhmm]) : `无效的时刻：${hhmm}`);
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hhmm)) throw new Error(t ? t("invalidTime", [hhmm]) : `无效的时长：${hhmm}`);
   const [hours, minutes] = hhmm.split(":").map(Number) as [number, number];
-  const next = new Date(now);
-  next.setHours(hours, minutes, 0, 0);
-  if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1);
-  return next;
+  const offsetMs = (hours * 60 + minutes) * 60_000;
+  return new Date(now.getTime() + offsetMs);
 }
 
 export function heightUnitsForTabCount(tabCount: number): 1 | 2 {
