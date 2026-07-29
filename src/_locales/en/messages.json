@@ -86,6 +86,8 @@
   "groupHasNoRestorableTabs": { "message": "This group has no restorable tabs", "description": "No restorable tabs message" },
   "openedTabs": { "message": "Opened $count$ tabs", "description": "Opened tabs message", "placeholders": { "count": { "content": "$1", "example": "5" } } },
   "addedToLater": { "message": "Added to defer list", "description": "Added to defer list message" },
+  "batchDeferredDone": { "message": "Bulk deferred $count$ tabs", "description": "Bulk defer completed message", "placeholders": { "count": { "content": "$1", "example": "6" } } },
+  "batchMovedSkipped": { "message": "Moved $moved$, skipped $skipped$ missing tabs", "description": "Bulk move with skips", "placeholders": { "moved": { "content": "$1", "example": "8" }, "skipped": { "content": "$2", "example": "1" } } },
   "due": { "message": "Due", "description": "Due status" },
   "reminder": { "message": "Reminder", "description": "Reminder suffix" },
   "loadingWorkspaces": { "message": "Loading workspaces…", "description": "Loading workspaces" },

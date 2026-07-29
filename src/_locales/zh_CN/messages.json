@@ -86,6 +86,8 @@
   "groupHasNoRestorableTabs": { "message": "该分组没有可恢复的标签", "description": "分组无可恢复标签提示" },
   "openedTabs": { "message": "已打开 $count$ 个标签", "description": "已打开标签提示", "placeholders": { "count": { "content": "$1", "example": "5" } } },
   "addedToLater": { "message": "已加入稍后处理", "description": "已加入稍后处理提示" },
+  "batchDeferredDone": { "message": "已批量稍后处理 $count$ 个标签", "description": "批量稍后完成提示", "placeholders": { "count": { "content": "$1", "example": "6" } } },
+  "batchMovedSkipped": { "message": "已移动 $moved$ 个，跳过 $skipped$ 个找不到的标签", "description": "批量移动跳过提示", "placeholders": { "moved": { "content": "$1", "example": "8" }, "skipped": { "content": "$2", "example": "1" } } },
   "due": { "message": "已到期", "description": "已到期状态" },
   "reminder": { "message": "提醒", "description": "提醒后缀" },
   "loadingWorkspaces": { "message": "加载工作区…", "description": "加载工作区提示" },
