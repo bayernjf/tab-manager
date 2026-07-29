@@ -16,7 +16,7 @@ const groupsList = $("#groups-list");
 const status = $("#status");
 const autoToggle = $<HTMLInputElement>("#auto-toggle");
 const minimumTabs = $<HTMLSelectElement>("#minimum-tabs");
-const themeToggle = $<HTMLInputElement>("#theme-toggle");
+const themeToggle = $<HTMLButtonElement>("#theme-toggle");
 const groupName = $<HTMLInputElement>("#group-name");
 const groupColor = $<HTMLSelectElement>("#group-color");
 const bootView = $("#boot-view");
@@ -171,7 +171,7 @@ async function load(): Promise<void> {
   const state = await send<PopupState>({ type: "get-popup-state" });
   autoToggle.checked = state.settings.autoGroupEnabled;
   minimumTabs.value = String(state.settings.minimumTabs);
-  themeToggle.checked = state.settings.theme === "dark";
+  themeToggle.setAttribute("aria-pressed", String(state.settings.theme === "dark"));
   applyTheme(state.settings.theme ?? "light");
   renderTabs(state.tabs);
   renderGroups(state.customGroups);
@@ -189,7 +189,8 @@ async function restoreSessionInBackground(): Promise<void> {
 }
 
 async function saveSettings(): Promise<void> {
-  const settings = { ...DEFAULT_SETTINGS, autoGroupEnabled: autoToggle.checked, minimumTabs: Number(minimumTabs.value), theme: themeToggle.checked ? "dark" as Theme : "light" as Theme };
+  const theme = themeToggle.getAttribute("aria-pressed") === "true" ? "dark" as Theme : "light" as Theme;
+  const settings = { ...DEFAULT_SETTINGS, autoGroupEnabled: autoToggle.checked, minimumTabs: Number(minimumTabs.value), theme };
   await send({ type: "update-settings", settings });
   applyTheme(settings.theme);
   showStatus(i18n.t("settingsSaved"));
@@ -198,7 +199,11 @@ async function saveSettings(): Promise<void> {
 
 autoToggle.addEventListener("change", () => void saveSettings().catch((error) => showStatus(String(error), true)));
 minimumTabs.addEventListener("change", () => void saveSettings().catch((error) => showStatus(String(error), true)));
-themeToggle.addEventListener("change", () => void saveSettings().catch((error) => showStatus(String(error), true)));
+themeToggle.addEventListener("click", () => {
+  const isDark = themeToggle.getAttribute("aria-pressed") === "true";
+  themeToggle.setAttribute("aria-pressed", String(!isDark));
+  saveSettings().catch((error) => showStatus(String(error), true));
+});
 
 $("#select-all").addEventListener("click", () => {
   document.querySelectorAll<HTMLInputElement>('#tabs-list input[type="checkbox"]').forEach((input) => { input.checked = true; });
@@ -223,13 +228,16 @@ $("#open-board").addEventListener("click", async () => {
   } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); }
 });
 
-void send<{ user: { id: string; email?: string } | null }>({ type: "auth-state" }).then(async ({ user }) => {
+void (async () => {
+  await i18n.initFromStorage();
+  i18n.applyI18n();
+  const { user } = await send<{ user: { id: string; email?: string } | null }>({ type: "auth-state" });
   showAuth(Boolean(user));
   if (user) {
     await load();
     void restoreSessionInBackground().catch((error) => showStatus(error instanceof Error ? error.message : String(error), true));
   }
-}).catch((error) => {
+})().catch((error) => {
   showAuth(false);
   authStatus.textContent = error instanceof Error ? error.message : String(error);
   authStatus.classList.add("error");

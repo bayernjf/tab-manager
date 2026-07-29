@@ -180,6 +180,9 @@ button { border: 0; border-radius: 8px; cursor: pointer; }
 .header-action:focus-visible { outline: 0; box-shadow: 0 0 0 3px var(--shadow-accent-medium); }
 .board-action { background: var(--brand-bg); color: var(--text-on-accent); box-shadow: 0 3px 8px var(--shadow-action); }
 .board-action:hover { background: var(--accent-hover); box-shadow: 0 5px 12px var(--shadow-action-hover); }
+.theme-action { border: 1px solid var(--border-logout); background: var(--bg-card); color: var(--text-secondary); }
+.theme-action:hover { border-color: var(--border-hover); background: var(--bg-hover); color: var(--brand-bg); }
+.theme-action[aria-pressed="true"] { background: var(--accent); color: var(--text-on-accent); border-color: var(--accent); }
 .logout-action { border: 1px solid var(--border-logout); background: var(--bg-card); color: var(--text-secondary); }
 .logout-action:hover { border-color: var(--border-hover); background: var(--bg-hover); color: var(--brand-bg); }
 .ghost { padding: 7px 10px; color: var(--ghost-text); background: var(--ghost-bg); }

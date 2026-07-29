@@ -1,5 +1,5 @@
 import { i18n } from "./i18n.js";
-import { boardCardsForDevice, boardTabMatchesQuery, formatDeferredDateTime, getSiteKey, heightUnitsForTabCount, isBoardKey, manualBoardGridRow, moveManualBoardCard, nextDeferredOccurrence, placeBoardCards, isDeferredTabDue, segmentTabs, validateWorkspaceTitle, type BoardKey, type BoardLayout, type BoardSegmentCard, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type Settings, type Theme, type WorkspaceSnapshot, type WorkspaceTab } from "./shared.js";
+import { boardCardsForDevice, boardTabMatchesQuery, formatDeferredDateTime, getSiteKey, heightUnitsForTabCount, isBoardKey, manualBoardGridRow, moveManualBoardCard, nextDeferredOccurrence, placeBoardCards, isDeferredTabDue, segmentTabs, validateWorkspaceTitle, DEFAULT_SETTINGS, type BoardKey, type BoardLayout, type BoardSegmentCard, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type Settings, type Theme, type WorkspaceSnapshot, type WorkspaceTab } from "./shared.js";
 
 interface BoardState {
   user: { id: string; email?: string } | null;
@@ -31,11 +31,13 @@ const boardGrid = $<HTMLElement>("#board-grid");
 const boardContent = $("#board-content");
 const loginRequired = $("#login-required");
 const loginMessage = $("#login-message");
-const status = $("#board-status");
 const autoFill = $<HTMLInputElement>("#auto-fill");
+const boardThemeToggle = $<HTMLButtonElement>("#board-theme-toggle");
 const newGroupForm = $<HTMLFormElement>("#new-group-form");
 const newGroupTitle = $<HTMLInputElement>("#new-group-title");
 const newGroupColor = $<HTMLSelectElement>("#new-group-color");
+const newGroupToggle = $<HTMLButtonElement>("#new-group-toggle");
+const newGroupCancel = $<HTMLButtonElement>("#new-group-cancel");
 const boardSearch = $<HTMLInputElement>("#board-search");
 const windowFilter = $<HTMLSelectElement>("#window-filter");
 const reviewDuplicates = $<HTMLButtonElement>("#review-duplicates");
@@ -50,7 +52,7 @@ const lastTabConfirmDialog = $<HTMLDialogElement>("#last-tab-confirm-dialog");
 const cancelLastTabConfirm = $<HTMLButtonElement>("#cancel-last-tab-confirm");
 const confirmLastTabConfirm = $<HTMLButtonElement>("#confirm-last-tab-confirm");
 const deferredReminders = $("#deferred-reminders"), deferredList = $("#deferred-list");
-const boardStatistics = $("#board-statistics");
+const boardStatsInline = $("#board-stats-inline");
 const scopeNav = $("#scope-nav");
 const workspaceHeader = $("#workspace-header");
 
@@ -73,8 +75,7 @@ async function send<T>(message: unknown): Promise<T> {
 }
 
 function showStatus(message: string, error = false): void {
-  status.textContent = message;
-  status.className = error ? "status error" : "status";
+  boardToast(message, error);
 }
 
 function boardToast(message: string, error = false, anchor?: HTMLElement): HTMLParagraphElement {
@@ -114,11 +115,12 @@ function renderWorkspaces(): void {
   workspaceList.replaceChildren(...workspaces.map((workspace) => {
     const row = document.createElement("div");
     row.className = "workspace-row";
-    const name = document.createElement("span");
+    const name = document.createElement("div");
+    name.className = "workspace-row-title";
     name.textContent = `${workspace.title} · ${workspace.tabs.length} ${i18n.t("tabs")}`;
-    const actions = document.createElement("div");
-    actions.className = "deferred-actions";
-    const deviceInfo = document.createElement("span");
+    const meta = document.createElement("div");
+    meta.className = "workspace-row-meta";
+    const deviceInfo = document.createElement("div");
     deviceInfo.className = "workspace-device";
     const isCurrent = !workspace.deviceName || workspace.deviceName === currentDevice?.name;
     if (isCurrent) {
@@ -131,12 +133,15 @@ function renderWorkspaces(): void {
     deviceName.className = "workspace-device-name";
     deviceName.textContent = isCurrent ? (currentDevice?.name ?? workspace.deviceName ?? i18n.t("thisDevice")) : (workspace.deviceName ?? i18n.t("otherDevice"));
     deviceInfo.append(deviceName);
+    const actions = document.createElement("div");
+    actions.className = "deferred-actions";
     const restore = makeButton(i18n.t("restore"), "deferred-action deferred-open", `${i18n.t("restore")} ${workspace.title}`);
     restore.addEventListener("click", () => void previewWorkspaceRestore(workspace.id));
     const remove = makeButton(i18n.t("delete"), "deferred-action deferred-delete", `${i18n.t("delete")} ${workspace.title}`);
     remove.addEventListener("click", () => void deleteWorkspace(workspace.id));
-    actions.append(deviceInfo, restore, remove);
-    row.append(name, actions);
+    actions.append(restore, remove);
+    meta.append(deviceInfo, actions);
+    row.append(name, meta);
     return row;
   }));
 }
@@ -247,7 +252,44 @@ function makeWorkspaceDialogDraggable(): void {
     event.preventDefault();
   });
 }
-async function openWorkspaceDialog(): Promise<void> { renderWorkspaceTabs(); workspaceDialog.showModal(); syncWorkspaceDialogResizeAnchor(); makeWorkspaceDialogDraggable(); workspaceName.focus(); await loadWorkspaces(); }
+function makeWorkspaceDialogResizable(): void {
+  const resizer = workspaceDialog.querySelector(".workspace-dialog-resizer") as HTMLElement | null;
+  const leftPanel = workspaceDialog.querySelector(".workspace-dialog-left") as HTMLElement | null;
+  const rightPanel = workspaceDialog.querySelector(".workspace-dialog-right") as HTMLElement | null;
+  if (!resizer || !leftPanel || !rightPanel) return;
+  let isResizing = false;
+  let startX = 0;
+  let startLeftWidth = 0;
+  const onMouseMove = (event: MouseEvent) => {
+    if (!isResizing) return;
+    const dx = event.clientX - startX;
+    const dialogRect = workspaceDialog.getBoundingClientRect();
+    const minLeftWidth = 220;
+    const minRightWidth = 200;
+    const resizerWidth = 6;
+    const maxLeftWidth = dialogRect.width - minRightWidth - resizerWidth;
+    const newLeftWidth = Math.min(Math.max(minLeftWidth, startLeftWidth + dx), maxLeftWidth);
+    leftPanel.style.width = `${newLeftWidth}px`;
+    leftPanel.style.flex = "none";
+  };
+  const onMouseUp = () => {
+    isResizing = false;
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
+    document.body.style.userSelect = "";
+  };
+  resizer.addEventListener("mousedown", (event) => {
+    if (window.innerWidth <= WORKSPACE_DIALOG_MOBILE_MAX_WIDTH) return;
+    isResizing = true;
+    startX = event.clientX;
+    startLeftWidth = leftPanel.getBoundingClientRect().width;
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    document.body.style.userSelect = "none";
+    event.preventDefault();
+  });
+}
+async function openWorkspaceDialog(): Promise<void> { renderWorkspaceTabs(); workspaceDialog.showModal(); syncWorkspaceDialogResizeAnchor(); makeWorkspaceDialogDraggable(); makeWorkspaceDialogResizable(); workspaceName.focus(); await loadWorkspaces(); }
 function clearWorkspaceNameError(): void {
   workspaceNameError.hidden = true;
   workspaceNameError.textContent = "";
@@ -292,7 +334,7 @@ async function saveCurrentWorkspace(): Promise<void> {
   showStatus(i18n.t("workspaceSaved"));
 }
 function showWorkspaceRestorePreview(tabs: readonly WorkspaceTab[], unavailableCount = 0): void {
-  workspaceRestoreSummary.textContent = `将打开 ${tabs.length} 个标签${unavailableCount ? `，跳过 ${unavailableCount} 个不可用页面` : ""}`;
+  workspaceRestoreSummary.textContent = unavailableCount ? i18n.t("willOpenTabsSkip", [String(tabs.length), String(unavailableCount)]) : i18n.t("willOpenTabs", [String(tabs.length)]);
   const fallback = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
   workspaceRestoreList.replaceChildren(...tabs.map((tab) => {
     const row = document.createElement("div");
@@ -318,7 +360,7 @@ function showWorkspaceRestorePreview(tabs: readonly WorkspaceTab[], unavailableC
 async function previewWorkspaceRestore(id: string): Promise<void> { const result = await send<{ preview: { tabs: WorkspaceTab[]; unavailableCount: number } }>({ type: "get-workspace-restore-preview", id }); restoreWorkspaceId = id; restoreWorkspaceTabs = null; showWorkspaceRestorePreview(result.preview.tabs, result.preview.unavailableCount); }
 function previewWorkspaceCardRestore(card: BoardSegmentCard): void {
   const tabs = card.tabs.flatMap((tab) => tab.url ? [{ title: tab.title, url: tab.url }] : []);
-  if (!tabs.length) { showStatus("该分组没有可恢复的标签", true); return; }
+  if (!tabs.length) { showStatus(i18n.t("groupHasNoRestorableTabs"), true); return; }
   restoreWorkspaceId = null;
   restoreWorkspaceTabs = tabs;
   showWorkspaceRestorePreview(tabs);
@@ -332,7 +374,7 @@ async function restoreWorkspace(): Promise<void> {
       : null;
   if (!result) return;
   workspaceRestoreDialog.close();
-  showStatus(`已打开 ${result.created} 个标签`);
+  showStatus(i18n.t("openedTabs", [String(result.created)]));
 }
 async function deleteWorkspace(id: string): Promise<void> { await send({ type: "delete-workspace", id }); await loadWorkspaces(); }
 async function renameDevice(name: string): Promise<void> {
@@ -394,7 +436,7 @@ function renderTab(tab: BoardSegmentCard["tabs"][number], targetBoardKey: BoardK
   const open = document.createElement("button");
   open.type = "button";
   open.className = "tab-open";
-  open.setAttribute("aria-label", `打开标签：${tab.title}`);
+  open.setAttribute("aria-label", `${i18n.t("openTab")}${tab.title}`);
   const icon = document.createElement("img");
   icon.className = "tab-icon";
   icon.alt = "";
@@ -405,10 +447,10 @@ function renderTab(tab: BoardSegmentCard["tabs"][number], targetBoardKey: BoardK
   title.textContent = tab.title;
   open.append(icon, title);
   open.addEventListener("click", () => void activateTab(tab.id));
-  const saveToWorkspace = makeButton("+", "tab-saveworkspace", `保存到工作区：${tab.title}`);
+  const saveToWorkspace = makeButton("+", "tab-saveworkspace", `${i18n.t("saveToWorkspace")}${tab.title}`);
   saveToWorkspace.addEventListener("click", (event) => { event.stopPropagation(); void openSaveToWorkspaceMenu(tab, saveToWorkspace); });
   saveToWorkspace.addEventListener("dragstart", (event) => { event.preventDefault(); event.stopPropagation(); });
-  const close = makeButton("×", "tab-close", `关闭标签：${tab.title}`);
+  const close = makeButton("×", "tab-close", `${i18n.t("closeTab")}${tab.title}`);
   close.addEventListener("click", (event) => {
     event.stopPropagation();
     const card = row.closest(".group-card") as HTMLElement | null;
@@ -419,25 +461,45 @@ function renderTab(tab: BoardSegmentCard["tabs"][number], targetBoardKey: BoardK
     event.preventDefault();
     event.stopPropagation();
   });
-  const defer = makeButton("◷", "tab-defer", `稍后处理：${tab.title}`);
+  const defer = makeButton("◷", "tab-defer", `${i18n.t("deferTab")}${tab.title}`);
   defer.addEventListener("click", (event) => {
     event.stopPropagation();
-    const existing = row.querySelector(".defer-menu") as (HTMLDivElement & { closeRef?: () => void }) | null;
+    const existing = document.querySelector(".defer-menu") as (HTMLDivElement & { closeRef?: () => void }) | null;
     if (existing) { existing.closeRef?.(); return; }
     const menu = document.createElement("div") as HTMLDivElement & { closeRef?: () => void };
     menu.className = "defer-menu";
     let onOutside: ((event: MouseEvent) => void) | null = null;
-    const closeMenu = () => { menu.remove(); if (onOutside) document.removeEventListener("mousedown", onOutside, true); };
+    let onScroll: ((event: Event) => void) | null = null;
+    let onResize: (() => void) | null = null;
+    const closeMenu = () => {
+      menu.remove();
+      if (onOutside) document.removeEventListener("mousedown", onOutside, true);
+      if (onScroll) document.removeEventListener("scroll", onScroll, true);
+      if (onResize) window.removeEventListener("resize", onResize);
+    };
     menu.closeRef = closeMenu;
     const times = currentState?.settings?.deferredShortcutTimes ?? ["09:00", "14:00", "18:00"];
     for (const time of times) {
-      const option = makeButton(`倒计时 ${time}`, "defer-option", `倒计时至 ${time}`);
+      const option = makeButton(`${i18n.t("countdown")} ${time}`, "defer-option", `${i18n.t("countdownTo")} ${time}`);
       option.addEventListener("click", () => { closeMenu(); void deferTab(tab.id, nextDeferredOccurrence(time).toISOString()); });
       menu.append(option);
     }
+    const addOption = makeButton(i18n.t("addShortcut"), "defer-option defer-option-add", i18n.t("addShortcut"));
+    addOption.addEventListener("click", () => {
+      closeMenu();
+      void chrome.tabs.create({ url: chrome.runtime.getURL("options.html#shortcut-times") });
+    });
+    menu.append(addOption);
+    document.body.append(menu);
+    positionDeferMenu(menu, defer);
     onOutside = (event: MouseEvent) => { if (!menu.contains(event.target as Node) && !defer.contains(event.target as Node)) closeMenu(); };
-    setTimeout(() => { if (onOutside) document.addEventListener("mousedown", onOutside, true); }, 0);
-    row.append(menu);
+    onScroll = () => positionDeferMenu(menu, defer);
+    onResize = () => positionDeferMenu(menu, defer);
+    setTimeout(() => {
+      if (onOutside) document.addEventListener("mousedown", onOutside, true);
+      if (onScroll) document.addEventListener("scroll", onScroll, true);
+      if (onResize) window.addEventListener("resize", onResize);
+    }, 0);
   });
   row.append(saveToWorkspace, defer, close, open);
   row.addEventListener("dragstart", (event) => {
@@ -468,7 +530,7 @@ function renderTab(tab: BoardSegmentCard["tabs"][number], targetBoardKey: BoardK
   return row;
 }
 
-async function deferTab(tabId: number, dueAt: string): Promise<void> { try { await send({ type: "defer-board-tab", tabId, dueAt: new Date(dueAt).toISOString() }); showStatus("已加入稍后处理"); await load(); } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); } }
+async function deferTab(tabId: number, dueAt: string): Promise<void> { try { await send({ type: "defer-board-tab", tabId, dueAt: new Date(dueAt).toISOString() }); showStatus(i18n.t("addedToLater")); await load(); } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); } }
 
 async function openSaveToWorkspaceMenu(tab: BoardSegmentCard["tabs"][number], toggleButton: HTMLButtonElement): Promise<void> {
   const existing = document.querySelector(".workspace-save-menu") as (HTMLDivElement & { closeRef?: () => void }) | null;
@@ -580,6 +642,20 @@ function positionWorkspaceSaveMenu(menu: HTMLElement, toggleButton: HTMLElement,
   }
 }
 
+function positionDeferMenu(menu: HTMLElement, toggleButton: HTMLElement): void {
+  const rect = toggleButton.getBoundingClientRect();
+  const margin = 4;
+  const spaceBelow = window.innerHeight - rect.bottom - margin;
+  const spaceAbove = rect.top - margin;
+  const top = menu.offsetHeight <= spaceBelow || spaceBelow >= spaceAbove
+    ? rect.bottom + margin
+    : rect.top - menu.offsetHeight - margin;
+  const menuTop = Math.max(margin, Math.min(top, window.innerHeight - menu.offsetHeight - margin));
+  const menuLeft = Math.max(margin, Math.min(rect.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - margin));
+  menu.style.top = `${menuTop}px`;
+  menu.style.left = `${menuLeft}px`;
+}
+
 function renderDeferredRow(tab: DeferredTab): HTMLElement {
   const row = document.createElement("div");
   row.className = "deferred-row";
@@ -622,7 +698,26 @@ async function renderDeferredTabs(): Promise<void> {
   deferredList.replaceChildren(...tabs.map(renderDeferredRow));
 }
 
-async function renderBoardStatistics(): Promise<void> { const stats = await send<{ eligibleTabCount: number; duplicateTabCount: number; deferredTabCount?: number; dueDeferredCount?: number }>({ type: "get-board-statistics" }); const deferredTabCount = stats.deferredTabCount ?? stats.dueDeferredCount ?? 0; boardStatistics.replaceChildren(...[[i18n.t("webTabs"), stats.eligibleTabCount], [i18n.t("duplicatePages"), stats.duplicateTabCount], [i18n.t("dueReminders"), deferredTabCount]].map(([label, value]) => { const card = document.createElement("div"); const number = document.createElement("strong"); number.textContent = String(value); const text = document.createElement("span"); text.textContent = String(label); card.append(number, text); return card; })); }
+async function renderBoardStatistics(): Promise<void> {
+  const stats = await send<{ eligibleTabCount: number; duplicateTabCount: number; deferredTabCount?: number; dueDeferredCount?: number }>({ type: "get-board-statistics" });
+  const deferredTabCount = stats.deferredTabCount ?? stats.dueDeferredCount ?? 0;
+  boardStatsInline.replaceChildren(
+    ...[
+      [i18n.t("webTabs"), stats.eligibleTabCount],
+      [i18n.t("duplicatePages"), stats.duplicateTabCount],
+      [i18n.t("dueReminders"), deferredTabCount],
+    ].map(([label, value]) => {
+      const item = document.createElement("span");
+      item.className = "stat-item";
+      const number = document.createElement("strong");
+      number.textContent = String(value);
+      const text = document.createElement("span");
+      text.textContent = String(label);
+      item.append(number, text);
+      return item;
+    }),
+  );
+}
 
 function renderCard(card: BoardSegmentCard, rank: number, automatic: boolean, placement: { slot: number; compositeHeight: 1 | 2 }): HTMLElement {
   const article = document.createElement("article");
@@ -1201,10 +1296,10 @@ async function returnToCurrent(): Promise<void> {
 
 function setWorkspaceMode(on: boolean): void {
   boardContent.classList.toggle("workspace-mode", on);
-  newGroupForm.classList.toggle("hidden", on);
+  newGroupForm.parentElement!.classList.toggle("hidden", on);
   windowFilter.classList.toggle("hidden", on);
   reviewDuplicates.classList.toggle("hidden", on);
-  boardStatistics.classList.toggle("hidden", on);
+  boardStatsInline.classList.toggle("hidden", on);
   // 仅在工作区模式隐藏；切回“当前”时不主动显示，由 renderDeferredTabs 按数据决定，避免空列表先弹出再隐藏的闪烁。
   if (on) deferredReminders.classList.add("hidden");
   workspaceHeader.classList.toggle("hidden", !on);
@@ -1247,6 +1342,7 @@ function renderWorkspaceHeader(): void {
 
 function applyTheme(theme: Theme): void {
   document.documentElement.setAttribute("data-theme", theme);
+  boardThemeToggle.setAttribute("aria-pressed", String(theme === "dark"));
 }
 
 async function load(): Promise<void> {
@@ -1452,6 +1548,17 @@ async function saveAutoFill(enabled: boolean): Promise<void> {
   }
 }
 
+async function saveBoardTheme(theme: Theme): Promise<void> {
+  const current = { ...DEFAULT_SETTINGS };
+  if (currentState?.settings) {
+    Object.assign(current, currentState.settings);
+  }
+  current.theme = theme;
+  await send({ type: "update-settings", settings: current });
+  applyTheme(theme);
+  if (currentState) currentState.settings = current;
+}
+
 async function refresh(): Promise<void> {
   if (scopeMode === "workspace" && loadedWorkspace) await loadWorkspaceBoard(loadedWorkspace.id);
   else await load();
@@ -1483,15 +1590,34 @@ closeDuplicateReview.addEventListener("click", () => duplicateReviewDialog.close
 cancelDuplicateReview.addEventListener("click", () => duplicateReviewDialog.close());
 confirmDuplicateReview.addEventListener("click", () => void closeReviewedDuplicates());
 autoFill.addEventListener("change", () => void saveAutoFill(autoFill.checked));
+boardThemeToggle.addEventListener("click", () => {
+  const isDark = boardThemeToggle.getAttribute("aria-pressed") === "true";
+  void saveBoardTheme(isDark ? "light" : "dark").catch((error) => {
+    applyTheme(isDark ? "light" : "dark");
+    showStatus(error instanceof Error ? error.message : String(error), true);
+  });
+});
 boardSearch.addEventListener("input", () => { if (scopeMode === "workspace") renderWorkspaceBoard(); else if (currentState) renderBoard(currentState); });
 windowFilter.addEventListener("change", () => currentState && renderBoard(currentState));
+newGroupToggle.addEventListener("click", () => {
+  newGroupToggle.classList.add("hidden");
+  newGroupForm.classList.remove("hidden");
+  newGroupTitle.focus();
+});
+newGroupCancel.addEventListener("click", () => {
+  newGroupForm.classList.add("hidden");
+  newGroupToggle.classList.remove("hidden");
+  newGroupTitle.value = "";
+});
 newGroupForm.addEventListener("submit", (event) => {
   event.preventDefault();
   void (async () => {
     try {
       await send({ type: "create-board-group", title: newGroupTitle.value, color: newGroupColor.value });
       newGroupTitle.value = "";
-      showStatus("自定义分组已创建");
+      newGroupForm.classList.add("hidden");
+      newGroupToggle.classList.remove("hidden");
+      showStatus(i18n.t("customGroupCreated"));
       await load();
     } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); }
   })();
@@ -1508,7 +1634,7 @@ async function revalidateBoardSession(): Promise<void> {
     if (!result.user) {
       loginRequired.classList.remove("hidden");
       boardContent.classList.add("hidden");
-      loginMessage.textContent = "登录已过期，请重新登录。";
+      loginMessage.textContent = i18n.t("loginExpired");
       return;
     }
     await load();
@@ -1518,6 +1644,7 @@ async function revalidateBoardSession(): Promise<void> {
 }
 
 async function init(): Promise<void> {
+  await i18n.initFromStorage();
   i18n.applyI18n();
   await load();
   if (currentState?.user) void revalidateBoardSession();
