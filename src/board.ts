@@ -1,5 +1,5 @@
 import { i18n } from "./i18n.js";
-import { boardCardsForDevice, boardTabMatchesQuery, formatDeferredDateTime, getSiteKey, heightUnitsForTabCount, isBoardKey, manualBoardGridRow, moveManualBoardCard, nextDeferredOccurrence, placeBoardCards, isDeferredTabDue, segmentTabs, validateWorkspaceTitle, DEFAULT_SETTINGS, type BoardKey, type BoardLayout, type BoardSegmentCard, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type Settings, type Theme, type WorkspaceSnapshot, type WorkspaceTab } from "./shared.js";
+import { boardCardsForDevice, boardTabMatchesQuery, formatDeferredDateTime, getSiteKey, heightUnitsForTabCount, isBoardKey, manualBoardGridRow, moveManualBoardCard, nextDeferredOccurrence, placeBoardCards, isDeferredTabDue, segmentTabs, validateWorkspaceTitle, DEFAULT_SETTINGS, type BoardKey, type BoardLayout, type BoardSegmentCard, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type Settings, type Theme, type WorkspaceSnapshot, type WorkspaceTab, type WorkspaceHistory, type WorkspaceVersion, type WorkspacePortableData } from "./shared.js";
 
 interface BoardState {
   user: { id: string; email?: string } | null;
@@ -82,6 +82,24 @@ const batchMoveDialog = $<HTMLDialogElement>("#batch-move-dialog");
 const batchMoveList = $("#batch-move-list");
 const closeBatchMove = $<HTMLButtonElement>("#close-batch-move");
 const cancelBatchMove = $<HTMLButtonElement>("#cancel-batch-move");
+const exportWorkspacesBtn = $<HTMLButtonElement>("#export-workspaces");
+const importWorkspacesInput = $<HTMLInputElement>("#import-workspaces-input");
+const workspaceImportPreviewDialog = $<HTMLDialogElement>("#workspace-import-preview-dialog");
+const workspaceImportPreviewSummary = $("#workspace-import-preview-summary");
+const workspaceImportPreviewList = $("#workspace-import-preview-list");
+const closeWorkspaceImportPreview = $<HTMLButtonElement>("#close-workspace-import-preview");
+const cancelWorkspaceImportPreview = $<HTMLButtonElement>("#cancel-workspace-import-preview");
+const confirmWorkspaceImportPreview = $<HTMLButtonElement>("#confirm-workspace-import-preview");
+const workspaceHistoryDialog = $<HTMLDialogElement>("#workspace-history-dialog");
+const workspaceHistoryTitle = $("#workspace-history-title");
+const workspaceHistoryList = $("#workspace-history-list");
+const closeWorkspaceHistory = $<HTMLButtonElement>("#close-workspace-history");
+const saveWorkspaceVersionBtn = $<HTMLButtonElement>("#save-workspace-version");
+
+interface WorkspaceImportPreview {
+  workspaceCount: number;
+  totalTabs: number;
+}
 
 let currentState: BoardState | null = null;
 let duplicateGroups: DuplicateBoardTabGroup[] = [];
@@ -102,6 +120,9 @@ const collapsedGroups = new Set<string>();
 let navFocusIndex = -1;
 let navTabIds: number[] = [];
 const COLLAPSED_STORAGE_KEY = "board_collapsed_groups";
+let historyWorkspaceId: string | null = null;
+let historyWorkspaceTitle: string = "";
+let currentHistory: WorkspaceHistory | null = null;
 
 async function send<T>(message: unknown): Promise<T> {
   const response = await chrome.runtime.sendMessage(message) as T & BoardResponse;
@@ -231,10 +252,11 @@ async function batchCloseSelected(): Promise<void> {
   if (!ids.length) return;
   if (!window.confirm(i18n.t("confirmBatchClose", [String(ids.length)]))) return;
   try {
-    for (const id of ids) {
-      await send({ type: "close-board-tab", tabId: id });
-    }
-    showStatus(i18n.t("closedDuplicates", [String(ids.length)]));
+    const result = await send<{ closed: number; skipped: number }>({ type: "batch-close-tabs", tabIds: ids });
+    const msg = typeof result === "object" && result && (result as { skipped?: number }).skipped
+      ? i18n.t("closedDuplicatesSkipped", [String((result as { closed: number }).closed), String((result as { skipped: number }).skipped)])
+      : i18n.t("closedDuplicates", [String(typeof result === "object" && result ? (result as { closed: number }).closed : ids.length)]);
+    showStatus(msg);
     setSelectMode(false);
     await load();
   } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); }
@@ -246,10 +268,9 @@ async function batchDeferSelected(): Promise<void> {
   const time = (currentState?.settings?.deferredShortcutTimes ?? ["18:00"])[0]!;
   const dueAt = nextDeferredOccurrence(time).toISOString();
   try {
-    for (const id of ids) {
-      await send({ type: "defer-board-tab", tabId: id, dueAt });
-    }
-    showStatus(i18n.t("addedToLater"));
+    const result = await send<{ deferred: number }>({ type: "batch-defer-tabs", tabIds: ids, dueAt });
+    const count = typeof result === "object" && result ? (result as { deferred: number }).deferred : ids.length;
+    showStatus(i18n.t("batchDeferredDone", [String(count)]) || i18n.t("addedToLater"));
     setSelectMode(false);
     await load();
   } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); }
@@ -285,10 +306,13 @@ async function batchMoveSelectedTo(targetBoardKey: BoardKey): Promise<void> {
   const ids = [...selectedTabIds];
   if (!ids.length || !currentState) return;
   try {
-    for (const id of ids) {
-      await send({ type: "move-board-tab", drop: { tabId: id, targetBoardKey, position: "append" } });
-    }
-    showStatus(i18n.t("tabMoved"));
+    const result = await send<{ moved: number; notFound: number }>({ type: "batch-move-tabs-to-group", tabIds: ids, targetBoardKey });
+    const moved = typeof result === "object" && result ? (result as { moved: number }).moved : ids.length;
+    const notFound = typeof result === "object" && result ? (result as { notFound?: number }).notFound ?? 0 : 0;
+    const msg = notFound > 0
+      ? `${i18n.t("tabMoved")} (${i18n.t("batchMovedSkipped", [String(moved), String(notFound)]) || `${moved} 已移动，${notFound} 跳过`})`
+      : i18n.t("tabMoved");
+    showStatus(msg);
     setSelectMode(false);
     await load();
   } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); }
@@ -630,11 +654,13 @@ function renderWorkspaces(): void {
     deviceInfo.append(deviceName);
     const actions = document.createElement("div");
     actions.className = "deferred-actions";
+    const history = makeButton(i18n.t("workspaceHistory"), "deferred-action deferred-history", `${i18n.t("workspaceHistory")} ${workspace.title}`);
+    history.addEventListener("click", () => void openWorkspaceHistoryDialog(workspace.id, workspace.title));
     const restore = makeButton(i18n.t("restore"), "deferred-action deferred-open", `${i18n.t("restore")} ${workspace.title}`);
     restore.addEventListener("click", () => void previewWorkspaceRestore(workspace.id));
     const remove = makeButton(i18n.t("delete"), "deferred-action deferred-delete", `${i18n.t("delete")} ${workspace.title}`);
     remove.addEventListener("click", () => void deleteWorkspace(workspace.id));
-    actions.append(restore, remove);
+    actions.append(history, restore, remove);
     meta.append(deviceInfo, actions);
     row.append(name, meta);
     return row;
@@ -882,6 +908,193 @@ async function renameDevice(name: string): Promise<void> {
   } catch (error) {
     workspaceDeviceName.value = deviceNameOriginal;
     showStatus(error instanceof Error ? error.message : String(error), true);
+  }
+}
+
+async function exportWorkspaces(): Promise<void> {
+  try {
+    exportWorkspacesBtn.disabled = true;
+    const result = await send<{ data: WorkspacePortableData }>({ type: "export-workspaces-json" });
+    const blob = new Blob([JSON.stringify(result.data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    a.download = `tab-garden-workspaces-${timestamp}.json`;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showStatus(i18n.t("dataExported"));
+  } catch (error) {
+    showStatus(error instanceof Error ? error.message : String(error), true);
+  } finally {
+    exportWorkspacesBtn.disabled = false;
+  }
+}
+
+async function handleImportFileSelect(event: Event): Promise<void> {
+  const input = event.currentTarget as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const result = await send<{ ok: boolean; preview: WorkspaceImportPreview }>({ type: "import-workspaces-json", data: text, confirmed: false });
+    const preview = result.preview;
+    workspaceImportPreviewSummary.textContent = i18n.t("importPreviewSummary", [String(preview.workspaceCount), String(preview.totalTabs)]);
+    workspaceImportPreviewList.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: i18n.t("importPreviewHint") }));
+    confirmWorkspaceImportPreview.disabled = false;
+    workspaceImportPreviewDialog.showModal();
+  } catch (error) {
+    showStatus(error instanceof Error ? error.message : String(error), true);
+  } finally {
+    input.value = "";
+  }
+}
+
+async function confirmWorkspaceImport(): Promise<void> {
+  try {
+    confirmWorkspaceImportPreview.disabled = true;
+    const result = await send<{ ok: boolean; importedCount: number; totalCount: number }>({ type: "import-workspaces-json", confirmed: true });
+    workspaceImportPreviewDialog.close();
+    showStatus(i18n.t("importCompleted"));
+    await loadWorkspaces();
+  } catch (error) {
+    showStatus(error instanceof Error ? error.message : String(error), true);
+  } finally {
+    confirmWorkspaceImportPreview.disabled = false;
+  }
+}
+
+function cancelWorkspaceImport(): void {
+  workspaceImportPreviewDialog.close();
+  void send({ type: "import-workspaces-json", cancelled: true }).catch(() => {});
+}
+
+async function openWorkspaceHistoryDialog(workspaceId: string, workspaceTitle: string): Promise<void> {
+  historyWorkspaceId = workspaceId;
+  historyWorkspaceTitle = workspaceTitle;
+  workspaceHistoryTitle.textContent = i18n.t("workspaceHistoryTitle", [workspaceTitle]);
+  saveWorkspaceVersionBtn.textContent = i18n.t("saveAsVersion") || "保存为一版";
+  workspaceHistoryList.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: i18n.t("loading") }));
+  workspaceHistoryDialog.showModal();
+  try {
+    const result = await send<{ history: WorkspaceHistory; maxVersions: number }>({ type: "get-workspace-history", id: workspaceId });
+    currentHistory = result.history;
+    renderWorkspaceHistory(result.history, result.maxVersions);
+  } catch (error) {
+    workspaceHistoryList.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: error instanceof Error ? error.message : String(error) }));
+  }
+}
+
+function renderWorkspaceHistory(history: WorkspaceHistory, maxVersions: number): void {
+  const versions = history.versions.slice().sort((a, b) => b.version - a.version);
+  if (versions.length === 0) {
+    workspaceHistoryList.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: i18n.t("noHistory") }));
+    return;
+  }
+  const fallback = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
+  workspaceHistoryList.replaceChildren(...versions.map((version) => {
+    const row = document.createElement("div");
+    row.className = "workspace-history-row";
+    const header = document.createElement("div");
+    header.className = "workspace-history-row-header";
+    const versionBadge = document.createElement("span");
+    versionBadge.className = "workspace-history-version";
+    versionBadge.textContent = `#${version.version}`;
+    const savedAt = document.createElement("span");
+    savedAt.className = "workspace-history-savedat";
+    savedAt.textContent = i18n.t("savedAtTime", [formatDeferredDateTime(version.savedAt)]);
+    const tabsCount = document.createElement("span");
+    tabsCount.className = "workspace-history-tabcount";
+    tabsCount.textContent = `${version.snapshot.tabs.length} ${i18n.t("tabs")}`;
+    header.append(versionBadge, savedAt, tabsCount);
+    const note = document.createElement("div");
+    note.className = "workspace-history-note";
+    note.textContent = version.note || i18n.t("noVersionNote") || "（无备注）";
+    const preview = document.createElement("div");
+    preview.className = "workspace-history-preview";
+    const previewTabs = version.snapshot.tabs.slice(0, 3);
+    previewTabs.forEach((tab) => {
+      const tabEl = document.createElement("div");
+      tabEl.className = "workspace-history-tab";
+      const icon = document.createElement("img");
+      icon.className = "tab-icon";
+      icon.alt = "";
+      icon.src = faviconFor(tab.url) || fallback;
+      icon.addEventListener("error", () => { if (icon.src !== fallback) icon.src = fallback; });
+      const title = document.createElement("span");
+      title.className = "workspace-history-tab-title";
+      title.textContent = tab.title;
+      title.title = tab.url || tab.title;
+      tabEl.append(icon, title);
+      preview.append(tabEl);
+    });
+    if (version.snapshot.tabs.length > 3) {
+      const more = document.createElement("span");
+      more.className = "workspace-history-more";
+      more.textContent = `+${version.snapshot.tabs.length - 3}`;
+      preview.append(more);
+    }
+    const actions = document.createElement("div");
+    actions.className = "deferred-actions workspace-history-actions";
+    const restoreBtn = makeButton(i18n.t("restoreVersion"), "deferred-action deferred-open", i18n.t("restoreVersion"));
+    restoreBtn.addEventListener("click", () => void confirmRestoreVersion(version));
+    actions.append(restoreBtn);
+    row.append(header, note, preview, actions);
+    return row;
+  }));
+}
+
+async function confirmRestoreVersion(version: WorkspaceVersion): Promise<void> {
+  if (!historyWorkspaceId) return;
+  const tab = await chrome.tabs.getCurrent();
+  const windowId = tab?.windowId;
+  if (!windowId) {
+    showStatus(i18n.t("invalidWindow"), true);
+    return;
+  }
+  const tabCount = version.snapshot.tabs.length;
+  const message = i18n.t("confirmRestoreVersionPrompt")
+    ? i18n.t("confirmRestoreVersionPrompt", [String(version.version), String(tabCount)])
+    : `确认恢复版本 #${version.version}？将打开 ${tabCount} 个标签。`;
+  if (!window.confirm(message)) return;
+  try {
+    const result = await send<{ ok: boolean; created: number }>({
+      type: "restore-workspace-history-version",
+      id: historyWorkspaceId,
+      version: version.version,
+      windowId,
+      confirmed: true,
+    });
+    workspaceHistoryDialog.close();
+    showStatus(i18n.t("openedTabs", [String(result.created)]));
+  } catch (error) {
+    showStatus(error instanceof Error ? error.message : String(error), true);
+  }
+}
+
+async function saveWorkspaceVersion(): Promise<void> {
+  if (!historyWorkspaceId) return;
+  const defaultNote = i18n.t("versionNoteDefault") || "手动保存";
+  const promptText = i18n.t("versionNotePrompt") || "输入备注（可选）：";
+  const noteInput = window.prompt(promptText, defaultNote);
+  if (noteInput === null) return;
+  try {
+    saveWorkspaceVersionBtn.disabled = true;
+    const note = noteInput.trim() || undefined;
+    const result = await send<{ ok: boolean; history: WorkspaceHistory }>({
+      type: "save-workspace-history-version",
+      id: historyWorkspaceId,
+      note,
+    });
+    currentHistory = result.history;
+    renderWorkspaceHistory(result.history, 50);
+    showStatus(i18n.t("versionSaved") || "已保存版本");
+  } catch (error) {
+    showStatus(error instanceof Error ? error.message : String(error), true);
+  } finally {
+    saveWorkspaceVersionBtn.disabled = false;
   }
 }
 
@@ -2169,6 +2382,13 @@ batchDeferBtn.addEventListener("click", () => void batchDeferSelected());
 batchMoveBtn.addEventListener("click", openBatchMoveDialog);
 closeBatchMove.addEventListener("click", () => batchMoveDialog.close());
 cancelBatchMove.addEventListener("click", () => batchMoveDialog.close());
+exportWorkspacesBtn.addEventListener("click", () => void exportWorkspaces().catch((error) => showStatus(String(error), true)));
+importWorkspacesInput.addEventListener("change", (event) => void handleImportFileSelect(event));
+closeWorkspaceImportPreview.addEventListener("click", cancelWorkspaceImport);
+cancelWorkspaceImportPreview.addEventListener("click", cancelWorkspaceImport);
+confirmWorkspaceImportPreview.addEventListener("click", () => void confirmWorkspaceImport());
+closeWorkspaceHistory.addEventListener("click", () => workspaceHistoryDialog.close());
+saveWorkspaceVersionBtn.addEventListener("click", () => void saveWorkspaceVersion());
 viewToggleBoard.addEventListener("click", () => { if (!selectMode) setViewMode("board"); });
 viewToggleTimeline.addEventListener("click", () => { if (!selectMode) setViewMode("timeline"); });
 timelineSort.addEventListener("change", renderTimeline);
