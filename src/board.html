@@ -97,7 +97,16 @@
       </div>
       <div class="workspace-dialog-resizer" aria-hidden="true"></div>
       <div class="workspace-dialog-right">
-        <h3 class="workspace-list-title" data-i18n="workspaces">工作区</h3>
+        <div class="workspace-list-header">
+          <h3 class="workspace-list-title" data-i18n="workspaces">工作区</h3>
+          <div class="workspace-io-actions">
+            <button id="export-workspaces" class="button secondary workspace-io-btn" type="button" data-i18n="exportWorkspace">导出工作区</button>
+            <label class="button secondary workspace-io-btn workspace-import-label" data-i18n="importWorkspace">
+              导入工作区
+              <input id="import-workspaces-input" type="file" accept="application/json" hidden>
+            </label>
+          </div>
+        </div>
         <div id="workspace-list" class="workspace-list"></div>
       </div>
     </div>
@@ -158,6 +167,28 @@
     <footer class="duplicate-review-actions">
       <button id="cancel-batch-move" class="button secondary" type="button" data-i18n="cancel">取消</button>
     </footer>
+  </dialog>
+  <dialog id="workspace-import-preview-dialog" class="duplicate-review" aria-labelledby="workspace-import-preview-title">
+    <header class="duplicate-review-header">
+      <div><span class="eyebrow">TAB GARDEN</span><h2 id="workspace-import-preview-title" data-i18n="importWorkspace">导入工作区</h2></div>
+      <button id="close-workspace-import-preview" class="icon-button" type="button" aria-label="关闭导入预览">×</button>
+    </header>
+    <p id="workspace-import-preview-summary" class="duplicate-review-summary"></p>
+    <div id="workspace-import-preview-list" class="duplicate-review-list"></div>
+    <footer class="duplicate-review-actions">
+      <button id="cancel-workspace-import-preview" class="button secondary" type="button" data-i18n="cancel">取消</button>
+      <button id="confirm-workspace-import-preview" class="button" type="button" data-i18n="confirmImport">确认导入</button>
+    </footer>
+  </dialog>
+  <dialog id="workspace-history-dialog" class="duplicate-review workspace-history-dialog" aria-labelledby="workspace-history-title">
+    <header class="duplicate-review-header">
+      <div><span class="eyebrow">TAB GARDEN</span><h2 id="workspace-history-title"></h2></div>
+      <button id="close-workspace-history" class="icon-button" type="button" aria-label="关闭版本历史">×</button>
+    </header>
+    <div class="workspace-history-toolbar">
+      <button id="save-workspace-version" class="button" type="button">保存为一版</button>
+    </div>
+    <div id="workspace-history-list" class="duplicate-review-list"></div>
   </dialog>
   <script type="module" src="board.js"></script>
 </body>
