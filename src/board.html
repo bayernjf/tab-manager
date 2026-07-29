@@ -9,32 +9,44 @@
 <body>
   <main class="board-shell">
     <header class="board-header">
-      <div><span class="eyebrow">TAB GARDEN</span><h1 data-i18n="tabBoard">标签看板</h1></div>
+      <div class="board-header-left">
+        <div><h1 data-i18n="tabBoard">标签看板</h1></div>
+        <div id="board-stats-inline" class="board-stats-inline"></div>
+      </div>
       <div class="board-actions">
-        <label class="auto-fill"><input id="auto-fill" type="checkbox" checked><span data-i18n="autoFill">自动填充</span></label>
+        <button id="board-theme-toggle" class="icon-button theme-toggle" type="button" data-i18n="themeToggle|aria-label" aria-label="切换主题" aria-pressed="false"><span aria-hidden="true">🌓</span></button>
+        <label class="auto-fill has-tooltip" id="auto-fill-wrapper">
+          <input id="auto-fill" type="checkbox" checked>
+          <span data-i18n="autoFill">自动填充</span>
+          <span class="tooltip" role="tooltip" data-i18n="autoFillHint">关闭后分组卡保持当前手动排列位置，不按顺序自动补位填满</span>
+        </label>
         <button id="open-workspaces" class="button secondary" type="button" data-i18n="workspaces">工作区</button>
         <button id="review-duplicates" class="button secondary" type="button" data-i18n="reviewDuplicates">检查重复</button>
         <button id="refresh" class="button secondary" type="button" data-i18n="refresh">刷新</button>
       </div>
     </header>
-    <p id="board-status" class="status" aria-live="polite"></p>
     <section id="login-required" class="login-required hidden" aria-labelledby="login-title">
       <h2 id="login-title" data-i18n="loginRequired">需要登录</h2>
       <p id="login-message" data-i18n="loginMessage">请先登录后使用标签看板。</p>
     </section>
     <section id="board-content" class="hidden" aria-label="标签看板">
-      <section id="board-statistics" class="board-statistics" aria-label="看板统计"></section>
       <section id="deferred-reminders" class="deferred-reminders hidden" aria-labelledby="deferred-title"><h2 id="deferred-title" data-i18n="deferredReminders">待恢复提醒</h2><div id="deferred-list"></div></section>
-      <div class="board-filters" role="search">
-        <label><span class="sr-only">搜索标签</span><input id="board-search" type="search" data-i18n="searchTabs|placeholder" placeholder="搜索标题、网址或域名" autocomplete="off"></label>
-        <label><span class="sr-only">来源窗口</span><select id="window-filter" aria-label="来源窗口"><option value="" data-i18n="allWindows">全部窗口</option></select></label>
+      <div class="board-toolbar">
+        <div class="toolbar-filters" role="search">
+          <label><span class="sr-only">搜索标签</span><input id="board-search" type="search" data-i18n="searchTabs|placeholder" placeholder="搜索标题、网址或域名" autocomplete="off"></label>
+          <label><span class="sr-only">来源窗口</span><select id="window-filter" aria-label="来源窗口"><option value="" data-i18n="allWindows">全部窗口</option></select></label>
+        </div>
+        <div id="new-group-wrapper" class="toolbar-new-group">
+          <button id="new-group-toggle" class="button secondary" type="button" data-i18n="createNewGroup">新建分组</button>
+          <form id="new-group-form" class="new-group-fields hidden">
+            <label><span class="sr-only">新分组名称</span><input id="new-group-title" maxlength="40" required data-i18n="newGroupPlaceholder|placeholder" placeholder="新建自定义分组"></label>
+            <label><span class="sr-only">分组颜色</span><select id="new-group-color" aria-label="分组颜色"><option value="blue" data-i18n="blue">蓝色</option><option value="green" data-i18n="green">绿色</option><option value="purple" data-i18n="purple">紫色</option><option value="orange" data-i18n="orange">橙色</option><option value="red" data-i18n="red">红色</option><option value="pink" data-i18n="pink">粉色</option><option value="cyan" data-i18n="cyan">青色</option><option value="yellow" data-i18n="yellow">黄色</option><option value="grey" data-i18n="grey">灰色</option></select></label>
+            <button class="button" type="submit" data-i18n="createNewGroup">新建分组</button>
+            <button id="new-group-cancel" class="button secondary" type="button" data-i18n="cancel">取消</button>
+          </form>
+        </div>
+        <nav id="scope-nav" class="scope-nav" aria-label="看板范围"></nav>
       </div>
-      <form id="new-group-form" class="new-group-form">
-        <label><span class="sr-only">新分组名称</span><input id="new-group-title" maxlength="40" required data-i18n="newGroupPlaceholder|placeholder" placeholder="新建自定义分组"></label>
-        <label><span class="sr-only">分组颜色</span><select id="new-group-color" aria-label="分组颜色"><option value="blue" data-i18n="blue">蓝色</option><option value="green" data-i18n="green">绿色</option><option value="purple" data-i18n="purple">紫色</option><option value="orange" data-i18n="orange">橙色</option><option value="red" data-i18n="red">红色</option><option value="pink" data-i18n="pink">粉色</option><option value="cyan" data-i18n="cyan">青色</option><option value="yellow" data-i18n="yellow">黄色</option><option value="grey" data-i18n="grey">灰色</option></select></label>
-        <button class="button" type="submit" data-i18n="createNewGroup">新建分组</button>
-      </form>
-      <nav id="scope-nav" class="scope-nav" aria-label="看板范围"></nav>
       <div id="workspace-header" class="workspace-header hidden" aria-live="polite"></div>
       <div id="board-grid" class="board-grid" aria-live="polite"></div>
     </section>
@@ -48,16 +60,24 @@
       <span class="workspace-device-prefix" data-i18n="thisDevice">本设备</span>
       <input id="workspace-device-name" class="workspace-device-input" type="text" maxlength="60" aria-label="本设备名称" spellcheck="false">
     </div>
-    <div class="workspace-controls">
-      <div class="workspace-name-field">
-        <input id="workspace-name" maxlength="80" data-i18n="workspaceNamePlaceholder|placeholder" placeholder="工作区名称" aria-describedby="workspace-name-error" aria-invalid="false">
-        <p id="workspace-name-error" class="workspace-name-toast" role="alert" hidden></p>
+    <div class="workspace-dialog-body">
+      <div class="workspace-dialog-left">
+        <div class="workspace-controls">
+          <div class="workspace-name-field">
+            <input id="workspace-name" maxlength="80" data-i18n="workspaceNamePlaceholder|placeholder" placeholder="工作区名称" aria-describedby="workspace-name-error" aria-invalid="false">
+            <p id="workspace-name-error" class="workspace-name-toast" role="alert" hidden></p>
+          </div>
+        </div>
+        <label class="workspace-select-all"><input id="workspace-select-all" type="checkbox" checked><span data-i18n="selectAll">全选</span></label>
+        <div id="workspace-tabs" class="workspace-tabs"></div>
+        <button id="save-workspace" class="button" type="button" data-i18n="saveSelectedTabs">保存选中标签</button>
+      </div>
+      <div class="workspace-dialog-resizer" aria-hidden="true"></div>
+      <div class="workspace-dialog-right">
+        <h3 class="workspace-list-title" data-i18n="workspaces">工作区</h3>
+        <div id="workspace-list" class="workspace-list"></div>
       </div>
     </div>
-    <label class="workspace-select-all"><input id="workspace-select-all" type="checkbox" checked><span data-i18n="selectAll">全选</span></label>
-    <div id="workspace-tabs" class="workspace-tabs"></div>
-    <button id="save-workspace" class="button" type="button" data-i18n="saveSelectedTabs">保存选中标签</button>
-    <div id="workspace-list" class="workspace-list"></div>
   </dialog>
   <dialog id="workspace-restore-dialog" class="workspace-dialog" aria-labelledby="workspace-restore-title">
     <h2 id="workspace-restore-title" data-i18n="restoreWorkspace">恢复工作区</h2><p id="workspace-restore-summary"></p><div id="workspace-restore-list" class="workspace-tabs workspace-restore-list"></div>

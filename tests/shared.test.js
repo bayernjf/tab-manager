@@ -308,7 +308,7 @@ test("renders board search and source-window filter controls", async () => {
   assert.match(boardHtml, /id="window-filter"/);
   assert.match(boardScript, /boardTabMatchesQuery/);
   assert.match(boardScript, /renderWindowFilter/);
-  assert.match(boardCss, /\.board-filters/);
+  assert.match(boardCss, /\.toolbar-filters/);
 });
 
 test("groups only duplicate normalized HTTP(S) URLs and retains the first tab", () => {
@@ -522,7 +522,7 @@ test("renders a compact accessible deferred shortcut editor", async () => {
     readFile(new URL("../dist/options.css", import.meta.url), "utf8"),
   ]);
 
-  const shortcutCardClasses = html.match(/<section class="([^"]*\bshortcut-card\b[^"]*)"/)?.[1]?.split(/\s+/);
+  const shortcutCardClasses = html.match(/<section[^>]*\bclass="([^"]*\bshortcut-card\b[^"]*)"/)?.[1]?.split(/\s+/);
   assert.ok(shortcutCardClasses?.includes("card"));
   assert.ok(shortcutCardClasses.includes("shortcut-card"));
   assert.match(html, /<[^>]+(?=[^>]*\bid="deferred-shortcut-count")(?=[^>]*\baria-live="polite")[^>]*>/);
@@ -634,8 +634,8 @@ test("renders a configured deferred shortcut menu", async () => {
   const [script, css] = await Promise.all([readFile(new URL("../dist/board.js", import.meta.url), "utf8"), readFile(new URL("../dist/board.css", import.meta.url), "utf8")]);
   assert.match(script, /deferredShortcutTimes/);
   assert.match(script, /defer-menu/);
-  assert.match(script, /倒计时 /);
-  assert.doesNotMatch(script, /自定义时间/);
+  assert.match(script, /i18n\.t\("countdown"\)/);
+  assert.doesNotMatch(script, /i18n\.t\("customTime"\)/);
   assert.match(css, /\.defer-menu/);
 });
 
@@ -670,9 +670,9 @@ test("builds a read-only board statistics handler", async () => {
 
 test("renders board statistics cards", async () => {
   const [html, script, css] = await Promise.all([readFile(new URL("../dist/board.html", import.meta.url), "utf8"), readFile(new URL("../dist/board.js", import.meta.url), "utf8"), readFile(new URL("../dist/board.css", import.meta.url), "utf8")]);
-  assert.match(html, /id="board-statistics"/);
+  assert.match(html, /id="board-stats-inline"/);
   assert.match(script, /type: "get-board-statistics"/);
-  assert.match(css, /\.board-statistics/);
+  assert.match(css, /\.board-stats-inline/);
 });
 
 test("builds local workspace save, preview, restore, and delete handlers", async () => {
@@ -687,15 +687,15 @@ test("builds local workspace save, preview, restore, and delete handlers", async
   assert.match(background, /renameDeviceWorkspaces/);
   assert.match(background, /getOrCreateDeviceId/);
   assert.match(background, /device: \{ id: deviceId, name: deviceName \}/);
-  assert.match(background, /请输入工作区名称/);
-  assert.match(background, /该工作区名称已存在/);
+  assert.match(background, /i18n\.t\("workspaceNameEmpty"\)/);
+  assert.match(background, /i18n\.t\("workspaceNameDuplicate"\)/);
   assert.match(background, /message\.type === "get-workspace-restore-preview"/);
   assert.match(background, /message\.type === "restore-workspace"/);
   assert.match(background, /message\.confirmed !== true/);
   assert.match(background, /chrome\.tabs\.create/);
   assert.match(background, /message\.type === "delete-workspace"/);
   assert.match(background, /message\.type === "set-device-name"/);
-  assert.match(background, /设备名称无效/);
+  assert.match(background, /i18n\.t\("deviceNameInvalid"\)/);
 });
 
 test("renders local workspace selection and restore-preview dialogs", async () => {
@@ -815,7 +815,7 @@ test("makes only the workspace manager dialog resizable", async () => {
   const resizableRule = cssRule(css, ".workspace-dialog-resizable");
   assert.match(resizableRule, /\bcontainer\s*:\s*workspace-dialog\s*\/\s*inline-size\s*;/);
   assert.match(resizableRule, /\bresize\s*:\s*both\s*;/);
-  assert.match(resizableRule, /\boverflow\s*:\s*auto\s*;/);
+  assert.match(resizableRule, /\boverflow\s*:\s*hidden\s*;/);
   assert.match(resizableRule, /\boverscroll-behavior\s*:\s*contain\s*;/);
   assert.match(resizableRule, /\bmin-width\s*:\s*[^;}]+\s*;/);
   assert.match(resizableRule, /\bmin-height\s*:\s*[^;}]+\s*;/);
@@ -836,8 +836,8 @@ test("makes only the workspace manager dialog resizable", async () => {
   assert.match(workspaceTabsRule, /\boverscroll-behavior\s*:\s*contain\s*;/);
   const workspaceListRule = cssRule(css, ".workspace-dialog-resizable .workspace-list");
   assert.match(workspaceListRule, /\bmax-height\s*:\s*none\s*;/);
-  assert.match(workspaceListRule, /\bflex\s*:\s*0\s+0\s+auto\s*;/);
-  assert.match(workspaceListRule, /\boverflow\s*:\s*visible\s*;/);
+  assert.match(workspaceListRule, /\bflex\s*:\s*1\s+1\s+0\s*;/);
+  assert.match(workspaceListRule, /\boverflow\s*:\s*auto\s*;/);
 
   const narrowDialogCss = cssBlocks(css)
     .find((block) => normalizedCssSelector(block.selector) === "@container workspace-dialog (max-width: 520px)")?.body ?? "";
@@ -861,7 +861,7 @@ test("makes only the workspace manager dialog resizable", async () => {
   const mobileResizableOpenRule = cssRule(mobileCss, ".workspace-dialog-resizable[open]");
   assert.match(mobileResizableOpenRule, /\bdisplay\s*:\s*block\s*;/);
   const mobileWorkspaceTabsRule = cssRule(mobileCss, ".workspace-dialog-resizable .workspace-tabs");
-  assert.match(mobileWorkspaceTabsRule, /\bmax-height\s*:\s*300px\s*;/);
+  assert.match(mobileWorkspaceTabsRule, /\bmax-height\s*:\s*200px\s*;/);
   const mobileToastRule = cssRule(mobileCss, ".workspace-dialog-resizable .workspace-name-toast");
   assert.match(mobileToastRule, /\bmargin-top\s*:\s*6px\s*;/);
   const mobileWorkspaceListRule = cssRule(mobileCss, ".workspace-dialog-resizable .workspace-list");
@@ -1760,7 +1760,7 @@ test("parses only valid portable data and rejects sensitive unknown keys", () =>
 
   assert.deepEqual(parsePortableData(valid), {
     ...valid,
-    settings: { ...valid.settings, openBoardOnNewTab: false, theme: "light" },
+    settings: { ...valid.settings, openBoardOnNewTab: false, theme: "light", language: undefined },
   });
   assert.equal(parsePortableData({ ...valid, settings: { ...valid.settings, minimumTabs: 0 } }), null);
   assert.equal(parsePortableData({ ...valid, accessToken: "secret" }), null);
@@ -1845,6 +1845,7 @@ test("maps portable data explicitly without runtime-only fields", () => {
       lastSuccessfulSyncAt: "2026-07-22T00:00:00.000Z",
       openBoardOnNewTab: false,
       theme: "light",
+      language: undefined,
     },
     groupRules: [{ id: "rule-1", title: "Example", color: "blue", domains: ["example.com"], matchScope: "exact", enabled: true, sortOrder: 1 }],
     ignoredSites: [{ id: "ignore-1", domain: "ads.example.com", matchScope: "exact", sortOrder: 1 }],
@@ -1882,6 +1883,7 @@ test("converts stored state without runtime group mappings", () => {
       lastSuccessfulSyncAt: null,
       openBoardOnNewTab: false,
       theme: "light",
+      language: undefined,
     },
     groupRules: [{
       id: "rule-1",

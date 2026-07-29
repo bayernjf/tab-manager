@@ -236,6 +236,7 @@ interface PortableSettings {
   syncIgnoreListEnabled: boolean;
   lastSuccessfulSyncAt: string | null;
   theme: Theme;
+  language?: Language;
 }
 
 export interface PortableData {
@@ -366,8 +367,9 @@ export function isBoardKey(value: unknown): value is BoardKey {
   return false;
 }
 
-export function boardWindowLabel(windowIndex: number): string | null {
-  return Number.isInteger(windowIndex) && windowIndex > 0 ? `窗口 ${windowIndex}` : null;
+export function boardWindowLabel(windowIndex: number, t?: (key: string, args?: string[]) => string): string | null {
+  if (!Number.isInteger(windowIndex) || windowIndex <= 0) return null;
+  return t ? t("window", [String(windowIndex)]) : `窗口 ${windowIndex}`;
 }
 
 export function boardTabMatchesQuery(tab: BoardTab, query: string): boolean {
@@ -478,8 +480,8 @@ export function normalizeDeferredShortcutTimes(value: unknown): string[] | null 
   return unique.length ? unique : null;
 }
 
-export function nextDeferredOccurrence(hhmm: string, now: Date = new Date()): Date {
-  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hhmm)) throw new Error(`无效的时刻：${hhmm}`);
+export function nextDeferredOccurrence(hhmm: string, now: Date = new Date(), t?: (key: string, args?: string[]) => string): Date {
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hhmm)) throw new Error(t ? t("invalidTime", [hhmm]) : `无效的时刻：${hhmm}`);
   const [hours, minutes] = hhmm.split(":").map(Number) as [number, number];
   const next = new Date(now);
   next.setHours(hours, minutes, 0, 0);
@@ -611,7 +613,7 @@ export function moveVirtualBoardAssignment(
   return { ...assignments, [key]: { windowId, tabId, boardKey, order } };
 }
 
-export function buildVirtualBoardGroups(input: VirtualBoardGroupInput): BoardLogicalGroup[] {
+export function buildVirtualBoardGroups(input: VirtualBoardGroupInput, t?: (key: string) => string): BoardLogicalGroup[] {
   const customByKey = new Map(input.customGroups.flatMap((group) => {
     const key = customBoardKey(group.id);
     return key ? [[key, group] as const] : [];
@@ -653,7 +655,7 @@ export function buildVirtualBoardGroups(input: VirtualBoardGroupInput): BoardLog
   }
   const tabsFor = (key: BoardKey): BoardTab[] => (tabsByKey.get(key) ?? [])
     .sort((left, right) => left.order - right.order || left.tab.id - right.tab.id).map(({ tab }) => tab);
-  const groups: BoardLogicalGroup[] = [{ boardKey: "ungrouped", kind: "ungrouped", title: "未分组", color: "grey", rank: 0, tabs: [] }];
+  const groups: BoardLogicalGroup[] = [{ boardKey: "ungrouped", kind: "ungrouped", title: t ? t("ungrouped") : "未分组", color: "grey", rank: 0, tabs: [] }];
   for (const custom of [...input.customGroups].sort((left, right) => left.sortOrder - right.sortOrder)) {
     const key = customBoardKey(custom.id);
     if (key) groups.push({ boardKey: key, kind: "custom", title: custom.title, color: custom.color, rank: custom.sortOrder + 1, tabs: tabsFor(key) });
@@ -884,6 +886,7 @@ export function toPortableData(settings: Settings, groupRules: readonly GroupRul
       syncIgnoreListEnabled: settings.syncIgnoreListEnabled ?? DEFAULT_SETTINGS.syncIgnoreListEnabled!,
       lastSuccessfulSyncAt: settings.lastSuccessfulSyncAt ?? null,
       theme: settings.theme ?? DEFAULT_SETTINGS.theme!,
+      language: settings.language ?? DEFAULT_SETTINGS.language,
     },
     groupRules: groupRules.map((rule) => ({
       id: rule.id,
@@ -962,7 +965,7 @@ export function canConfirmOptionsImport(previewUserId: string | null, currentUse
 
 export function validateOptionsSettings(value: unknown): Settings | null {
   if (!isPlainObject(value)) return null;
-  const allowedKeys = ["autoGroupEnabled", "minimumTabs", "openBoardOnNewTab", "deferredShortcutTimes", "defaultGroupColor", "cloudSyncEnabled", "syncRulesEnabled", "syncIgnoreListEnabled", "lastSuccessfulSyncAt", "theme"];
+  const allowedKeys = ["autoGroupEnabled", "minimumTabs", "openBoardOnNewTab", "deferredShortcutTimes", "defaultGroupColor", "cloudSyncEnabled", "syncRulesEnabled", "syncIgnoreListEnabled", "lastSuccessfulSyncAt", "theme", "language"];
   if (Object.keys(value).some((key) => !allowedKeys.includes(key))) return null;
   const parsed = parsePortableSettings({
     autoGroupEnabled: value.autoGroupEnabled,
@@ -974,6 +977,7 @@ export function validateOptionsSettings(value: unknown): Settings | null {
     syncIgnoreListEnabled: value.syncIgnoreListEnabled,
     lastSuccessfulSyncAt: null,
     theme: value.theme,
+    language: value.language,
   });
   const deferredShortcutTimes = normalizeDeferredShortcutTimes(value.deferredShortcutTimes);
   return parsed && deferredShortcutTimes ? { ...parsed, deferredShortcutTimes, lastSuccessfulSyncAt: null } : null;
@@ -998,8 +1002,8 @@ export function resolveCloudCollection<T>(local: readonly T[], remote: readonly 
   return { local: [...local], initializeRemote: local.length > 0 };
 }
 
-export function syncFailureStatus(_error: unknown): SyncFailureStatus {
-  return { state: "error", message: "云端同步暂时不可用，请稍后重试。" };
+export function syncFailureStatus(_error: unknown, t?: (key: string) => string): SyncFailureStatus {
+  return { state: "error", message: t ? t("syncUnavailable") : "云端同步暂时不可用，请稍后重试。" };
 }
 
 export function createIgnoredSiteFromInput(value: unknown, id: string, sortOrder: number): IgnoredSite | null {
@@ -1068,14 +1072,16 @@ function isSortOrder(value: unknown): value is number {
 
 function parsePortableSettings(value: unknown): PortableSettings | null {
   const requiredKeys = ["autoGroupEnabled", "minimumTabs", "defaultGroupColor", "cloudSyncEnabled", "syncRulesEnabled", "syncIgnoreListEnabled", "lastSuccessfulSyncAt"];
-  const currentKeys = [...requiredKeys, "openBoardOnNewTab", "theme"];
-  if (!isPlainObject(value) || (!hasOnlyKeys(value, requiredKeys) && !hasOnlyKeys(value, currentKeys))) return null;
+  const allowedKeys = [...requiredKeys, "openBoardOnNewTab", "theme", "language"];
+  if (!isPlainObject(value) || !Object.keys(value).every((key) => allowedKeys.includes(key)) || !requiredKeys.every((key) => Object.prototype.hasOwnProperty.call(value, key))) return null;
   const openBoardOnNewTab = value.openBoardOnNewTab === undefined ? DEFAULT_SETTINGS.openBoardOnNewTab : value.openBoardOnNewTab;
   const themeValue = value.theme === undefined ? DEFAULT_SETTINGS.theme : value.theme;
   if (!isTheme(themeValue)) return null;
   const theme = themeValue;
+  const language = value.language === undefined ? DEFAULT_SETTINGS.language : isLanguage(value.language) ? value.language : null;
+  if (language === null) return null;
   if (typeof value.autoGroupEnabled !== "boolean" || !isMinimumTabs(value.minimumTabs) || !isGroupColor(value.defaultGroupColor) || typeof value.cloudSyncEnabled !== "boolean" || typeof value.syncRulesEnabled !== "boolean" || typeof value.syncIgnoreListEnabled !== "boolean" || typeof openBoardOnNewTab !== "boolean" || !isSyncTimestamp(value.lastSuccessfulSyncAt)) return null;
-  return { autoGroupEnabled: value.autoGroupEnabled, minimumTabs: value.minimumTabs, openBoardOnNewTab, defaultGroupColor: value.defaultGroupColor, cloudSyncEnabled: value.cloudSyncEnabled, syncRulesEnabled: value.syncRulesEnabled, syncIgnoreListEnabled: value.syncIgnoreListEnabled, lastSuccessfulSyncAt: value.lastSuccessfulSyncAt, theme };
+  return { autoGroupEnabled: value.autoGroupEnabled, minimumTabs: value.minimumTabs, openBoardOnNewTab, defaultGroupColor: value.defaultGroupColor, cloudSyncEnabled: value.cloudSyncEnabled, syncRulesEnabled: value.syncRulesEnabled, syncIgnoreListEnabled: value.syncIgnoreListEnabled, lastSuccessfulSyncAt: value.lastSuccessfulSyncAt, theme, language };
 }
 
 function parseGroupRules(value: unknown): GroupRule[] | null {
