@@ -2431,13 +2431,13 @@ document.addEventListener("keydown", (event) => {
     case "j":
       event.preventDefault();
       if (navTabIds.length === 0) return;
-      navFocusIndex = Math.min(navTabIds.length - 1, navFocusIndex + 1);
+      navFocusIndex = navFocusIndex + 1 >= navTabIds.length ? 0 : navFocusIndex + 1;
       scrollNavIntoView();
       break;
     case "k":
       event.preventDefault();
       if (navTabIds.length === 0) return;
-      navFocusIndex = Math.max(0, navFocusIndex - 1);
+      navFocusIndex = navFocusIndex - 1 < 0 ? navTabIds.length - 1 : navFocusIndex - 1;
       scrollNavIntoView();
       break;
     case "d":
