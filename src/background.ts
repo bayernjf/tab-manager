@@ -77,6 +77,10 @@ import {
   saveTabProcesses,
   upsertTabProcess,
   clearTabProcesses,
+  loadTabCreatedAtMap,
+  recordTabCreatedAt,
+  removeTabCreatedAt,
+  saveTabCreatedAtEntries,
   loadWorkspaceHistory,
   loadAllWorkspaceHistories,
   saveWorkspaceHistory,
@@ -87,6 +91,27 @@ import { getCurrentUser, getStoredUser, signIn, signOut, signUp } from "./auth.j
 import { pushSettings, replaceBoardSyncData, replaceOptionalSyncData, restoreBoardSyncData, restoreOptionalSyncData, syncSettings, fetchWorkspaces, upsertWorkspace, deleteWorkspaceRow, renameDeviceWorkspaces } from "./sync.js";
 
 void i18n.initFromStorage();
+void seedTabCreatedAtForExistingTabs();
+
+async function seedTabCreatedAtForExistingTabs(): Promise<void> {
+  try {
+    const map = await loadTabCreatedAtMap();
+    const windows = await chrome.windows.getAll({ populate: true, windowTypes: ["normal"] });
+    const now = Date.now();
+    let changed = false;
+    for (const window of windows) {
+      for (const tab of window.tabs ?? []) {
+        if (typeof tab.id !== "number") continue;
+        if (map[tab.id] != null) continue;
+        map[tab.id] = now;
+        changed = true;
+      }
+    }
+    if (changed) await saveTabCreatedAtEntries(map);
+  } catch {
+    // Ignore seeding failures; onCreated will keep recording new tabs.
+  }
+}
 
 type PopupMessage =
   | { type: "auth-state" }
@@ -359,9 +384,10 @@ async function currentNormalWindowId(): Promise<number> {
   return window.id;
 }
 
-function boardTab(tab: chrome.tabs.Tab): BoardTab | null {
+async function boardTab(tab: chrome.tabs.Tab, createdAtMap: Record<number, number>): Promise<BoardTab | null> {
   if (tab.id == null || tab.windowId == null || tab.pinned || !getSiteKey(tab.url)) return null;
-  return { id: tab.id, windowId: tab.windowId, title: tab.title || i18n.t("unnamedTab"), url: tab.url, favIconUrl: tab.favIconUrl };
+  const createdAt = createdAtMap[tab.id];
+  return { id: tab.id, windowId: tab.windowId, title: tab.title || i18n.t("unnamedTab"), url: tab.url, favIconUrl: tab.favIconUrl, createdAt };
 }
 
 function boardRank(state: Awaited<ReturnType<typeof loadState>>, boardKey: BoardGroup["boardKey"], fallback: number): number {
@@ -369,23 +395,25 @@ function boardRank(state: Awaited<ReturnType<typeof loadState>>, boardKey: Board
 }
 
 async function boardLogicalGroups(state: Awaited<ReturnType<typeof loadState>>, currentWindowId?: number): Promise<BoardLogicalGroup[]> {
+  const createdAtMap = await loadTabCreatedAtMap();
   const windows = await chrome.windows.getAll({ populate: true, windowTypes: ["normal"] });
-  const eligible = windows.flatMap((window, index) => (window.tabs ?? []).flatMap((tab) => {
-    const mapped = boardTab(tab);
+  const eligible = await Promise.all(windows.flatMap((window, index) => (window.tabs ?? []).flatMap((tab) => {
     const windowLabel = boardWindowLabel(index + 1);
-    return mapped && windowLabel ? [{ ...mapped, windowLabel, isCurrentWindow: window.id === currentWindowId }] : [];
-  }));
-  return buildVirtualBoardGroups({ tabs: eligible, settings: state.settings, rules: state.groupRules, ignoredSites: state.ignoredSites, customGroups: state.boardCustomGroups, assignments: state.boardAssignments })
+    return (async () => {
+      const mapped = await boardTab(tab, createdAtMap);
+      return mapped && windowLabel ? [{ ...mapped, windowLabel, isCurrentWindow: window.id === currentWindowId }] : [];
+    })();
+  })));
+  return buildVirtualBoardGroups({ tabs: eligible.flat(), settings: state.settings, rules: state.groupRules, ignoredSites: state.ignoredSites, customGroups: state.boardCustomGroups, assignments: state.boardAssignments })
     .map((group) => ({ ...group, rank: boardRank(state, group.boardKey, group.rank) }))
     .sort((left, right) => left.rank - right.rank);
 }
 
 async function boardDuplicateTabs(): Promise<BoardTab[]> {
+  const createdAtMap = await loadTabCreatedAtMap();
   const windows = await chrome.windows.getAll({ populate: true, windowTypes: ["normal"] });
-  return windows.flatMap((window) => (window.tabs ?? []).flatMap((tab) => {
-    const mapped = boardTab(tab);
-    return mapped ? [mapped] : [];
-  }));
+  const results = await Promise.all(windows.flatMap((window) => (window.tabs ?? []).flatMap((tab) => boardTab(tab, createdAtMap))));
+  return results.filter((tab): tab is BoardTab => tab !== null);
 }
 
 async function closeBoardDuplicates(groups: readonly DuplicateCloseGroup[]): Promise<{ closed: number; skipped: number }> {
@@ -394,7 +422,7 @@ async function closeBoardDuplicates(groups: readonly DuplicateCloseGroup[]): Pro
   for (const group of groups) {
     const live = await Promise.all(group.tabIds.map(async (tabId) => {
       try {
-        const tab = boardTab(await chrome.tabs.get(tabId));
+        const tab = await boardTab(await chrome.tabs.get(tabId), await loadTabCreatedAtMap());
         return tab ? { tabId, tab } : null;
       } catch {
         return null;
@@ -584,6 +612,9 @@ chrome.tabs.onCreated.addListener((tab) => {
   void (async () => {
     try {
       const state = await loadState();
+      if (typeof tab.id === "number") {
+        await recordTabCreatedAt(tab.id, Date.now());
+      }
       if (state.settings.openBoardOnNewTab !== true || typeof tab.id !== "number") return;
       if (!isBrowserNewTabUrl(tab.url) && !isBrowserNewTabUrl(tab.pendingUrl)) return;
       await chrome.tabs.update(tab.id, { url: chrome.runtime.getURL("board.html") });
@@ -595,6 +626,11 @@ chrome.tabs.onCreated.addListener((tab) => {
 
 chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
   void (async () => {
+    try {
+      await removeTabCreatedAt(tabId);
+    } catch {
+      // Ignore cleanup failures; the next save will overwrite the map.
+    }
     try {
       if (removeInfo.isWindowClosing) return;
       const tab = await chrome.tabs.get(tabId).catch(() => null);
@@ -645,7 +681,7 @@ chrome.commands.onCommand.addListener((command) => {
         const state = await loadState();
         const defaultTimes = state.settings.deferredShortcutTimes?.[0] ?? "09:00";
         const due = nextDeferredOccurrence(defaultTimes);
-        const tab = boardTab(active);
+        const tab = await boardTab(active, await loadTabCreatedAtMap());
         if (!tab?.url) return;
         const deferred = validateDeferredTab({ id: crypto.randomUUID(), title: tab.title, url: tab.url, favIconUrl: tab.favIconUrl, dueAt: due.toISOString(), createdAt: new Date().toISOString() });
         if (!deferred) return;
@@ -959,7 +995,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
     }
     if (message.type === "defer-board-tab") {
       await requireBoardUser(); if (typeof message.tabId !== "number" || !Number.isInteger(message.tabId) || typeof message.dueAt !== "string" || Date.parse(message.dueAt) <= Date.now()) throw new Error(i18n.t("reminderTimeInvalid"));
-      const source = await chrome.tabs.get(message.tabId); const tab = boardTab(source); if (!tab?.url) throw new Error(i18n.t("onlyWebTabsDefer"));
+      const source = await chrome.tabs.get(message.tabId); const tab = await boardTab(source, await loadTabCreatedAtMap()); if (!tab?.url) throw new Error(i18n.t("onlyWebTabsDefer"));
       const deferred = validateDeferredTab({ id: crypto.randomUUID(), title: tab.title, url: tab.url, favIconUrl: tab.favIconUrl, dueAt: message.dueAt, createdAt: new Date().toISOString() }); if (!deferred) throw new Error(i18n.t("invalidTabData"));
       await saveDeferredTabs([...await loadDeferredTabs(), deferred]); void scheduleDeferredDueAlarm(deferred.id, deferred.dueAt); void ensureDeferredCheckAlarm(); await chrome.tabs.remove(message.tabId); return { ok: true, tab: deferred };
     }
@@ -972,10 +1008,11 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const existingDeferred = await loadDeferredTabs();
       const deferredTabs: DeferredTab[] = [];
       const toClose: number[] = [];
+      const createdAtMap = await loadTabCreatedAtMap();
       for (const tabId of uniqueTabIds) {
         try {
           const source = await chrome.tabs.get(tabId);
-          const tab = boardTab(source);
+          const tab = await boardTab(source, createdAtMap);
           if (!tab?.url) continue;
           const deferred = validateDeferredTab({ id: crypto.randomUUID(), title: tab.title, url: tab.url, favIconUrl: tab.favIconUrl, dueAt: message.dueAt, createdAt: new Date().toISOString() });
           if (deferred) {
@@ -1048,7 +1085,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const drop = validateBoardTabDrop(message.drop);
       if (!drop) throw new Error(i18n.t("invalidTabData"));
       const tab = await chrome.tabs.get(drop.tabId);
-      const source = boardTab(tab);
+      const source = await boardTab(tab, await loadTabCreatedAtMap());
       if (!source) throw new Error(i18n.t("onlyWebTabsDefer"));
       const state = await loadState();
       if (drop.targetBoardKey.startsWith("custom:")) {
@@ -1082,11 +1119,12 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       let targetTabs = [...targetGroup.tabs];
       const movedIds = new Set<number>();
       let notFound = 0;
+      const createdAtMap = await loadTabCreatedAtMap();
       for (const tabId of uniqueTabIds) {
         if (targetTabs.some((t) => t.id === tabId)) { movedIds.add(tabId); continue; }
         try {
           const chromeTab = await chrome.tabs.get(tabId);
-          const source = boardTab(chromeTab);
+          const source = await boardTab(chromeTab, createdAtMap);
           if (!source) { notFound += 1; continue; }
           targetTabs = targetTabs.filter((candidate) => candidate.id !== tabId);
           targetTabs.push(source);
@@ -1283,7 +1321,9 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       }];
       const tabs = await Promise.all(message.tabIds.map((tabId) => chrome.tabs.get(tabId)));
       const windowId = tabs[0]?.windowId;
-      if (windowId == null || tabs.some((tab) => tab.windowId !== windowId || !boardTab(tab))) throw new Error("请选择同一窗口中的普通网页标签页");
+      const createdAtMap = await loadTabCreatedAtMap();
+      const mappedTabs = await Promise.all(tabs.map((tab) => boardTab(tab, createdAtMap)));
+      if (windowId == null || tabs.some((tab) => tab.windowId !== windowId) || mappedTabs.some((tab) => !tab)) throw new Error("请选择同一窗口中的普通网页标签页");
       const boardKey = customBoardKey(id);
       if (!boardKey) throw new Error("无法创建自定义分组");
       state.boardAssignments = message.tabIds.reduce((assignments, tabId, order) => moveVirtualBoardAssignment(assignments, windowId, tabId, boardKey, order), state.boardAssignments);
