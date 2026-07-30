@@ -50,6 +50,7 @@ import {
   type WorkspaceHistory,
   type WorkspacePortableImportPreview,
   isDeferredTabDue,
+  nextDeferredOccurrence,
   formatDeferredDateTime,
   MAX_WORKSPACE_HISTORY_VERSIONS,
 } from "./shared.js";
@@ -460,8 +461,40 @@ async function syncBoardMutation(state: Awaited<ReturnType<typeof loadState>>, i
 }
 
 const DEFERRED_CHECK_ALARM = "deferred-tab-check";
+const DEFERRED_DUE_ALARM_PREFIX = "deferred-due:";
 const NOTIFICATION_DEFERRED_PREFIX = "deferred:";
 let notifiedDeferredIds = new Set<string>();
+
+function deferredDueAlarmName(id: string): string {
+  return `${DEFERRED_DUE_ALARM_PREFIX}${id}`;
+}
+
+async function scheduleDeferredDueAlarm(id: string, dueAt: string): Promise<void> {
+  const delayMs = Date.parse(dueAt) - Date.now();
+  if (delayMs <= 0) return;
+  const delayInMinutes = delayMs / 60000;
+  await chrome.alarms.create(deferredDueAlarmName(id), { delayInMinutes });
+}
+
+async function clearDeferredDueAlarm(id: string): Promise<void> {
+  await chrome.alarms.clear(deferredDueAlarmName(id)).catch(() => {});
+}
+
+async function sendToast(message: string): Promise<void> {
+  try {
+    const id = `tab-garden-toast-${Date.now()}`;
+    await chrome.notifications.create(id, {
+      type: "basic",
+      iconUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      title: "Tab Garden",
+      message,
+      priority: 1,
+      requireInteraction: false,
+    });
+  } catch (error) {
+    console.error("[Tab Garden] Failed to send toast:", error);
+  }
+}
 
 async function checkDueDeferredTabs(): Promise<void> {
   const tabs = await loadDeferredTabs();
@@ -473,27 +506,27 @@ async function checkDueDeferredTabs(): Promise<void> {
     const notificationId = `${NOTIFICATION_DEFERRED_PREFIX}${tab.id}`;
     const title = i18n.t("deferredDueTitle") || "Reminder";
     const message = `${tab.title}\n${i18n.t("deferredDueScheduled") || "Scheduled at"}: ${formatDeferredDateTime(tab.dueAt)}`;
-    const favIcon = tab.favIconUrl?.startsWith("http:") || tab.favIconUrl?.startsWith("https:") || tab.favIconUrl?.startsWith("data:")
+    const iconUrl = tab.favIconUrl?.startsWith("data:")
       ? tab.favIconUrl
       : "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
     try {
       await chrome.notifications.create(notificationId, {
         type: "basic",
-        iconUrl: favIcon,
+        iconUrl,
         title,
         message,
         priority: 2,
         requireInteraction: false,
       } as chrome.notifications.NotificationCreateOptions);
       notifiedDeferredIds.add(tab.id);
-    } catch {
-      // Notification creation may fail on platforms without support; skip silently.
+    } catch (error) {
+      console.error("[Tab Garden] Failed to create deferred notification:", error);
     }
   }
 }
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === DEFERRED_CHECK_ALARM) {
+  if (alarm.name === DEFERRED_CHECK_ALARM || alarm.name.startsWith(DEFERRED_DUE_ALARM_PREFIX)) {
     void checkDueDeferredTabs();
   }
 });
@@ -514,6 +547,7 @@ chrome.notifications.onClicked.addListener(async (notificationId) => {
   if (windowId == null) return;
   await chrome.tabs.create({ windowId, url: tab.url, active: true });
   await saveDeferredTabs(tabs.filter((item) => item.id !== deferredId));
+  void clearDeferredDueAlarm(deferredId);
   notifiedDeferredIds.delete(deferredId);
   if (currentWindow?.id != null) {
     await chrome.windows.update(currentWindow.id, { focused: true }).catch(() => {});
@@ -528,9 +562,22 @@ chrome.notifications.onClosed.addListener((notificationId) => {
 
 async function ensureDeferredCheckAlarm(): Promise<void> {
   const existing = await chrome.alarms.get(DEFERRED_CHECK_ALARM).catch(() => undefined);
-  if (existing) return;
-  await chrome.alarms.create(DEFERRED_CHECK_ALARM, { periodInMinutes: 1 });
+  if (!existing) {
+    await chrome.alarms.create(DEFERRED_CHECK_ALARM, { periodInMinutes: 1 });
+  }
   void checkDueDeferredTabs();
+}
+
+async function restoreDeferredDueAlarms(): Promise<void> {
+  const tabs = await loadDeferredTabs();
+  const now = Date.now();
+  for (const tab of tabs) {
+    if (Date.parse(tab.dueAt) <= now) continue;
+    const existing = await chrome.alarms.get(deferredDueAlarmName(tab.id)).catch(() => undefined);
+    if (!existing) {
+      void scheduleDeferredDueAlarm(tab.id, tab.dueAt);
+    }
+  }
 }
 
 chrome.tabs.onCreated.addListener((tab) => {
@@ -597,16 +644,14 @@ chrome.commands.onCommand.addListener((command) => {
         if (!user) return;
         const state = await loadState();
         const defaultTimes = state.settings.deferredShortcutTimes?.[0] ?? "09:00";
-        const now = new Date();
-        const [hours, minutes] = defaultTimes.split(":").map(Number) as [number, number];
-        const due = new Date(now);
-        due.setHours(hours, minutes, 0, 0);
-        if (due.getTime() <= now.getTime()) due.setDate(due.getDate() + 1);
+        const due = nextDeferredOccurrence(defaultTimes);
         const tab = boardTab(active);
         if (!tab?.url) return;
         const deferred = validateDeferredTab({ id: crypto.randomUUID(), title: tab.title, url: tab.url, favIconUrl: tab.favIconUrl, dueAt: due.toISOString(), createdAt: new Date().toISOString() });
         if (!deferred) return;
         await saveDeferredTabs([...await loadDeferredTabs(), deferred]);
+        void scheduleDeferredDueAlarm(deferred.id, deferred.dueAt);
+        void ensureDeferredCheckAlarm();
         await chrome.tabs.remove(active.id);
       } catch {
         // Ignore command execution failures.
@@ -616,15 +661,15 @@ chrome.commands.onCommand.addListener((command) => {
     if (command === "save-workspace") {
       try {
         const user = await getStoredUser();
-        if (!user) return;
+        if (!user) { await sendToast(i18n.t("saveWorkspaceLoginRequired")); return; }
         const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
         const windowId = active?.windowId;
-        if (windowId == null) return;
+        if (windowId == null) { await sendToast(i18n.t("saveWorkspaceNoActiveTab")); return; }
         const window = await chrome.windows.get(windowId);
-        if (window.type !== "normal") return;
+        if (window.type !== "normal") { await sendToast(i18n.t("saveWorkspaceNotNormalWindow")); return; }
         const tabs = await chrome.tabs.query({ windowId });
         const eligible = tabs.filter((tab) => tab.id != null && !tab.pinned && getSiteKey(tab.url));
-        if (eligible.length === 0) return;
+        if (eligible.length === 0) { await sendToast(i18n.t("saveWorkspaceNoEligibleTabs")); return; }
         const [deviceId, deviceName] = await Promise.all([getOrCreateDeviceId(), getOrCreateDeviceName()]);
         const state = await loadState();
         const useCloud = state.settings.cloudSyncEnabled === true;
@@ -639,16 +684,18 @@ chrome.commands.onCommand.addListener((command) => {
             counter += 1;
           }
         }
-        if (titleObj.status !== "valid") return;
+        if (titleObj.status !== "valid") { await sendToast(i18n.t("saveWorkspaceTitleInvalid")); return; }
         const validations = eligible.map((tab) => validateWorkspaceTab({ title: tab.title || "未命名标签页", url: tab.url }));
         const validTabs = validations.flatMap((v) => v.status === "valid" ? [v.tab] : []);
-        if (validTabs.length === 0) return;
+        if (validTabs.length === 0) { await sendToast(i18n.t("saveWorkspaceNoValidTabs")); return; }
         const snapshot = validateWorkspaceSnapshot({ id: crypto.randomUUID(), title: titleObj.title, createdAt: new Date().toISOString(), tabs: validTabs, deviceId, deviceName });
-        if (!snapshot) return;
+        if (!snapshot) { await sendToast(i18n.t("saveWorkspaceSnapshotInvalid")); return; }
         if (useCloud) await upsertWorkspace(user.id, snapshot).catch(() => {});
         await saveWorkspaceSnapshots([...existing, snapshot]).catch(() => {});
-      } catch {
-        // Ignore command execution failures.
+        await sendToast(i18n.t("saveWorkspaceSaved", [snapshot.title, String(validTabs.length)]));
+      } catch (error) {
+        console.error("[Tab Garden] save-workspace failed:", error);
+        await sendToast(i18n.t("saveWorkspaceFailed"));
       }
       return;
     }
@@ -656,13 +703,16 @@ chrome.commands.onCommand.addListener((command) => {
 });
 
 void ensureDeferredCheckAlarm();
+void restoreDeferredDueAlarms();
 
 chrome.runtime.onInstalled.addListener(() => {
   void ensureDeferredCheckAlarm();
+  void restoreDeferredDueAlarms();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   void ensureDeferredCheckAlarm();
+  void restoreDeferredDueAlarms();
 });
 
 chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendResponse) => {
@@ -911,7 +961,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       await requireBoardUser(); if (typeof message.tabId !== "number" || !Number.isInteger(message.tabId) || typeof message.dueAt !== "string" || Date.parse(message.dueAt) <= Date.now()) throw new Error(i18n.t("reminderTimeInvalid"));
       const source = await chrome.tabs.get(message.tabId); const tab = boardTab(source); if (!tab?.url) throw new Error(i18n.t("onlyWebTabsDefer"));
       const deferred = validateDeferredTab({ id: crypto.randomUUID(), title: tab.title, url: tab.url, favIconUrl: tab.favIconUrl, dueAt: message.dueAt, createdAt: new Date().toISOString() }); if (!deferred) throw new Error(i18n.t("invalidTabData"));
-      await saveDeferredTabs([...await loadDeferredTabs(), deferred]); await chrome.tabs.remove(message.tabId); return { ok: true, tab: deferred };
+      await saveDeferredTabs([...await loadDeferredTabs(), deferred]); void scheduleDeferredDueAlarm(deferred.id, deferred.dueAt); void ensureDeferredCheckAlarm(); await chrome.tabs.remove(message.tabId); return { ok: true, tab: deferred };
     }
     if (message.type === "batch-defer-tabs") {
       await requireBoardUser();
@@ -938,6 +988,8 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       }
       if (deferredTabs.length > 0) {
         await saveDeferredTabs([...existingDeferred, ...deferredTabs]);
+        for (const dt of deferredTabs) void scheduleDeferredDueAlarm(dt.id, dt.dueAt);
+        void ensureDeferredCheckAlarm();
         for (const tabId of toClose) {
           try { await chrome.tabs.remove(tabId); } catch { /* ignore */ }
         }
@@ -953,11 +1005,12 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       if (!tab || window.type !== "normal") throw new Error(i18n.t("reminderNotFound"));
       await chrome.tabs.create({ windowId: message.windowId, url: tab.url });
       await saveDeferredTabs(deferredTabs.filter((item) => item.id !== message.id));
+      void clearDeferredDueAlarm(message.id);
       notifiedDeferredIds.delete(message.id);
       return { ok: true };
     }
-    if (message.type === "reschedule-deferred-tab") { await requireBoardUser(); const dueAt = message.dueAt; if (!safeRecordId(message.id) || typeof dueAt !== "string" || Date.parse(dueAt) <= Date.now()) throw new Error(i18n.t("reminderTimeInvalid")); const tabs = (await loadDeferredTabs()).map((tab) => tab.id === message.id ? { ...tab, dueAt } : tab); await saveDeferredTabs(tabs); notifiedDeferredIds.delete(message.id); return { ok: true }; }
-    if (message.type === "delete-deferred-tab") { await requireBoardUser(); if (!safeRecordId(message.id)) throw new Error(i18n.t("reminderNotFound")); await saveDeferredTabs((await loadDeferredTabs()).filter((tab) => tab.id !== message.id)); notifiedDeferredIds.delete(message.id); return { ok: true }; }
+    if (message.type === "reschedule-deferred-tab") { await requireBoardUser(); const dueAt = message.dueAt; if (!safeRecordId(message.id) || typeof dueAt !== "string" || Date.parse(dueAt) <= Date.now()) throw new Error(i18n.t("reminderTimeInvalid")); const tabs = (await loadDeferredTabs()).map((tab) => tab.id === message.id ? { ...tab, dueAt } : tab); await saveDeferredTabs(tabs); void clearDeferredDueAlarm(message.id); void scheduleDeferredDueAlarm(message.id, dueAt); notifiedDeferredIds.delete(message.id); return { ok: true }; }
+    if (message.type === "delete-deferred-tab") { await requireBoardUser(); if (!safeRecordId(message.id)) throw new Error(i18n.t("reminderNotFound")); await saveDeferredTabs((await loadDeferredTabs()).filter((tab) => tab.id !== message.id)); void clearDeferredDueAlarm(message.id); notifiedDeferredIds.delete(message.id); return { ok: true }; }
     if (message.type === "activate-board-tab") {
       await requireBoardUser();
       if (typeof message.tabId !== "number" || !Number.isInteger(message.tabId) || message.tabId <= 0) throw new Error(i18n.t("invalidTabData"));
