@@ -151,6 +151,7 @@
   "lightTheme": { "message": "浅色", "description": "浅色主题选项" },
   "darkThemeOption": { "message": "深色", "description": "深色主题选项" },
   "saveAppearance": { "message": "保存外观设置", "description": "保存外观设置按钮" },
+  "savePreferences": { "message": "保存偏好设置", "description": "保存偏好设置按钮" },
   "appearanceSaved": { "message": "外观设置已保存", "description": "外观设置已保存提示" },
   "importExport": { "message": "导入与导出", "description": "导入与导出面板标题" },
   "export": { "message": "导出", "description": "导出标题" },

@@ -151,6 +151,7 @@
   "lightTheme": { "message": "Light", "description": "Light theme option" },
   "darkThemeOption": { "message": "Dark", "description": "Dark theme option" },
   "saveAppearance": { "message": "Save Appearance", "description": "Save appearance button" },
+  "savePreferences": { "message": "Save Preferences", "description": "Save preferences button" },
   "appearanceSaved": { "message": "Appearance settings saved", "description": "Appearance saved toast" },
   "importExport": { "message": "Import & Export", "description": "Import and export panel title" },
   "export": { "message": "Export", "description": "Export title" },
