@@ -352,7 +352,7 @@ test("reports precise workspace tab validation failures", () => {
 
 test("rejects workspace snapshots whose untrimmed title exceeds the limit", () => {
   const snapshot = validateWorkspaceSnapshot({
-    id: "workspace-2", title: ` ${"x".repeat(80)}`, createdAt: "2026-07-23T00:00:00.000Z",
+    id: "workspace-2", title: ` ${"x".repeat(160)}`, createdAt: "2026-07-23T00:00:00.000Z",
     tabs: [{ title: "Docs", url: "https://example.com/docs" }],
   });
 
@@ -479,7 +479,7 @@ test("normalizes unique workspace names and rejects empty or duplicate names", (
   assert.deepEqual(validateWorkspaceTitle(" research ", ["Research"]), { status: "duplicate" });
   assert.deepEqual(validateWorkspaceTitle("Research", [null, "Research"]), { status: "duplicate" });
   assert.deepEqual(validateWorkspaceTitle("Work", ["work"]), { status: "duplicate" });
-  assert.deepEqual(validateWorkspaceTitle("x".repeat(81), []), { status: "invalid" });
+  assert.deepEqual(validateWorkspaceTitle("x".repeat(161), []), { status: "valid", title: "x".repeat(160) });
 });
 
 test("validates deferred web tabs and computes due state", () => {

@@ -431,9 +431,9 @@ export type WorkspaceTitleValidation =
 
 export function validateWorkspaceTitle(value: unknown, existingTitles: readonly string[]): WorkspaceTitleValidation {
   if (typeof value !== "string") return { status: "invalid" };
-  const title = value.trim();
-  if (!title) return { status: "empty" };
-  if (title.length > 80) return { status: "invalid" };
+  const rawTitle = value.trim();
+  if (!rawTitle) return { status: "empty" };
+  const title = rawTitle.length > 160 ? rawTitle.slice(0, 160) : rawTitle;
   const key = title.toLowerCase();
   return existingTitles.some((existingTitle) => typeof existingTitle === "string" && existingTitle.trim().toLowerCase() === key)
     ? { status: "duplicate" }
@@ -441,7 +441,7 @@ export function validateWorkspaceTitle(value: unknown, existingTitles: readonly 
 }
 
 export function validateWorkspaceSnapshot(value: unknown): WorkspaceSnapshot | null {
-  if (!isPlainObject(value) || !isRecordId(value.id) || typeof value.title !== "string" || value.title.length > 80 || typeof value.createdAt !== "string" || !Number.isFinite(Date.parse(value.createdAt)) || !Array.isArray(value.tabs) || value.tabs.length < 1 || value.tabs.length > 200) return null;
+  if (!isPlainObject(value) || !isRecordId(value.id) || typeof value.title !== "string" || value.title.length > 160 || typeof value.createdAt !== "string" || !Number.isFinite(Date.parse(value.createdAt)) || !Array.isArray(value.tabs) || value.tabs.length < 1 || value.tabs.length > 200) return null;
   const title = validateWorkspaceTitle(value.title, []);
   if (title.status !== "valid") return null;
   const tabs = value.tabs.map(workspaceTab);
