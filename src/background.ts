@@ -838,7 +838,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const tabs = validations.flatMap((validation) => validation.status === "valid" ? [validation.tab] : []);
       const snapshot = validateWorkspaceSnapshot({ id: crypto.randomUUID(), title: title.title, createdAt: new Date().toISOString(), tabs, deviceId, deviceName });
       if (!snapshot) throw new Error(i18n.t("workspaceDataInvalid"));
-      if (useCloud) await upsertWorkspace(user.id, snapshot);
+      if (useCloud) await upsertWorkspace(user.id, snapshot).catch(() => {});
       await saveWorkspaceSnapshots([...existing, snapshot]).catch(() => {});
       return { workspace: snapshot };
     }
@@ -913,7 +913,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const workspace = all.find((item) => item.id === message.id);
       if (!workspace) throw new Error(i18n.t("workspaceNotFound"));
       const updated: WorkspaceSnapshot = { ...workspace, tabs: [...workspace.tabs, tab] };
-      if (useCloud) await upsertWorkspace(user.id, updated);
+      if (useCloud) await upsertWorkspace(user.id, updated).catch(() => {});
       await saveWorkspaceSnapshots(all.map((item) => (item.id === updated.id ? updated : item))).catch(() => {});
       return { ok: true };
     }
@@ -941,7 +941,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const tabs = updateWorkspaceTab(workspace.tabs, message.index, message.title, message.url);
       if (!tabs) throw new Error(i18n.t("unsupportedUrl"));
       const updated: WorkspaceSnapshot = { ...workspace, tabs };
-      if (useCloud) await upsertWorkspace(user.id, updated);
+      if (useCloud) await upsertWorkspace(user.id, updated).catch(() => {});
       await saveWorkspaceSnapshots(all.map((item) => (item.id === updated.id ? updated : item))).catch(() => {});
       return { ok: true };
     }
@@ -957,7 +957,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const tabs = removeWorkspaceTab(workspace.tabs, message.index);
       if (!tabs) throw new Error(i18n.t("tabNotFound"));
       const updated: WorkspaceSnapshot = { ...workspace, tabs };
-      if (useCloud) await upsertWorkspace(user.id, updated);
+      if (useCloud) await upsertWorkspace(user.id, updated).catch(() => {});
       await saveWorkspaceSnapshots(all.map((item) => (item.id === updated.id ? updated : item))).catch(() => {});
       return { ok: true };
     }
@@ -973,7 +973,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const tabs = moveWorkspaceTab(workspace.tabs, message.fromIndex, message.toIndex);
       if (!tabs) throw new Error(i18n.t("cantMoveToPosition"));
       const updated: WorkspaceSnapshot = { ...workspace, tabs };
-      if (useCloud) await upsertWorkspace(user.id, updated);
+      if (useCloud) await upsertWorkspace(user.id, updated).catch(() => {});
       await saveWorkspaceSnapshots(all.map((item) => (item.id === updated.id ? updated : item))).catch(() => {});
       return { ok: true };
     }
