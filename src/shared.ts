@@ -68,6 +68,7 @@ export interface BoardTab {
   title: string;
   url?: string;
   favIconUrl?: string;
+  createdAt?: number;
 }
 
 export interface DuplicateBoardTabGroup {

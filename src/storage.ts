@@ -178,6 +178,44 @@ export async function clearTabProcesses(): Promise<void> {
   await chrome.storage.local.set({ tabProcesses: [] });
 }
 
+export async function loadTabCreatedAtMap(): Promise<Record<number, number>> {
+  const data = await chrome.storage.local.get("tabCreatedAt");
+  const raw = data.tabCreatedAt;
+  if (!isPlainObject(raw)) return {};
+  const result: Record<number, number> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const tabId = Number(key);
+    if (!Number.isInteger(tabId) || tabId <= 0) continue;
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) continue;
+    result[tabId] = value;
+  }
+  return result;
+}
+
+export async function saveTabCreatedAtEntries(entries: Record<number, number>): Promise<void> {
+  await chrome.storage.local.set({ tabCreatedAt: entries });
+}
+
+export async function recordTabCreatedAt(tabId: number, createdAt: number): Promise<Record<number, number>> {
+  const map = await loadTabCreatedAtMap();
+  map[tabId] = createdAt;
+  await saveTabCreatedAtEntries(map);
+  return map;
+}
+
+export async function removeTabCreatedAt(tabId: number): Promise<Record<number, number>> {
+  const map = await loadTabCreatedAtMap();
+  if (tabId in map) {
+    delete map[tabId];
+    await saveTabCreatedAtEntries(map);
+  }
+  return map;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export async function loadWorkspaceHistory(workspaceId: string): Promise<WorkspaceHistory | null> {
   const data = await chrome.storage.local.get("workspaceHistories");
   const rawMap = (data.workspaceHistories as Record<string, unknown> | undefined) ?? {};
