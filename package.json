@@ -7,10 +7,16 @@
     "clean": "rm -rf dist",
     "build": "npm run clean && tsc && cp -r src/_locales src/manifest.json src/popup.html src/popup.css src/board.html src/board.css src/options.html src/options.css dist/ && node scripts/inject-env.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node --test tests/*.test.js"
+    "test": "npm run build && node --test tests/*.test.js",
+    "e2e:ensure-build": "test -d dist -a -f dist/manifest.json || (echo 'e2e requires dist/ with a built extension; running build first…' && npm run build)",
+    "e2e": "npm run e2e:ensure-build && npx playwright test --config playwright.config.js",
+    "e2e:headed": "PLAYWRIGHT_HEADLESS=0 npm run e2e -- --project=chromium-extension",
+    "e2e:install-chromium": "npx playwright install chromium"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.0",
     "@types/chrome": "^0.0.326",
+    "playwright": "^1.62.0",
     "typescript": "^5.8.3"
   }
 }

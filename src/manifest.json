@@ -4,7 +4,7 @@
   "description": "__MSG_extensionDescription__",
   "version": "0.1.0",
   "default_locale": "zh_CN",
-  "permissions": ["tabs", "storage"],
+  "permissions": ["tabs", "storage", "notifications", "alarms", "sessions"],
   "host_permissions": ["https://*.supabase.co/*"],
   "background": {
     "service_worker": "background.js",
@@ -17,5 +17,19 @@
   "options_ui": {
     "page": "options.html",
     "open_in_tab": true
+  },
+  "commands": {
+    "open-tab-board": {
+      "suggested_key": { "default": "Alt+B", "mac": "Command+B" },
+      "description": "__MSG_cmdOpenBoard__"
+    },
+    "defer-active-tab": {
+      "suggested_key": { "default": "Alt+D", "mac": "Command+D" },
+      "description": "__MSG_cmdDeferTab__"
+    },
+    "save-workspace": {
+      "suggested_key": { "default": "Alt+S", "mac": "Command+S" },
+      "description": "__MSG_cmdSaveWorkspace__"
+    }
   }
 }
