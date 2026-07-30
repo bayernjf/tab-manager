@@ -308,6 +308,7 @@
   "timelineByCreated": { "message": "按创建时间", "description": "按创建时间排序" },
   "timelineByDue": { "message": "按提醒时间", "description": "按提醒时间排序" },
   "noDueReminder": { "message": "未设置提醒", "description": "无提醒时间标签" },
+  "unknownCreatedAt": { "message": "未知", "description": "未记录创建时间" },
   "collapse": { "message": "折叠", "description": "折叠分组" },
   "expand": { "message": "展开", "description": "展开分组" },
   "toggleCollapse": { "message": "折叠/展开分组", "description": "折叠按钮 aria-label" },

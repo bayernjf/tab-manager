@@ -308,6 +308,7 @@
   "timelineByCreated": { "message": "By created time", "description": "Sort by created" },
   "timelineByDue": { "message": "By reminder time", "description": "Sort by due" },
   "noDueReminder": { "message": "No reminder", "description": "No reminder label" },
+  "unknownCreatedAt": { "message": "Unknown", "description": "No recorded creation time" },
   "collapse": { "message": "Collapse", "description": "Collapse group" },
   "expand": { "message": "Expand", "description": "Expand group" },
   "toggleCollapse": { "message": "Collapse or expand group", "description": "Collapse button aria-label" },
