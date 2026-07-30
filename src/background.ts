@@ -12,6 +12,8 @@ import {
   previewPortableImport,
   syncFailureStatus,
   toPortableDataFromState,
+  toWorkspacePortableData,
+  previewWorkspacePortableImport,
   updateGroupRuleFromInput,
   validateBoardLayout,
   validateBoardTabDrop,
@@ -21,6 +23,8 @@ import {
   validateWorkspaceTitle,
   validateWorkspaceTab,
   validateWorkspaceSnapshot,
+  validateRecentlyClosedTab,
+  validateWorkspacePortableData,
   workspaceRestorePreview,
   workspaceTab,
   appendWorkspaceTab,
@@ -39,12 +43,69 @@ import {
   type PortableImportPreview,
   type Settings,
   type WorkspaceSnapshot,
+  type DeferredTab,
+  type RecentlyClosedTab,
+  type WorkspaceHistory,
+  type WorkspacePortableImportPreview,
+  isDeferredTabDue,
+  nextDeferredOccurrence,
+  formatDeferredDateTime,
+  MAX_WORKSPACE_HISTORY_VERSIONS,
 } from "./shared.js";
-import { loadState, loadWorkspaceSnapshots, loadDeferredTabs, prepareOptionsForUser, saveBoardAssignments, saveBoardCustomGroups, saveBoardLayouts, saveDeferredTabs, saveOptionsData, saveSettings, saveWorkspaceSnapshots, getOrCreateDeviceId, getOrCreateDeviceName } from "./storage.js";
+import {
+  loadState,
+  loadWorkspaceSnapshots,
+  loadDeferredTabs,
+  prepareOptionsForUser,
+  saveBoardAssignments,
+  saveBoardCustomGroups,
+  saveBoardLayouts,
+  saveDeferredTabs,
+  saveOptionsData,
+  saveSettings,
+  saveWorkspaceSnapshots,
+  getOrCreateDeviceId,
+  getOrCreateDeviceName,
+  loadRecentlyClosedTabs,
+  saveRecentlyClosedTabs,
+  appendRecentlyClosedTab,
+  removeRecentlyClosedTab,
+  clearRecentlyClosedTabs,
+  loadTabCreatedAtMap,
+  recordTabCreatedAt,
+  removeTabCreatedAt,
+  saveTabCreatedAtEntries,
+  loadWorkspaceHistory,
+  loadAllWorkspaceHistories,
+  saveWorkspaceHistory,
+  saveWorkspaceVersion,
+  deleteWorkspaceHistory,
+} from "./storage.js";
 import { getCurrentUser, getStoredUser, signIn, signOut, signUp } from "./auth.js";
 import { pushSettings, replaceBoardSyncData, replaceOptionalSyncData, restoreBoardSyncData, restoreOptionalSyncData, syncSettings, fetchWorkspaces, upsertWorkspace, deleteWorkspaceRow, renameDeviceWorkspaces } from "./sync.js";
 
 void i18n.initFromStorage();
+void seedTabCreatedAtForExistingTabs();
+
+async function seedTabCreatedAtForExistingTabs(): Promise<void> {
+  try {
+    const map = await loadTabCreatedAtMap();
+    const windows = await chrome.windows.getAll({ populate: true, windowTypes: ["normal"] });
+    const now = Date.now();
+    let changed = false;
+    for (const window of windows) {
+      for (const tab of window.tabs ?? []) {
+        if (typeof tab.id !== "number") continue;
+        if (map[tab.id] != null) continue;
+        map[tab.id] = now;
+        changed = true;
+      }
+    }
+    if (changed) await saveTabCreatedAtEntries(map);
+  } catch {
+    // Ignore seeding failures; onCreated will keep recording new tabs.
+  }
+}
 
 type PopupMessage =
   | { type: "auth-state" }
@@ -95,17 +156,39 @@ type PopupMessage =
   | { type: "move-board-group"; boardKey: unknown; rank: unknown }
   | { type: "create-board-group"; title: unknown; color: unknown }
   | { type: "delete-board-group"; id: unknown; confirmed?: boolean }
-  | { type: "save-board-layout"; layout: unknown };
+  | { type: "save-board-layout"; layout: unknown }
+  | { type: "get-recently-closed" }
+  | { type: "restore-recently-closed"; id: unknown; windowId: unknown }
+  | { type: "remove-recently-closed"; id: unknown }
+  | { type: "clear-recently-closed" }
+  | { type: "get-workspace-history"; id: unknown }
+  | { type: "save-workspace-history-version"; id: unknown; note?: unknown }
+  | { type: "restore-workspace-history-version"; id: unknown; version: unknown; windowId: unknown; confirmed?: boolean }
+  | { type: "export-workspaces-json" }
+  | { type: "import-workspaces-json"; data?: unknown; confirmed?: boolean; cancelled?: boolean }
+  | { type: "batch-close-tabs"; tabIds: unknown[] }
+  | { type: "batch-defer-tabs"; tabIds: unknown[]; dueAt: unknown }
+  | { type: "batch-move-tabs-to-group"; tabIds: unknown[]; targetBoardKey: unknown };
 
 interface PendingOptionsImport {
   preview: PortableImportPreview;
   userId: string;
 }
 
+interface PendingWorkspaceImport {
+  preview: WorkspacePortableImportPreview;
+  userId: string;
+}
+
 let pendingOptionsImport: PendingOptionsImport | null = null;
+let pendingWorkspaceImport: PendingWorkspaceImport | null = null;
 
 function safeRecordId(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && value.length <= 128;
+}
+
+function safePositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 && Number.isSafeInteger(value);
 }
 
 interface DuplicateCloseGroup {
@@ -293,9 +376,10 @@ async function currentNormalWindowId(): Promise<number> {
   return window.id;
 }
 
-function boardTab(tab: chrome.tabs.Tab): BoardTab | null {
+async function boardTab(tab: chrome.tabs.Tab, createdAtMap: Record<number, number>): Promise<BoardTab | null> {
   if (tab.id == null || tab.windowId == null || tab.pinned || !getSiteKey(tab.url)) return null;
-  return { id: tab.id, windowId: tab.windowId, title: tab.title || i18n.t("unnamedTab"), url: tab.url, favIconUrl: tab.favIconUrl };
+  const createdAt = createdAtMap[tab.id];
+  return { id: tab.id, windowId: tab.windowId, title: tab.title || i18n.t("unnamedTab"), url: tab.url, favIconUrl: tab.favIconUrl, createdAt };
 }
 
 function boardRank(state: Awaited<ReturnType<typeof loadState>>, boardKey: BoardGroup["boardKey"], fallback: number): number {
@@ -303,23 +387,25 @@ function boardRank(state: Awaited<ReturnType<typeof loadState>>, boardKey: Board
 }
 
 async function boardLogicalGroups(state: Awaited<ReturnType<typeof loadState>>, currentWindowId?: number): Promise<BoardLogicalGroup[]> {
+  const createdAtMap = await loadTabCreatedAtMap();
   const windows = await chrome.windows.getAll({ populate: true, windowTypes: ["normal"] });
-  const eligible = windows.flatMap((window, index) => (window.tabs ?? []).flatMap((tab) => {
-    const mapped = boardTab(tab);
+  const eligible = await Promise.all(windows.flatMap((window, index) => (window.tabs ?? []).flatMap((tab) => {
     const windowLabel = boardWindowLabel(index + 1);
-    return mapped && windowLabel ? [{ ...mapped, windowLabel, isCurrentWindow: window.id === currentWindowId }] : [];
-  }));
-  return buildVirtualBoardGroups({ tabs: eligible, settings: state.settings, rules: state.groupRules, ignoredSites: state.ignoredSites, customGroups: state.boardCustomGroups, assignments: state.boardAssignments })
+    return (async () => {
+      const mapped = await boardTab(tab, createdAtMap);
+      return mapped && windowLabel ? [{ ...mapped, windowLabel, isCurrentWindow: window.id === currentWindowId }] : [];
+    })();
+  })));
+  return buildVirtualBoardGroups({ tabs: eligible.flat(), settings: state.settings, rules: state.groupRules, ignoredSites: state.ignoredSites, customGroups: state.boardCustomGroups, assignments: state.boardAssignments })
     .map((group) => ({ ...group, rank: boardRank(state, group.boardKey, group.rank) }))
     .sort((left, right) => left.rank - right.rank);
 }
 
 async function boardDuplicateTabs(): Promise<BoardTab[]> {
+  const createdAtMap = await loadTabCreatedAtMap();
   const windows = await chrome.windows.getAll({ populate: true, windowTypes: ["normal"] });
-  return windows.flatMap((window) => (window.tabs ?? []).flatMap((tab) => {
-    const mapped = boardTab(tab);
-    return mapped ? [mapped] : [];
-  }));
+  const results = await Promise.all(windows.flatMap((window) => (window.tabs ?? []).flatMap((tab) => boardTab(tab, createdAtMap))));
+  return results.filter((tab): tab is BoardTab => tab !== null);
 }
 
 async function closeBoardDuplicates(groups: readonly DuplicateCloseGroup[]): Promise<{ closed: number; skipped: number }> {
@@ -328,7 +414,7 @@ async function closeBoardDuplicates(groups: readonly DuplicateCloseGroup[]): Pro
   for (const group of groups) {
     const live = await Promise.all(group.tabIds.map(async (tabId) => {
       try {
-        const tab = boardTab(await chrome.tabs.get(tabId));
+        const tab = await boardTab(await chrome.tabs.get(tabId), await loadTabCreatedAtMap());
         return tab ? { tabId, tab } : null;
       } catch {
         return null;
@@ -394,10 +480,133 @@ async function syncBoardMutation(state: Awaited<ReturnType<typeof loadState>>, i
   }
 }
 
+const DEFERRED_CHECK_ALARM = "deferred-tab-check";
+const DEFERRED_DUE_ALARM_PREFIX = "deferred-due:";
+const NOTIFICATION_DEFERRED_PREFIX = "deferred:";
+let notifiedDeferredIds = new Set<string>();
+
+function deferredDueAlarmName(id: string): string {
+  return `${DEFERRED_DUE_ALARM_PREFIX}${id}`;
+}
+
+async function scheduleDeferredDueAlarm(id: string, dueAt: string): Promise<void> {
+  const delayMs = Date.parse(dueAt) - Date.now();
+  if (delayMs <= 0) return;
+  const delayInMinutes = delayMs / 60000;
+  await chrome.alarms.create(deferredDueAlarmName(id), { delayInMinutes });
+}
+
+async function clearDeferredDueAlarm(id: string): Promise<void> {
+  await chrome.alarms.clear(deferredDueAlarmName(id)).catch(() => {});
+}
+
+async function sendToast(message: string): Promise<void> {
+  try {
+    const id = `tab-garden-toast-${Date.now()}`;
+    await chrome.notifications.create(id, {
+      type: "basic",
+      iconUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      title: "Tab Garden",
+      message,
+      priority: 1,
+      requireInteraction: false,
+    });
+  } catch (error) {
+    console.error("[Tab Garden] Failed to send toast:", error);
+  }
+}
+
+async function checkDueDeferredTabs(): Promise<void> {
+  const tabs = await loadDeferredTabs();
+  const now = Date.now();
+  const dueTabs = tabs.filter((tab) => isDeferredTabDue(tab, now) && !notifiedDeferredIds.has(tab.id));
+  if (dueTabs.length === 0) return;
+
+  for (const tab of dueTabs) {
+    const notificationId = `${NOTIFICATION_DEFERRED_PREFIX}${tab.id}`;
+    const title = i18n.t("deferredDueTitle") || "Reminder";
+    const message = `${tab.title}\n${i18n.t("deferredDueScheduled") || "Scheduled at"}: ${formatDeferredDateTime(tab.dueAt)}`;
+    const iconUrl = tab.favIconUrl?.startsWith("data:")
+      ? tab.favIconUrl
+      : "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    try {
+      await chrome.notifications.create(notificationId, {
+        type: "basic",
+        iconUrl,
+        title,
+        message,
+        priority: 2,
+        requireInteraction: false,
+      } as chrome.notifications.NotificationCreateOptions);
+      notifiedDeferredIds.add(tab.id);
+    } catch (error) {
+      console.error("[Tab Garden] Failed to create deferred notification:", error);
+    }
+  }
+}
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === DEFERRED_CHECK_ALARM || alarm.name.startsWith(DEFERRED_DUE_ALARM_PREFIX)) {
+    void checkDueDeferredTabs();
+  }
+});
+
+chrome.notifications.onClicked.addListener(async (notificationId) => {
+  if (!notificationId.startsWith(NOTIFICATION_DEFERRED_PREFIX)) return;
+  const deferredId = notificationId.slice(NOTIFICATION_DEFERRED_PREFIX.length);
+  try {
+    await chrome.notifications.clear(notificationId);
+  } catch {
+    // Clear may fail if already dismissed; proceed anyway.
+  }
+  const tabs = await loadDeferredTabs();
+  const tab = tabs.find((item) => item.id === deferredId);
+  if (!tab) return;
+  const [currentWindow] = await chrome.windows.getAll({ windowTypes: ["normal"] });
+  const windowId = currentWindow?.id;
+  if (windowId == null) return;
+  await chrome.tabs.create({ windowId, url: tab.url, active: true });
+  await saveDeferredTabs(tabs.filter((item) => item.id !== deferredId));
+  void clearDeferredDueAlarm(deferredId);
+  notifiedDeferredIds.delete(deferredId);
+  if (currentWindow?.id != null) {
+    await chrome.windows.update(currentWindow.id, { focused: true }).catch(() => {});
+  }
+});
+
+chrome.notifications.onClosed.addListener((notificationId) => {
+  if (!notificationId.startsWith(NOTIFICATION_DEFERRED_PREFIX)) return;
+  const deferredId = notificationId.slice(NOTIFICATION_DEFERRED_PREFIX.length);
+  notifiedDeferredIds.delete(deferredId);
+});
+
+async function ensureDeferredCheckAlarm(): Promise<void> {
+  const existing = await chrome.alarms.get(DEFERRED_CHECK_ALARM).catch(() => undefined);
+  if (!existing) {
+    await chrome.alarms.create(DEFERRED_CHECK_ALARM, { periodInMinutes: 1 });
+  }
+  void checkDueDeferredTabs();
+}
+
+async function restoreDeferredDueAlarms(): Promise<void> {
+  const tabs = await loadDeferredTabs();
+  const now = Date.now();
+  for (const tab of tabs) {
+    if (Date.parse(tab.dueAt) <= now) continue;
+    const existing = await chrome.alarms.get(deferredDueAlarmName(tab.id)).catch(() => undefined);
+    if (!existing) {
+      void scheduleDeferredDueAlarm(tab.id, tab.dueAt);
+    }
+  }
+}
+
 chrome.tabs.onCreated.addListener((tab) => {
   void (async () => {
     try {
       const state = await loadState();
+      if (typeof tab.id === "number") {
+        await recordTabCreatedAt(tab.id, Date.now());
+      }
       if (state.settings.openBoardOnNewTab !== true || typeof tab.id !== "number") return;
       if (!isBrowserNewTabUrl(tab.url) && !isBrowserNewTabUrl(tab.pendingUrl)) return;
       await chrome.tabs.update(tab.id, { url: chrome.runtime.getURL("board.html") });
@@ -405,6 +614,133 @@ chrome.tabs.onCreated.addListener((tab) => {
       // Leave the newly created tab unchanged when local storage or Chrome rejects the update.
     }
   })();
+});
+
+chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
+  void (async () => {
+    try {
+      await removeTabCreatedAt(tabId);
+    } catch {
+      // Ignore cleanup failures; the next save will overwrite the map.
+    }
+    try {
+      if (removeInfo.isWindowClosing) return;
+      const tab = await chrome.tabs.get(tabId).catch(() => null);
+      if (!tab || !tab.url || !getSiteKey(tab.url)) return;
+      const rawInfo = removeInfo as { isWindowClosing: boolean; sessionId?: unknown };
+      const closed: RecentlyClosedTab = {
+        id: crypto.randomUUID(),
+        title: tab.title || "未命名标签页",
+        url: tab.url,
+        ...(tab.favIconUrl ? { favIconUrl: tab.favIconUrl } : {}),
+        closedAt: new Date().toISOString(),
+        ...(typeof rawInfo.sessionId === "string" ? { sessionId: rawInfo.sessionId } : {}),
+      };
+      const validated = validateRecentlyClosedTab(closed);
+      if (validated) await appendRecentlyClosedTab(validated).catch(() => {});
+    } catch {
+      // Ignore storage failures for recently closed tracking.
+    }
+  })();
+});
+
+chrome.commands.onCommand.addListener((command) => {
+  void (async () => {
+    if (command === "open-tab-board") {
+      try {
+        const window = await chrome.windows.getCurrent();
+        if (window.id == null || window.type !== "normal") return;
+        const boardUrl = chrome.runtime.getURL("board.html");
+        const existing = await chrome.tabs.query({ url: boardUrl });
+        const target = existing[0];
+        if (target && typeof target.id === "number") {
+          if (target.windowId != null && target.windowId !== window.id) await chrome.windows.update(target.windowId, { focused: true }).catch(() => {});
+          await chrome.tabs.update(target.id, { active: true }).catch(() => {});
+          return;
+        }
+        await chrome.tabs.create({ windowId: window.id, url: boardUrl });
+      } catch {
+        // Ignore command execution failures.
+      }
+      return;
+    }
+    if (command === "defer-active-tab") {
+      try {
+        const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (active?.id == null || !active.url || !getSiteKey(active.url) || active.pinned) return;
+        const user = await getStoredUser();
+        if (!user) return;
+        const state = await loadState();
+        const defaultTimes = state.settings.deferredShortcutTimes?.[0] ?? "09:00";
+        const due = nextDeferredOccurrence(defaultTimes);
+        const tab = await boardTab(active, await loadTabCreatedAtMap());
+        if (!tab?.url) return;
+        const deferred = validateDeferredTab({ id: crypto.randomUUID(), title: tab.title, url: tab.url, favIconUrl: tab.favIconUrl, dueAt: due.toISOString(), createdAt: new Date().toISOString() });
+        if (!deferred) return;
+        await saveDeferredTabs([...await loadDeferredTabs(), deferred]);
+        void scheduleDeferredDueAlarm(deferred.id, deferred.dueAt);
+        void ensureDeferredCheckAlarm();
+        await chrome.tabs.remove(active.id);
+      } catch {
+        // Ignore command execution failures.
+      }
+      return;
+    }
+    if (command === "save-workspace") {
+      try {
+        const user = await getStoredUser();
+        if (!user) { await sendToast(i18n.t("saveWorkspaceLoginRequired")); return; }
+        const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+        const windowId = active?.windowId;
+        if (windowId == null) { await sendToast(i18n.t("saveWorkspaceNoActiveTab")); return; }
+        const window = await chrome.windows.get(windowId);
+        if (window.type !== "normal") { await sendToast(i18n.t("saveWorkspaceNotNormalWindow")); return; }
+        const tabs = await chrome.tabs.query({ windowId });
+        const eligible = tabs.filter((tab) => tab.id != null && !tab.pinned && getSiteKey(tab.url));
+        if (eligible.length === 0) { await sendToast(i18n.t("saveWorkspaceNoEligibleTabs")); return; }
+        const [deviceId, deviceName] = await Promise.all([getOrCreateDeviceId(), getOrCreateDeviceName()]);
+        const state = await loadState();
+        const useCloud = state.settings.cloudSyncEnabled === true;
+        const existing = await loadAllWorkspaces(user.id, useCloud);
+        const existingTitles = existing.filter((workspace) => workspace.deviceName === deviceName).map((workspace) => workspace.title);
+        const baseTitle = i18n.t("cmdSaveWorkspace") || "快速保存";
+        let titleObj = validateWorkspaceTitle(baseTitle, existingTitles);
+        if (titleObj.status === "duplicate") {
+          let counter = 2;
+          while (titleObj.status === "duplicate" && counter <= 100) {
+            titleObj = validateWorkspaceTitle(`${baseTitle} ${counter}`, existingTitles);
+            counter += 1;
+          }
+        }
+        if (titleObj.status !== "valid") { await sendToast(i18n.t("saveWorkspaceTitleInvalid")); return; }
+        const validations = eligible.map((tab) => validateWorkspaceTab({ title: tab.title || "未命名标签页", url: tab.url }));
+        const validTabs = validations.flatMap((v) => v.status === "valid" ? [v.tab] : []);
+        if (validTabs.length === 0) { await sendToast(i18n.t("saveWorkspaceNoValidTabs")); return; }
+        const snapshot = validateWorkspaceSnapshot({ id: crypto.randomUUID(), title: titleObj.title, createdAt: new Date().toISOString(), tabs: validTabs, deviceId, deviceName });
+        if (!snapshot) { await sendToast(i18n.t("saveWorkspaceSnapshotInvalid")); return; }
+        if (useCloud) await upsertWorkspace(user.id, snapshot).catch(() => {});
+        await saveWorkspaceSnapshots([...existing, snapshot]).catch(() => {});
+        await sendToast(i18n.t("saveWorkspaceSaved", [snapshot.title, String(validTabs.length)]));
+      } catch (error) {
+        console.error("[Tab Garden] save-workspace failed:", error);
+        await sendToast(i18n.t("saveWorkspaceFailed"));
+      }
+      return;
+    }
+  })();
+});
+
+void ensureDeferredCheckAlarm();
+void restoreDeferredDueAlarms();
+
+chrome.runtime.onInstalled.addListener(() => {
+  void ensureDeferredCheckAlarm();
+  void restoreDeferredDueAlarms();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  void ensureDeferredCheckAlarm();
+  void restoreDeferredDueAlarms();
 });
 
 chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendResponse) => {
@@ -502,7 +838,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const tabs = validations.flatMap((validation) => validation.status === "valid" ? [validation.tab] : []);
       const snapshot = validateWorkspaceSnapshot({ id: crypto.randomUUID(), title: title.title, createdAt: new Date().toISOString(), tabs, deviceId, deviceName });
       if (!snapshot) throw new Error(i18n.t("workspaceDataInvalid"));
-      if (useCloud) await upsertWorkspace(user.id, snapshot);
+      if (useCloud) await upsertWorkspace(user.id, snapshot).catch(() => {});
       await saveWorkspaceSnapshots([...existing, snapshot]).catch(() => {});
       return { workspace: snapshot };
     }
@@ -577,7 +913,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const workspace = all.find((item) => item.id === message.id);
       if (!workspace) throw new Error(i18n.t("workspaceNotFound"));
       const updated: WorkspaceSnapshot = { ...workspace, tabs: [...workspace.tabs, tab] };
-      if (useCloud) await upsertWorkspace(user.id, updated);
+      if (useCloud) await upsertWorkspace(user.id, updated).catch(() => {});
       await saveWorkspaceSnapshots(all.map((item) => (item.id === updated.id ? updated : item))).catch(() => {});
       return { ok: true };
     }
@@ -605,7 +941,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const tabs = updateWorkspaceTab(workspace.tabs, message.index, message.title, message.url);
       if (!tabs) throw new Error(i18n.t("unsupportedUrl"));
       const updated: WorkspaceSnapshot = { ...workspace, tabs };
-      if (useCloud) await upsertWorkspace(user.id, updated);
+      if (useCloud) await upsertWorkspace(user.id, updated).catch(() => {});
       await saveWorkspaceSnapshots(all.map((item) => (item.id === updated.id ? updated : item))).catch(() => {});
       return { ok: true };
     }
@@ -621,7 +957,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const tabs = removeWorkspaceTab(workspace.tabs, message.index);
       if (!tabs) throw new Error(i18n.t("tabNotFound"));
       const updated: WorkspaceSnapshot = { ...workspace, tabs };
-      if (useCloud) await upsertWorkspace(user.id, updated);
+      if (useCloud) await upsertWorkspace(user.id, updated).catch(() => {});
       await saveWorkspaceSnapshots(all.map((item) => (item.id === updated.id ? updated : item))).catch(() => {});
       return { ok: true };
     }
@@ -637,7 +973,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const tabs = moveWorkspaceTab(workspace.tabs, message.fromIndex, message.toIndex);
       if (!tabs) throw new Error(i18n.t("cantMoveToPosition"));
       const updated: WorkspaceSnapshot = { ...workspace, tabs };
-      if (useCloud) await upsertWorkspace(user.id, updated);
+      if (useCloud) await upsertWorkspace(user.id, updated).catch(() => {});
       await saveWorkspaceSnapshots(all.map((item) => (item.id === updated.id ? updated : item))).catch(() => {});
       return { ok: true };
     }
@@ -651,9 +987,43 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
     }
     if (message.type === "defer-board-tab") {
       await requireBoardUser(); if (typeof message.tabId !== "number" || !Number.isInteger(message.tabId) || typeof message.dueAt !== "string" || Date.parse(message.dueAt) <= Date.now()) throw new Error(i18n.t("reminderTimeInvalid"));
-      const source = await chrome.tabs.get(message.tabId); const tab = boardTab(source); if (!tab?.url) throw new Error(i18n.t("onlyWebTabsDefer"));
+      const source = await chrome.tabs.get(message.tabId); const tab = await boardTab(source, await loadTabCreatedAtMap()); if (!tab?.url) throw new Error(i18n.t("onlyWebTabsDefer"));
       const deferred = validateDeferredTab({ id: crypto.randomUUID(), title: tab.title, url: tab.url, favIconUrl: tab.favIconUrl, dueAt: message.dueAt, createdAt: new Date().toISOString() }); if (!deferred) throw new Error(i18n.t("invalidTabData"));
-      await saveDeferredTabs([...await loadDeferredTabs(), deferred]); await chrome.tabs.remove(message.tabId); return { ok: true, tab: deferred };
+      await saveDeferredTabs([...await loadDeferredTabs(), deferred]); void scheduleDeferredDueAlarm(deferred.id, deferred.dueAt); void ensureDeferredCheckAlarm(); await chrome.tabs.remove(message.tabId); return { ok: true, tab: deferred };
+    }
+    if (message.type === "batch-defer-tabs") {
+      await requireBoardUser();
+      if (!Array.isArray(message.tabIds)) throw new Error(i18n.t("invalidTabData"));
+      if (typeof message.dueAt !== "string" || Date.parse(message.dueAt) <= Date.now()) throw new Error(i18n.t("reminderTimeInvalid"));
+      const validTabIds = message.tabIds.filter(safePositiveInteger);
+      const uniqueTabIds = [...new Set(validTabIds)];
+      const existingDeferred = await loadDeferredTabs();
+      const deferredTabs: DeferredTab[] = [];
+      const toClose: number[] = [];
+      const createdAtMap = await loadTabCreatedAtMap();
+      for (const tabId of uniqueTabIds) {
+        try {
+          const source = await chrome.tabs.get(tabId);
+          const tab = await boardTab(source, createdAtMap);
+          if (!tab?.url) continue;
+          const deferred = validateDeferredTab({ id: crypto.randomUUID(), title: tab.title, url: tab.url, favIconUrl: tab.favIconUrl, dueAt: message.dueAt, createdAt: new Date().toISOString() });
+          if (deferred) {
+            deferredTabs.push(deferred);
+            toClose.push(tabId);
+          }
+        } catch {
+          continue;
+        }
+      }
+      if (deferredTabs.length > 0) {
+        await saveDeferredTabs([...existingDeferred, ...deferredTabs]);
+        for (const dt of deferredTabs) void scheduleDeferredDueAlarm(dt.id, dt.dueAt);
+        void ensureDeferredCheckAlarm();
+        for (const tabId of toClose) {
+          try { await chrome.tabs.remove(tabId); } catch { /* ignore */ }
+        }
+      }
+      return { deferred: deferredTabs.length };
     }
     if (message.type === "open-deferred-tab") {
       await requireBoardUser();
@@ -664,10 +1034,12 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       if (!tab || window.type !== "normal") throw new Error(i18n.t("reminderNotFound"));
       await chrome.tabs.create({ windowId: message.windowId, url: tab.url });
       await saveDeferredTabs(deferredTabs.filter((item) => item.id !== message.id));
+      void clearDeferredDueAlarm(message.id);
+      notifiedDeferredIds.delete(message.id);
       return { ok: true };
     }
-    if (message.type === "reschedule-deferred-tab") { await requireBoardUser(); const dueAt = message.dueAt; if (!safeRecordId(message.id) || typeof dueAt !== "string" || Date.parse(dueAt) <= Date.now()) throw new Error(i18n.t("reminderTimeInvalid")); const tabs = (await loadDeferredTabs()).map((tab) => tab.id === message.id ? { ...tab, dueAt } : tab); await saveDeferredTabs(tabs); return { ok: true }; }
-    if (message.type === "delete-deferred-tab") { await requireBoardUser(); if (!safeRecordId(message.id)) throw new Error(i18n.t("reminderNotFound")); await saveDeferredTabs((await loadDeferredTabs()).filter((tab) => tab.id !== message.id)); return { ok: true }; }
+    if (message.type === "reschedule-deferred-tab") { await requireBoardUser(); const dueAt = message.dueAt; if (!safeRecordId(message.id) || typeof dueAt !== "string" || Date.parse(dueAt) <= Date.now()) throw new Error(i18n.t("reminderTimeInvalid")); const tabs = (await loadDeferredTabs()).map((tab) => tab.id === message.id ? { ...tab, dueAt } : tab); await saveDeferredTabs(tabs); void clearDeferredDueAlarm(message.id); void scheduleDeferredDueAlarm(message.id, dueAt); notifiedDeferredIds.delete(message.id); return { ok: true }; }
+    if (message.type === "delete-deferred-tab") { await requireBoardUser(); if (!safeRecordId(message.id)) throw new Error(i18n.t("reminderNotFound")); await saveDeferredTabs((await loadDeferredTabs()).filter((tab) => tab.id !== message.id)); void clearDeferredDueAlarm(message.id); notifiedDeferredIds.delete(message.id); return { ok: true }; }
     if (message.type === "activate-board-tab") {
       await requireBoardUser();
       if (typeof message.tabId !== "number" || !Number.isInteger(message.tabId) || message.tabId <= 0) throw new Error(i18n.t("invalidTabData"));
@@ -683,12 +1055,29 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       await chrome.tabs.remove(message.tabId);
       return { ok: true };
     }
+    if (message.type === "batch-close-tabs") {
+      await requireBoardUser();
+      if (!Array.isArray(message.tabIds)) throw new Error(i18n.t("invalidTabData"));
+      const validTabIds = message.tabIds.filter(safePositiveInteger);
+      const uniqueTabIds = [...new Set(validTabIds)];
+      let closed = 0;
+      let skipped = 0;
+      for (const tabId of uniqueTabIds) {
+        try {
+          await chrome.tabs.remove(tabId);
+          closed += 1;
+        } catch {
+          skipped += 1;
+        }
+      }
+      return { closed, skipped };
+    }
     if (message.type === "move-board-tab") {
       await requireBoardUser();
       const drop = validateBoardTabDrop(message.drop);
       if (!drop) throw new Error(i18n.t("invalidTabData"));
       const tab = await chrome.tabs.get(drop.tabId);
-      const source = boardTab(tab);
+      const source = await boardTab(tab, await loadTabCreatedAtMap());
       if (!source) throw new Error(i18n.t("onlyWebTabsDefer"));
       const state = await loadState();
       if (drop.targetBoardKey.startsWith("custom:")) {
@@ -703,6 +1092,47 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       state.boardAssignments = targetTabs.reduce((assignments, candidate, order) => moveVirtualBoardAssignment(assignments, candidate.windowId!, candidate.id, drop.targetBoardKey, order), state.boardAssignments);
       await saveBoardAssignments(state.boardAssignments);
       return { ok: true };
+    }
+    if (message.type === "batch-move-tabs-to-group") {
+      await requireBoardUser();
+      if (!Array.isArray(message.tabIds)) throw new Error(i18n.t("invalidTabData"));
+      if (typeof message.targetBoardKey !== "string" || !message.targetBoardKey) throw new Error(i18n.t("invalidTabData"));
+      const validTabIds = message.tabIds.filter(safePositiveInteger);
+      const uniqueTabIds = [...new Set(validTabIds)];
+      const targetBoardKey = message.targetBoardKey as BoardGroup["boardKey"];
+      const state = await loadState();
+      if (targetBoardKey.startsWith("custom:")) {
+        const id = targetBoardKey.slice("custom:".length);
+        if (!state.boardCustomGroups.some((group) => group.id === id)) throw new Error(i18n.t("workspaceNotFound"));
+      }
+      const groups = await boardLogicalGroups(state);
+      const targetGroup = groups.find((group) => group.boardKey === targetBoardKey);
+      if (!targetGroup) throw new Error(i18n.t("workspaceNotFound"));
+      let targetTabs = [...targetGroup.tabs];
+      const movedIds = new Set<number>();
+      let notFound = 0;
+      const createdAtMap = await loadTabCreatedAtMap();
+      for (const tabId of uniqueTabIds) {
+        if (targetTabs.some((t) => t.id === tabId)) { movedIds.add(tabId); continue; }
+        try {
+          const chromeTab = await chrome.tabs.get(tabId);
+          const source = await boardTab(chromeTab, createdAtMap);
+          if (!source) { notFound += 1; continue; }
+          targetTabs = targetTabs.filter((candidate) => candidate.id !== tabId);
+          targetTabs.push(source);
+          movedIds.add(tabId);
+        } catch {
+          notFound += 1;
+        }
+      }
+      state.boardAssignments = targetTabs.reduce((assignments, candidate, order) => moveVirtualBoardAssignment(assignments, candidate.windowId!, candidate.id, targetBoardKey, order), state.boardAssignments);
+      for (const group of groups) {
+        if (group.boardKey === targetBoardKey) continue;
+        const otherTabs = group.tabs.filter((candidate) => !movedIds.has(candidate.id));
+        state.boardAssignments = otherTabs.reduce((assignments, candidate, order) => moveVirtualBoardAssignment(assignments, candidate.windowId!, candidate.id, group.boardKey, order), state.boardAssignments);
+      }
+      await saveBoardAssignments(state.boardAssignments);
+      return { moved: movedIds.size, notFound };
     }
     if (message.type === "move-board-group") {
       await requireBoardUser();
@@ -883,7 +1313,9 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       }];
       const tabs = await Promise.all(message.tabIds.map((tabId) => chrome.tabs.get(tabId)));
       const windowId = tabs[0]?.windowId;
-      if (windowId == null || tabs.some((tab) => tab.windowId !== windowId || !boardTab(tab))) throw new Error("请选择同一窗口中的普通网页标签页");
+      const createdAtMap = await loadTabCreatedAtMap();
+      const mappedTabs = await Promise.all(tabs.map((tab) => boardTab(tab, createdAtMap)));
+      if (windowId == null || tabs.some((tab) => tab.windowId !== windowId) || mappedTabs.some((tab) => !tab)) throw new Error("请选择同一窗口中的普通网页标签页");
       const boardKey = customBoardKey(id);
       if (!boardKey) throw new Error("无法创建自定义分组");
       state.boardAssignments = message.tabIds.reduce((assignments, tabId, order) => moveVirtualBoardAssignment(assignments, windowId, tabId, boardKey, order), state.boardAssignments);
@@ -897,6 +1329,130 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       if (boardKey) state.boardAssignments = Object.fromEntries(Object.entries(state.boardAssignments).filter(([, assignment]) => assignment.boardKey !== boardKey));
       await Promise.all([saveBoardAssignments(state.boardAssignments), saveBoardCustomGroups(state.boardCustomGroups)]);
       return { ok: true };
+    }
+    if (message.type === "get-recently-closed") {
+      await requireBoardUser();
+      return { tabs: await loadRecentlyClosedTabs() };
+    }
+    if (message.type === "restore-recently-closed") {
+      await requireBoardUser();
+      if (!safeRecordId(message.id)) throw new Error("记录不存在");
+      if (typeof message.windowId !== "number" || !Number.isInteger(message.windowId)) throw new Error("窗口无效");
+      const tabs = await loadRecentlyClosedTabs();
+      const tab = tabs.find((item) => item.id === message.id);
+      const window = await chrome.windows.get(message.windowId);
+      if (!tab || window.type !== "normal") throw new Error("记录或窗口不存在");
+      if (tab.sessionId) {
+        try {
+          await chrome.sessions.restore(tab.sessionId);
+        } catch {
+          await chrome.tabs.create({ windowId: message.windowId, url: tab.url });
+        }
+      } else {
+        await chrome.tabs.create({ windowId: message.windowId, url: tab.url });
+      }
+      await removeRecentlyClosedTab(tab.id);
+      return { ok: true };
+    }
+    if (message.type === "remove-recently-closed") {
+      await requireBoardUser();
+      if (!safeRecordId(message.id)) throw new Error("记录 ID 无效");
+      await removeRecentlyClosedTab(message.id);
+      return { ok: true };
+    }
+    if (message.type === "clear-recently-closed") {
+      await requireBoardUser();
+      await clearRecentlyClosedTabs();
+      return { ok: true };
+    }
+    if (message.type === "get-workspace-history") {
+      const user = await requireBoardUser();
+      if (!safeRecordId(message.id)) throw new Error("工作区不存在");
+      const history = await loadWorkspaceHistory(message.id);
+      return {
+        history, maxVersions: MAX_WORKSPACE_HISTORY_VERSIONS };
+    }
+    if (message.type === "save-workspace-history-version") {
+      const user = await requireBoardUser();
+      if (!safeRecordId(message.id)) throw new Error("工作区不存在");
+      const state = await loadState();
+      const useCloud = state.settings.cloudSyncEnabled === true;
+      const workspace = (await loadAllWorkspaces(user.id, useCloud)).find((ws) => ws.id === message.id);
+      if (!workspace) throw new Error("工作区不存在");
+      const note = typeof message.note === "string" ? message.note : undefined;
+      const updated = await saveWorkspaceVersion(message.id, workspace, note);
+      return { ok: true, history: updated };
+    }
+    if (message.type === "restore-workspace-history-version") {
+      const user = await requireBoardUser();
+      if (message.confirmed !== true) throw new Error("请确认恢复历史版本");
+      if (!safeRecordId(message.id) || typeof message.version !== "number" || !Number.isInteger(message.version) || message.version < 1) throw new Error("参数无效");
+      if (typeof message.windowId !== "number" || !Number.isInteger(message.windowId)) throw new Error("窗口无效");
+      const history = await loadWorkspaceHistory(message.id);
+      const version = history?.versions.find((v) => v.version === message.version);
+      const window = await chrome.windows.get(message.windowId);
+      if (!version || window.type !== "normal") throw new Error("历史版本或窗口不存在");
+      const preview = workspaceRestorePreview(version.snapshot);
+      for (const tab of preview.tabs) await chrome.tabs.create({ windowId: message.windowId, url: tab.url, active: false });
+      return { ok: true, created: preview.tabs.length, unavailableCount: preview.unavailableCount };
+    }
+    if (message.type === "export-workspaces-json") {
+      const user = await requireBoardUser();
+      const state = await loadState();
+      const workspaces = await loadAllWorkspaces(user.id, state.settings.cloudSyncEnabled === true);
+      return { data: toWorkspacePortableData(workspaces) };
+    }
+    if (message.type === "import-workspaces-json") {
+      if (message.cancelled) {
+        pendingWorkspaceImport = null;
+        return { ok: true, cancelled: true };
+      }
+      if (!message.confirmed) {
+        const user = await getCurrentUser();
+        if (!user) throw new Error("请先登录后再导入工作区");
+        const preview = previewWorkspacePortableImport(message.data);
+        if (!preview) {
+          pendingWorkspaceImport = null;
+          throw new Error("导入文件格式无效");
+        }
+        pendingWorkspaceImport = { preview, userId: user.id };
+        return { ok: true, preview: { workspaceCount: preview.workspaceCount, totalTabs: preview.totalTabs } };
+      }
+      const currentUser = await getCurrentUser();
+      if (!pendingWorkspaceImport || !currentUser || !canConfirmOptionsImport(pendingWorkspaceImport.userId, currentUser.id ?? null)) {
+        pendingWorkspaceImport = null;
+        throw new Error("导入预览已失效，请重新预览后再确认");
+      }
+      const state = await loadState();
+      const useCloud = state.settings.cloudSyncEnabled === true;
+      const existing = await loadAllWorkspaces(currentUser.id, useCloud);
+      const imported = pendingWorkspaceImport.preview.data.workspaces;
+      const merged: WorkspaceSnapshot[] = [...existing];
+      for (const ws of imported) {
+        const existingIndex = merged.findIndex((m) => m.title === ws.title);
+        if (existingIndex === -1) {
+          const newWs = { ...ws, id: crypto.randomUUID() };
+          merged.push(newWs);
+          if (useCloud) await upsertWorkspace(currentUser.id, newWs).catch(() => {});
+          continue;
+        }
+        const existingWs = merged[existingIndex]!;
+        const existingUrls = new Set(existingWs.tabs.map((t) => t.url));
+        const importedUrls = new Set(ws.tabs.map((t) => t.url));
+        const allUrlsSame = existingUrls.size === importedUrls.size && [...existingUrls].every((url) => importedUrls.has(url));
+        if (allUrlsSame) continue;
+        const mergedTabs = [...existingWs.tabs];
+        for (const tab of ws.tabs) {
+          if (!existingUrls.has(tab.url)) mergedTabs.push(tab);
+        }
+        const updatedWs: WorkspaceSnapshot = { ...existingWs, tabs: mergedTabs };
+        merged[existingIndex] = updatedWs;
+        if (useCloud) await upsertWorkspace(currentUser.id, updatedWs).catch(() => {});
+      }
+      pendingWorkspaceImport = null;
+      await saveWorkspaceSnapshots(merged).catch(() => {});
+      const synced = useCloud;
+      return { ok: true, synced, importedCount: imported.length, totalCount: merged.length };
     }
     return { ok: false };
   })().then(sendResponse, (error: unknown) => sendResponse({ error: error instanceof Error ? error.message : String(error) }));

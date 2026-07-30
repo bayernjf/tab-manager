@@ -15,8 +15,8 @@
           <button class="nav-link" type="button" data-panel="rules" aria-controls="rules" data-i18n="domainRules">域名分组规则</button>
           <button class="nav-link" type="button" data-panel="ignored" aria-controls="ignored" data-i18n="ignoredSites">忽略网站</button>
           <button class="nav-link" type="button" data-panel="appearance" aria-controls="appearance" data-i18n="appearance">默认外观</button>
+          <button class="nav-link" type="button" data-panel="preferences" aria-controls="preferences" data-i18n="preferences">偏好设置</button>
           <button class="nav-link" type="button" data-panel="data" aria-controls="data" data-i18n="importExport">导入与导出</button>
-          <button class="nav-link" type="button" data-panel="privacy" aria-controls="privacy" data-i18n="privacy">高级同步与隐私</button>
         </nav>
       </aside>
       <section class="content" aria-live="polite">
@@ -25,10 +25,11 @@
           <div id="account-card" class="card"><h2 data-i18n="account">账户</h2><p id="account-email" data-i18n="readingAccount">正在读取账户状态…</p><p id="account-state" class="muted"></p><button id="sync-now" type="button" data-i18n="syncNow">立即同步</button><button id="sign-out" class="secondary" type="button" data-i18n="signOut">退出登录</button></div>
           <div id="login-required" class="card login-required" role="region" aria-labelledby="login-required-title" hidden>
             <h2 id="login-required-title" data-i18n="pleaseLogin">请先登录</h2>
-            <p data-i18n="loginRequiredHint">登录后才能管理分组规则、忽略网站、外观、导入导出和同步设置。</p>
+            <p data-i18n="loginRequiredHint">登录后才能管理分组规则、忽略网站、外观、偏好设置和导入导出。</p>
             <button id="open-login" type="button" data-i18n="openLoginPopup">打开扩展弹窗登录</button>
             <p id="login-instruction" class="muted" hidden data-i18n="loginInstruction">如果未打开弹窗，请点击浏览器工具栏中的 Tab Garden 图标，然后在弹窗中登录。</p>
           </div>
+          <form id="sync-form"><section class="card"><h2 data-i18n="syncScope">同步范围</h2><label class="switch"><input id="cloud-sync" type="checkbox"> <span data-i18n="cloudSync">启用云端同步</span></label><label class="switch"><input id="rules-sync" type="checkbox"> <span data-i18n="syncRules">同步分组规则</span></label><label class="switch"><input id="ignore-sync" type="checkbox"> <span data-i18n="syncIgnore">同步忽略网站</span></label></section><button type="submit" data-i18n="saveSyncSettings">保存同步设置</button></form>
         </section>
         <section id="rules" class="panel" tabindex="-1" hidden>
           <h1 data-i18n="domainRules">域名分组规则</h1><p class="muted" data-i18n="domainRulesHint">命中的网站会按规则创建自动分组。</p>
@@ -44,16 +45,13 @@
           <h1 data-i18n="appearance">默认外观</h1>
           <form id="appearance-form" class="card"><h2 data-i18n="defaultGroupColor">默认分组颜色</h2><div class="appearance-row"><label data-i18n="color">颜色 <select id="default-color" name="defaultColor"></select></label><label data-i18n="theme">主题 <select id="theme-select"><option value="light" data-i18n="lightTheme">浅色</option><option value="dark" data-i18n="darkThemeOption">深色</option></select></label><label data-i18n="language">语言 <select id="language-select"><option value="" data-i18n="languageFollowBrowser">跟随浏览器</option><option value="zh_CN" data-i18n="languageChinese">中文</option><option value="en" data-i18n="languageEnglish">English</option></select></label></div><button type="submit" data-i18n="saveAppearance">保存外观设置</button></form>
         </section>
-        <section id="data" class="panel" tabindex="-1" hidden>
-          <h1 data-i18n="importExport">导入与导出</h1><div class="card"><h2 data-i18n="export">导出</h2><p class="muted" data-i18n="exportHint">下载设置、分组规则和忽略网站的 JSON 备份。</p><button id="export-data" type="button" data-i18n="exportData">导出数据</button></div><div class="card"><h2 data-i18n="import">导入</h2><p class="muted" data-i18n="importHint">选择之前导出的 JSON 文件；确认前不会修改当前设置。</p><label for="import-file" data-i18n="selectJsonFile">选择 JSON 导入文件</label><input id="import-file" type="file" accept="application/json,.json"><p id="import-preview" class="muted" aria-live="polite"></p><button id="confirm-import" type="button" disabled data-i18n="confirmImport">确认导入</button><button id="cancel-import" class="secondary" type="button" disabled data-i18n="cancel">取消</button></div>
-        </section>
-        <section id="privacy" class="panel" tabindex="-1" hidden>
-          <h1 data-i18n="privacy">高级同步与隐私</h1>
-          <form id="settings-form"><section class="card"><h2 data-i18n="syncScope">同步范围</h2><label class="switch"><input id="cloud-sync" type="checkbox"> <span data-i18n="cloudSync">启用云端同步</span></label><label class="switch"><input id="rules-sync" type="checkbox"> <span data-i18n="syncRules">同步分组规则</span></label><label class="switch"><input id="ignore-sync" type="checkbox"> <span data-i18n="syncIgnore">同步忽略网站</span></label></section><section class="card"><h2 data-i18n="newTab">新标签页</h2><label class="switch"><input id="new-tab-board" type="checkbox" aria-describedby="new-tab-board-description"> <span data-i18n="openBoardOnNewTab">新标签页打开看板</span></label><p id="new-tab-board-description" class="muted" data-i18n="openBoardOnNewTabHint">启用后，点击 + 或按 Ctrl/Cmd+T 会打开 Tab Garden 看板；关闭后保持 Chrome/Edge 原生新标签页不变。</p></section><section id="shortcut-times-card" class="card shortcut-card">
+        <section id="preferences" class="panel" tabindex="-1" hidden>
+          <h1 data-i18n="preferences">偏好设置</h1>
+          <form id="preferences-form"><section class="card"><h2 data-i18n="newTab">新标签页</h2><label class="switch"><input id="new-tab-board" type="checkbox" aria-describedby="new-tab-board-description"> <span data-i18n="openBoardOnNewTab">新标签页打开看板</span></label><p id="new-tab-board-description" class="muted" data-i18n="openBoardOnNewTabHint">启用后，点击 + 或按 Ctrl/Cmd+T 会打开 Tab Garden 看板；关闭后保持 Chrome/Edge 原生新标签页不变。</p></section><section id="shortcut-times-card" class="card shortcut-card">
             <div class="shortcut-card-header">
               <div>
                 <h2 data-i18n="shortcutTimes">快捷提醒时间</h2>
-                <p class="muted" data-i18n="shortcutTimesHint">在“稍后处理”菜单中显示倒计时，需要多久后提醒。</p>
+                <p class="muted" data-i18n="shortcutTimesHint">在"稍后处理"菜单中显示倒计时，需要多久后提醒。</p>
               </div>
               <span id="deferred-shortcut-count" class="shortcut-count" aria-live="polite">0 / 5</span>
             </div>
@@ -62,7 +60,20 @@
               <button id="add-deferred-shortcut" class="shortcut-add" type="button" data-i18n="addShortcut">＋ 添加倒计时</button>
             </div>
             <p id="deferred-shortcut-note" class="shortcut-note" data-i18n="shortcutNote">选择倒计时时间，保存时自动去重。</p>
-          </section><button type="submit" data-i18n="saveSyncSettings">保存同步设置</button></form>
+          </section><button type="submit" data-i18n="savePreferences">保存偏好设置</button></form>
+          <section id="shortcut-keys-card" class="card shortcut-card">
+            <div class="shortcut-card-header">
+              <div>
+                <h2 data-i18n="shortcutKeys">快捷键</h2>
+                <p class="muted" data-i18n="shortcutKeysHint">扩展自带的全局快捷键。Chrome 不允许在扩展内自定义按键，可在浏览器快捷键页面修改或停用。</p>
+              </div>
+            </div>
+            <ul id="shortcut-list" class="shortcut-keys-list"></ul>
+            <button id="open-shortcut-settings" class="button secondary" type="button" data-i18n="shortcutKeysEditButton">打开快捷键设置</button>
+          </section>
+        </section>
+        <section id="data" class="panel" tabindex="-1" hidden>
+          <h1 data-i18n="importExport">导入与导出</h1><div class="card"><h2 data-i18n="export">导出</h2><p class="muted" data-i18n="exportHint">下载设置、分组规则和忽略网站的 JSON 备份。</p><button id="export-data" type="button" data-i18n="exportData">导出数据</button></div><div class="card"><h2 data-i18n="import">导入</h2><p class="muted" data-i18n="importHint">选择之前导出的 JSON 文件；确认前不会修改当前设置。</p><label for="import-file" data-i18n="selectJsonFile">选择 JSON 导入文件</label><input id="import-file" type="file" accept="application/json,.json"><p id="import-preview" class="muted" aria-live="polite"></p><button id="confirm-import" type="button" disabled data-i18n="confirmImport">确认导入</button><button id="cancel-import" class="secondary" type="button" disabled data-i18n="cancel">取消</button></div>
         </section>
       </section>
     </main>

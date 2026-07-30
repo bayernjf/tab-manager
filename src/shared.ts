@@ -68,6 +68,7 @@ export interface BoardTab {
   title: string;
   url?: string;
   favIconUrl?: string;
+  createdAt?: number;
 }
 
 export interface DuplicateBoardTabGroup {
@@ -430,9 +431,9 @@ export type WorkspaceTitleValidation =
 
 export function validateWorkspaceTitle(value: unknown, existingTitles: readonly string[]): WorkspaceTitleValidation {
   if (typeof value !== "string") return { status: "invalid" };
-  const title = value.trim();
-  if (!title) return { status: "empty" };
-  if (title.length > 80) return { status: "invalid" };
+  const rawTitle = value.trim();
+  if (!rawTitle) return { status: "empty" };
+  const title = rawTitle.length > 160 ? rawTitle.slice(0, 160) : rawTitle;
   const key = title.toLowerCase();
   return existingTitles.some((existingTitle) => typeof existingTitle === "string" && existingTitle.trim().toLowerCase() === key)
     ? { status: "duplicate" }
@@ -440,7 +441,7 @@ export function validateWorkspaceTitle(value: unknown, existingTitles: readonly 
 }
 
 export function validateWorkspaceSnapshot(value: unknown): WorkspaceSnapshot | null {
-  if (!isPlainObject(value) || !isRecordId(value.id) || typeof value.title !== "string" || value.title.length > 80 || typeof value.createdAt !== "string" || !Number.isFinite(Date.parse(value.createdAt)) || !Array.isArray(value.tabs) || value.tabs.length < 1 || value.tabs.length > 200) return null;
+  if (!isPlainObject(value) || !isRecordId(value.id) || typeof value.title !== "string" || value.title.length > 160 || typeof value.createdAt !== "string" || !Number.isFinite(Date.parse(value.createdAt)) || !Array.isArray(value.tabs) || value.tabs.length < 1 || value.tabs.length > 200) return null;
   const title = validateWorkspaceTitle(value.title, []);
   if (title.status !== "valid") return null;
   const tabs = value.tabs.map(workspaceTab);
@@ -481,12 +482,10 @@ export function normalizeDeferredShortcutTimes(value: unknown): string[] | null 
 }
 
 export function nextDeferredOccurrence(hhmm: string, now: Date = new Date(), t?: (key: string, args?: string[]) => string): Date {
-  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hhmm)) throw new Error(t ? t("invalidTime", [hhmm]) : `无效的时刻：${hhmm}`);
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hhmm)) throw new Error(t ? t("invalidTime", [hhmm]) : `无效的时长：${hhmm}`);
   const [hours, minutes] = hhmm.split(":").map(Number) as [number, number];
-  const next = new Date(now);
-  next.setHours(hours, minutes, 0, 0);
-  if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1);
-  return next;
+  const offsetMs = (hours * 60 + minutes) * 60_000;
+  return new Date(now.getTime() + offsetMs);
 }
 
 export function heightUnitsForTabCount(tabCount: number): 1 | 2 {
@@ -1141,4 +1140,164 @@ export function siteTitle(siteKey: string): string {
   const firstPart = siteKey.split(".")[0];
   if (!firstPart) return siteKey;
   return firstPart.charAt(0).toUpperCase() + firstPart.slice(1);
+}
+
+export const MAX_WORKSPACE_HISTORY_VERSIONS = 10;
+export const MAX_RECENTLY_CLOSED_TABS = 50;
+
+export function isMacPlatform(platform: string | undefined): boolean {
+  if (!platform) return false;
+  return /mac|iphone|ipad|ipod/i.test(platform);
+}
+
+const SHORTCUT_TOKEN_MAP_MAC: Record<string, string> = {
+  "Command": "⌘",
+  "Cmd": "⌘",
+  "Control": "⌃",
+  "Ctrl": "⌃",
+  "Alt": "⌥",
+  "Option": "⌥",
+  "Shift": "⇧",
+  "MacCtrl": "⌃",
+};
+
+const SHORTCUT_TOKEN_MAP_OTHER: Record<string, string> = {
+  "Command": "Ctrl",
+  "Cmd": "Ctrl",
+  "MacCtrl": "Ctrl",
+};
+
+export function formatShortcutKeys(combo: string, platform: "mac" | "other"): string {
+  if (!combo) return "";
+  if (combo.includes("+")) {
+    const tokens = combo.split("+").map((part) => part.trim()).filter(Boolean);
+    const map = platform === "mac" ? SHORTCUT_TOKEN_MAP_MAC : { ...SHORTCUT_TOKEN_MAP_OTHER };
+    return tokens.map((token) => map[token] ?? token).join("+");
+  }
+  const macModifierGlyphs = /^[⌘⌥⌃⇧]+/;
+  const match = combo.match(macModifierGlyphs);
+  if (match) {
+    const modifiers = match[0].split("").join("+");
+    const key = combo.slice(match[0].length);
+    return key ? `${modifiers}+${key}` : modifiers;
+  }
+  return combo;
+}
+
+export interface ShortcutDescriptor {
+  command: "open-tab-board" | "defer-active-tab" | "save-workspace";
+  descriptionKey: string;
+  defaultKey: string;
+  macKey: string;
+}
+
+export const SHORTCUT_COMMANDS: readonly ShortcutDescriptor[] = [
+  { command: "open-tab-board", descriptionKey: "cmdOpenBoard", defaultKey: "Alt+B", macKey: "Command+B" },
+  { command: "defer-active-tab", descriptionKey: "cmdDeferTab", defaultKey: "Alt+D", macKey: "Command+D" },
+  { command: "save-workspace", descriptionKey: "cmdSaveWorkspace", defaultKey: "Alt+S", macKey: "Command+S" },
+];
+
+export interface RecentlyClosedTab {
+  id: string;
+  title: string;
+  url: string;
+  favIconUrl?: string;
+  closedAt: string;
+  sessionId?: string;
+}
+
+export interface WorkspaceVersion {
+  version: number;
+  snapshot: WorkspaceSnapshot;
+  savedAt: string;
+  note?: string;
+}
+
+export interface WorkspaceHistory {
+  workspaceId: string;
+  versions: WorkspaceVersion[];
+}
+
+export interface WorkspacePortableData {
+  version: 1;
+  type: "workspaces";
+  exportedAt: string;
+  workspaces: WorkspaceSnapshot[];
+}
+
+export function validateRecentlyClosedTab(value: unknown): RecentlyClosedTab | null {
+  if (!isPlainObject(value) || !isRecordId(value.id) || typeof value.closedAt !== "string" || !Number.isFinite(Date.parse(value.closedAt))) return null;
+  const tab = workspaceTab(value);
+  if (!tab) return null;
+  const favIconUrl = typeof value.favIconUrl === "string" && value.favIconUrl.length <= 4_000 ? value.favIconUrl : undefined;
+  const sessionId = typeof value.sessionId === "string" && value.sessionId ? value.sessionId : undefined;
+  return { id: value.id, title: tab.title, url: tab.url, ...(favIconUrl ? { favIconUrl } : {}), closedAt: value.closedAt, ...(sessionId ? { sessionId } : {}) };
+}
+
+export function isRecentlyClosedTab(value: unknown): value is RecentlyClosedTab {
+  return validateRecentlyClosedTab(value) !== null;
+}
+
+export function validateWorkspaceVersion(value: unknown): WorkspaceVersion | null {
+  if (!isPlainObject(value) || typeof value.version !== "number" || !Number.isInteger(value.version) || value.version < 1 || typeof value.savedAt !== "string" || !Number.isFinite(Date.parse(value.savedAt))) return null;
+  const snapshot = validateWorkspaceSnapshot(value.snapshot);
+  if (!snapshot) return null;
+  const note = typeof value.note === "string" && value.note.trim() && value.note.length <= 200 ? value.note.trim() : undefined;
+  return { version: value.version, snapshot, savedAt: value.savedAt, ...(note ? { note } : {}) };
+}
+
+export function validateWorkspaceHistory(value: unknown): WorkspaceHistory | null {
+  if (!isPlainObject(value) || !isRecordId(value.workspaceId) || !Array.isArray(value.versions) || value.versions.length > MAX_WORKSPACE_HISTORY_VERSIONS) return null;
+  const versions = value.versions.map(validateWorkspaceVersion);
+  if (!versions.every((version): version is WorkspaceVersion => version !== null)) return null;
+  const versionNumbers = versions.map((v) => v.version);
+  if (new Set(versionNumbers).size !== versionNumbers.length) return null;
+  return { workspaceId: value.workspaceId, versions };
+}
+
+export function appendWorkspaceVersion(history: WorkspaceHistory | null, snapshot: WorkspaceSnapshot, note?: string): WorkspaceHistory {
+  const workspaceId = history?.workspaceId ?? snapshot.id;
+  const existing = history?.versions ?? [];
+  const nextVersion = existing.length > 0 ? Math.max(...existing.map((v) => v.version)) + 1 : 1;
+  const newVersion: WorkspaceVersion = { version: nextVersion, snapshot, savedAt: new Date().toISOString(), ...(note?.trim() ? { note: note.trim().slice(0, 200) } : {}) };
+  const updated = [...existing, newVersion];
+  if (updated.length > MAX_WORKSPACE_HISTORY_VERSIONS) {
+    updated.splice(0, updated.length - MAX_WORKSPACE_HISTORY_VERSIONS);
+  }
+  return { workspaceId, versions: updated };
+}
+
+export function validateWorkspacePortableData(value: unknown): WorkspacePortableData | null {
+  if (!isPlainObject(value) || value.version !== 1 || value.type !== "workspaces" || typeof value.exportedAt !== "string" || !Number.isFinite(Date.parse(value.exportedAt)) || !Array.isArray(value.workspaces) || value.workspaces.length > 200) return null;
+  const workspaces = value.workspaces.map(validateWorkspaceSnapshot);
+  if (!workspaces.every((ws): ws is WorkspaceSnapshot => ws !== null)) return null;
+  const ids = new Set(workspaces.map((ws) => ws.id));
+  if (ids.size !== workspaces.length) return null;
+  return { version: 1, type: "workspaces", exportedAt: value.exportedAt, workspaces };
+}
+
+export function toWorkspacePortableData(workspaces: readonly WorkspaceSnapshot[]): WorkspacePortableData {
+  return { version: 1, type: "workspaces", exportedAt: new Date().toISOString(), workspaces: workspaces.map((ws) => ({ ...ws, tabs: ws.tabs.map((tab) => ({ ...tab })) })) };
+}
+
+export type WorkspacePortableImportPreview = {
+  data: WorkspacePortableData;
+  workspaceCount: number;
+  totalTabs: number;
+};
+
+export function previewWorkspacePortableImport(value: unknown): WorkspacePortableImportPreview | null {
+  let parsedValue = value;
+  if (typeof value === "string") {
+    if (value.length > 5_000_000) return null;
+    try {
+      parsedValue = JSON.parse(value) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  const data = validateWorkspacePortableData(parsedValue);
+  if (!data) return null;
+  const totalTabs = data.workspaces.reduce((sum, ws) => sum + ws.tabs.length, 0);
+  return { data, workspaceCount: data.workspaces.length, totalTabs };
 }
