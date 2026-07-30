@@ -1444,26 +1444,25 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const imported = pendingWorkspaceImport.preview.data.workspaces;
       const merged: WorkspaceSnapshot[] = [...existing];
       for (const ws of imported) {
-        const titleValidation = validateWorkspaceTitle(ws.title, merged.map((m) => m.title));
-        if (titleValidation.status === "valid") {
+        const existingIndex = merged.findIndex((m) => m.title === ws.title);
+        if (existingIndex === -1) {
           const newWs = { ...ws, id: crypto.randomUUID() };
           merged.push(newWs);
           if (useCloud) await upsertWorkspace(currentUser.id, newWs).catch(() => {});
           continue;
         }
-        if (titleValidation.status === "duplicate") {
-          let counter = 2;
-          let adjusted: ReturnType<typeof validateWorkspaceTitle> = titleValidation;
-          while (adjusted.status === "duplicate" && counter <= 100) {
-            adjusted = validateWorkspaceTitle(`${ws.title} (${counter})`, merged.map((m) => m.title));
-            counter += 1;
-          }
-          if (adjusted.status === "valid") {
-            const newWs = { ...ws, id: crypto.randomUUID(), title: adjusted.title };
-            merged.push(newWs);
-            if (useCloud) await upsertWorkspace(currentUser.id, newWs).catch(() => {});
-          }
+        const existingWs = merged[existingIndex]!;
+        const existingUrls = new Set(existingWs.tabs.map((t) => t.url));
+        const importedUrls = new Set(ws.tabs.map((t) => t.url));
+        const allUrlsSame = existingUrls.size === importedUrls.size && [...existingUrls].every((url) => importedUrls.has(url));
+        if (allUrlsSame) continue;
+        const mergedTabs = [...existingWs.tabs];
+        for (const tab of ws.tabs) {
+          if (!existingUrls.has(tab.url)) mergedTabs.push(tab);
         }
+        const updatedWs: WorkspaceSnapshot = { ...existingWs, tabs: mergedTabs };
+        merged[existingIndex] = updatedWs;
+        if (useCloud) await upsertWorkspace(currentUser.id, updatedWs).catch(() => {});
       }
       pendingWorkspaceImport = null;
       await saveWorkspaceSnapshots(merged).catch(() => {});
