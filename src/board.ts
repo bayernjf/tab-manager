@@ -1,5 +1,5 @@
 import { i18n } from "./i18n.js";
-import { boardCardsForDevice, boardTabMatchesQuery, formatDeferredDateTime, getSiteKey, heightUnitsForTabCount, isBoardKey, manualBoardGridRow, moveManualBoardCard, nextDeferredOccurrence, placeBoardCards, isDeferredTabDue, segmentTabs, validateWorkspaceTitle, DEFAULT_SETTINGS, type BoardKey, type BoardLayout, type BoardSegmentCard, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type Settings, type Theme, type WorkspaceSnapshot, type WorkspaceTab, type WorkspaceHistory, type WorkspaceVersion, type WorkspacePortableData } from "./shared.js";
+import { boardCardsForDevice, boardTabMatchesQuery, formatDeferredDateTime, getSiteKey, heightUnitsForTabCount, isBoardKey, manualBoardGridRow, moveManualBoardCard, nextDeferredOccurrence, placeBoardCards, isDeferredTabDue, segmentTabs, validateWorkspaceTitle, DEFAULT_SETTINGS, type BoardKey, type BoardLayout, type BoardSegmentCard, type BoardTab, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type Settings, type Theme, type WorkspaceSnapshot, type WorkspaceTab, type WorkspaceHistory, type WorkspaceVersion, type WorkspacePortableData } from "./shared.js";
 
 interface BoardState {
   user: { id: string; email?: string } | null;
@@ -330,14 +330,16 @@ function setViewMode(mode: ViewMode): void {
 }
 
 interface TimelineTabItem {
-  tab: BoardSegmentCard["tabs"][number];
+  tab: BoardTab;
   groupTitle: string;
   groupColor: GroupColor;
   createdAt?: number;
   dueAt?: string;
+  isDeferred?: boolean;
+  deferredId?: string;
 }
 
-function renderTimeline(): void {
+async function renderTimeline(): Promise<void> {
   const cards = scopeMode === "workspace" ? workspaceCards : (currentState?.groups ?? []);
   const query = boardSearch.value;
   const windowId = windowFilter.value;
@@ -351,9 +353,30 @@ function renderTimeline(): void {
         tab,
         groupTitle: card.title,
         groupColor: card.color,
-        createdAt: (tab as { createdAt?: number }).createdAt,
-        dueAt: (tab as { dueAt?: string }).dueAt,
+        createdAt: tab.createdAt,
+        dueAt: undefined,
       });
+    }
+  }
+  if (sortBy === "due") {
+    try {
+      const deferred = (await send<{ tabs: DeferredTab[] }>({ type: "get-deferred-tabs" })).tabs;
+      for (const dt of deferred) {
+        const matchUrl = dt.url && (!query || dt.title.toLowerCase().includes(query.toLowerCase()) || dt.url.toLowerCase().includes(query.toLowerCase()));
+        if (query && !matchUrl) continue;
+        items.push({
+          tab: { id: -1, title: dt.title, url: dt.url, favIconUrl: dt.favIconUrl } as BoardTab,
+          groupTitle: i18n.t("deferredReminders"),
+          groupColor: "blue" as GroupColor,
+          createdAt: Date.parse(dt.createdAt),
+          dueAt: dt.dueAt,
+          isDeferred: true,
+          deferredId: dt.id,
+        });
+      }
+    } catch {
+      // If the deferred tabs request fails (e.g. not logged in), keep the
+      // current tabs visible in the timeline and skip the reminder rows.
     }
   }
   items.sort((a, b) => {
@@ -381,7 +404,7 @@ function renderTimeline(): void {
     if (sortBy === "due") {
       time.textContent = item.dueAt ? formatDeferredDateTime(item.dueAt) : i18n.t("noDueReminder");
     } else {
-      time.textContent = item.createdAt ? new Date(item.createdAt).toLocaleString() : "-";
+      time.textContent = item.createdAt ? new Date(item.createdAt).toLocaleString() : i18n.t("unknownCreatedAt");
     }
     const group = document.createElement("span");
     group.className = "timeline-group";
