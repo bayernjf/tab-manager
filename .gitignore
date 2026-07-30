@@ -9,3 +9,8 @@ dist/
 .codegraph/
 .headroom/
 .claude/launch.json
+
+# Playwright E2E 测试产物
+test-results/
+tmp-profile/
+playwright-report/
