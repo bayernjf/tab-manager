@@ -1144,6 +1144,58 @@ export function siteTitle(siteKey: string): string {
 export const MAX_WORKSPACE_HISTORY_VERSIONS = 10;
 export const MAX_RECENTLY_CLOSED_TABS = 50;
 
+export function isMacPlatform(platform: string | undefined): boolean {
+  if (!platform) return false;
+  return /mac|iphone|ipad|ipod/i.test(platform);
+}
+
+const SHORTCUT_TOKEN_MAP_MAC: Record<string, string> = {
+  "Command": "⌘",
+  "Cmd": "⌘",
+  "Control": "⌃",
+  "Ctrl": "⌃",
+  "Alt": "⌥",
+  "Option": "⌥",
+  "Shift": "⇧",
+  "MacCtrl": "⌃",
+};
+
+const SHORTCUT_TOKEN_MAP_OTHER: Record<string, string> = {
+  "Command": "Ctrl",
+  "Cmd": "Ctrl",
+  "MacCtrl": "Ctrl",
+};
+
+export function formatShortcutKeys(combo: string, platform: "mac" | "other"): string {
+  if (!combo) return "";
+  if (combo.includes("+")) {
+    const tokens = combo.split("+").map((part) => part.trim()).filter(Boolean);
+    const map = platform === "mac" ? SHORTCUT_TOKEN_MAP_MAC : { ...SHORTCUT_TOKEN_MAP_OTHER };
+    return tokens.map((token) => map[token] ?? token).join("+");
+  }
+  const macModifierGlyphs = /^[⌘⌥⌃⇧]+/;
+  const match = combo.match(macModifierGlyphs);
+  if (match) {
+    const modifiers = match[0].split("").join("+");
+    const key = combo.slice(match[0].length);
+    return key ? `${modifiers}+${key}` : modifiers;
+  }
+  return combo;
+}
+
+export interface ShortcutDescriptor {
+  command: "open-tab-board" | "defer-active-tab" | "save-workspace";
+  descriptionKey: string;
+  defaultKey: string;
+  macKey: string;
+}
+
+export const SHORTCUT_COMMANDS: readonly ShortcutDescriptor[] = [
+  { command: "open-tab-board", descriptionKey: "cmdOpenBoard", defaultKey: "Alt+B", macKey: "Command+B" },
+  { command: "defer-active-tab", descriptionKey: "cmdDeferTab", defaultKey: "Alt+D", macKey: "Command+D" },
+  { command: "save-workspace", descriptionKey: "cmdSaveWorkspace", defaultKey: "Alt+S", macKey: "Command+S" },
+];
+
 export interface RecentlyClosedTab {
   id: string;
   title: string;

@@ -40,6 +40,9 @@ const {
   validateWorkspaceSnapshot,
   validateDeferredTab,
   isDeferredTabDue,
+  formatShortcutKeys,
+  isMacPlatform,
+  SHORTCUT_COMMANDS,
   normalizeDeferredShortcutTimes,
   manualBoardGridRow,
   moveManualBoardCard,
@@ -543,6 +546,79 @@ test("renders a compact accessible deferred shortcut editor", async () => {
   assert.match(css, /\.deferred-shortcut-input\s*\{[^}]*width: 92px;/);
   assert.match(css, /\.deferred-shortcut:focus-within/);
   assert.match(css, /\.deferred-shortcut-remove:hover/);
+});
+
+test("detects Mac platforms from common navigator.platform values", () => {
+  assert.equal(isMacPlatform("MacIntel"), true);
+  assert.equal(isMacPlatform("MacPPC"), true);
+  assert.equal(isMacPlatform("MacARM64"), true);
+  assert.equal(isMacPlatform("iPhone"), true);
+  assert.equal(isMacPlatform("iPad"), true);
+  assert.equal(isMacPlatform("Win32"), false);
+  assert.equal(isMacPlatform("Linux x86_64"), false);
+  assert.equal(isMacPlatform(undefined), false);
+  assert.equal(isMacPlatform(""), false);
+});
+
+test("formats shortcut keys with platform-specific glyphs", () => {
+  assert.equal(formatShortcutKeys("Alt+B", "mac"), "⌥+B");
+  assert.equal(formatShortcutKeys("Command+B", "mac"), "⌘+B");
+  assert.equal(formatShortcutKeys("Command+Shift+D", "mac"), "⌘+⇧+D");
+  assert.equal(formatShortcutKeys("Ctrl+Alt+S", "mac"), "⌃+⌥+S");
+  assert.equal(formatShortcutKeys("Alt+B", "other"), "Alt+B");
+  assert.equal(formatShortcutKeys("Command+B", "other"), "Ctrl+B");
+  assert.equal(formatShortcutKeys("Command+Shift+S", "other"), "Ctrl+Shift+S");
+  assert.equal(formatShortcutKeys("MacCtrl+E", "other"), "Ctrl+E");
+  assert.equal(formatShortcutKeys("", "mac"), "");
+  assert.equal(formatShortcutKeys("", "other"), "");
+});
+
+test("formats Mac symbol-format shortcuts returned by chrome.commands.getAll()", () => {
+  assert.equal(formatShortcutKeys("⌘B", "mac"), "⌘+B");
+  assert.equal(formatShortcutKeys("⌥D", "mac"), "⌥+D");
+  assert.equal(formatShortcutKeys("⌃⇧S", "mac"), "⌃+⇧+S");
+  assert.equal(formatShortcutKeys("⌘⌥⇧X", "mac"), "⌘+⌥+⇧+X");
+  assert.equal(formatShortcutKeys("B", "mac"), "B");
+});
+
+test("declares three built-in shortcut commands matching the manifest", () => {
+  assert.equal(SHORTCUT_COMMANDS.length, 3);
+  const commands = SHORTCUT_COMMANDS.map((entry) => entry.command);
+  assert.deepEqual(commands, ["open-tab-board", "defer-active-tab", "save-workspace"]);
+  for (const entry of SHORTCUT_COMMANDS) {
+    assert.match(entry.defaultKey, /^Alt\+[A-Z]$/);
+    assert.match(entry.macKey, /^Command\+[A-Z]$/);
+  }
+});
+
+test("renders the shortcut keys card on the options page", async () => {
+  const [html, script, manifest, css] = await Promise.all([
+    readFile(new URL("../dist/options.html", import.meta.url), "utf8"),
+    readFile(new URL("../dist/options.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/manifest.json", import.meta.url), "utf8"),
+    readFile(new URL("../dist/options.css", import.meta.url), "utf8"),
+  ]);
+  assert.match(html, /<section[^>]*\bid="shortcut-keys-card"/);
+  assert.match(html, /<ul[^>]*\bid="shortcut-list"/);
+  assert.match(html, /<button[^>]*\bid="open-shortcut-settings"/);
+  assert.match(html, /data-i18n="shortcutKeys"/);
+  assert.match(html, /data-i18n="shortcutKeysEditButton"/);
+  assert.match(script, /renderShortcutKeys/);
+  assert.match(script, /renderShortcutKeysWithValues/);
+  assert.match(script, /formatShortcutKeys/);
+  assert.match(script, /isMacPlatform/);
+  assert.match(script, /chrome\.commands\.getAll/);
+  assert.match(script, /chrome:\/\/extensions\/shortcuts/);
+  assert.match(css, /\.shortcut-keys-list\s*\{/);
+  assert.match(css, /\.shortcut-keys-key\s*\{/);
+  assert.match(css, /shortcut-keys-not-set/);
+  const commands = JSON.parse(manifest).commands;
+  assert.equal(commands["open-tab-board"].suggested_key.mac, "Command+B");
+  assert.equal(commands["defer-active-tab"].suggested_key.mac, "Command+D");
+  assert.equal(commands["save-workspace"].suggested_key.mac, "Command+S");
+  assert.equal(commands["open-tab-board"].suggested_key.default, "Alt+B");
+  assert.equal(commands["defer-active-tab"].suggested_key.default, "Alt+D");
+  assert.equal(commands["save-workspace"].suggested_key.default, "Alt+S");
 });
 
 test("builds local deferred-tab handlers", async () => {
