@@ -328,5 +328,7 @@
   "noVersionNote": { "message": "（无备注）", "description": "无版本备注显示" },
   "exportWorkspace": { "message": "导出工作区", "description": "导出工作区按钮" },
   "importWorkspace": { "message": "导入工作区", "description": "导入工作区按钮" },
+  "importPreviewSummary": { "message": "即将导入 $workspaceCount$ 个工作区，共 $totalTabs$ 个标签", "description": "导入预览摘要", "placeholders": { "workspaceCount": { "content": "$1", "example": "3" }, "totalTabs": { "content": "$2", "example": "12" } } },
+  "importPreviewHint": { "message": "以下工作区将被导入。名称冲突时会自动重命名。", "description": "导入预览提示" },
   "selectWorkspaceFile": { "message": "选择工作区 JSON 文件", "description": "选择工作区文件" }
 }

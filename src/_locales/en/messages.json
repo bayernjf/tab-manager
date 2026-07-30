@@ -328,5 +328,7 @@
   "noVersionNote": { "message": "(No note)", "description": "No version note display" },
   "exportWorkspace": { "message": "Export", "description": "Export workspace button" },
   "importWorkspace": { "message": "Import", "description": "Import workspace button" },
+  "importPreviewSummary": { "message": "Importing $workspaceCount$ workspace(s) with $totalTabs$ tab(s)", "description": "Import preview summary", "placeholders": { "workspaceCount": { "content": "$1", "example": "3" }, "totalTabs": { "content": "$2", "example": "12" } } },
+  "importPreviewHint": { "message": "The following workspaces will be imported. Conflicting names will be renamed automatically.", "description": "Import preview hint" },
   "selectWorkspaceFile": { "message": "Select workspace JSON file", "description": "Select workspace file" }
 }
