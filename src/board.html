@@ -19,7 +19,6 @@
         <button id="view-toggle-timeline" class="button secondary view-toggle" type="button" data-i18n="timelineView" aria-pressed="false">时间线</button>
         <button id="toggle-select-mode" class="button secondary" type="button" data-i18n="selectMode">批量选择</button>
         <button id="recently-closed-btn" class="button secondary" type="button" data-i18n="recentlyClosed">最近关闭</button>
-        <button id="memory-usage-btn" class="button secondary" type="button" data-i18n="memoryUsage">内存占用</button>
         <label class="auto-fill has-tooltip" id="auto-fill-wrapper">
           <input id="auto-fill" type="checkbox" checked>
           <span data-i18n="autoFill">自动填充</span>
@@ -145,17 +144,6 @@
     <div id="recently-closed-list" class="duplicate-review-list"></div>
     <footer class="duplicate-review-actions">
       <button id="cancel-recently-closed" class="button secondary" type="button" data-i18n="cancel">取消</button>
-    </footer>
-  </dialog>
-  <dialog id="memory-usage-dialog" class="duplicate-review" aria-labelledby="memory-title">
-    <header class="duplicate-review-header">
-      <div><span class="eyebrow">TAB GARDEN</span><h2 id="memory-title" data-i18n="memoryTitle">内存占用排序</h2></div>
-      <button id="close-memory-usage" class="icon-button" type="button" aria-label="关闭内存占用">×</button>
-    </header>
-    <div id="memory-usage-list" class="duplicate-review-list"></div>
-    <footer class="duplicate-review-actions">
-      <button id="close-top-memory" class="button secondary" type="button" data-i18n="closeTopUsers">关闭占用前 5 的标签</button>
-      <button id="cancel-memory-usage" class="button secondary" type="button" data-i18n="cancel">取消</button>
     </footer>
   </dialog>
   <dialog id="batch-move-dialog" class="duplicate-review" aria-labelledby="batch-move-title">

@@ -72,12 +72,6 @@ const recentlyClosedDialog = $<HTMLDialogElement>("#recently-closed-dialog");
 const recentlyClosedList = $("#recently-closed-list");
 const closeRecentlyClosed = $<HTMLButtonElement>("#close-recently-closed");
 const cancelRecentlyClosed = $<HTMLButtonElement>("#cancel-recently-closed");
-const memoryUsageBtn = $<HTMLButtonElement>("#memory-usage-btn");
-const memoryUsageDialog = $<HTMLDialogElement>("#memory-usage-dialog");
-const memoryUsageList = $("#memory-usage-list");
-const closeMemoryUsage = $<HTMLButtonElement>("#close-memory-usage");
-const cancelMemoryUsage = $<HTMLButtonElement>("#cancel-memory-usage");
-const closeTopMemory = $<HTMLButtonElement>("#close-top-memory");
 const batchMoveDialog = $<HTMLDialogElement>("#batch-move-dialog");
 const batchMoveList = $("#batch-move-list");
 const closeBatchMove = $<HTMLButtonElement>("#close-batch-move");
@@ -491,114 +485,6 @@ async function openRecentlyClosed(): Promise<void> {
   } catch (error) {
     recentlyClosedList.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: error instanceof Error ? error.message : String(error) }));
   }
-}
-
-interface ProcessTabInfo {
-  tabId: number;
-  title: string;
-  url?: string;
-  favIconUrl?: string;
-  memoryKB: number;
-}
-
-interface ChromeProcess { privateMemory?: number; tabs?: number[] }
-
-async function openMemoryUsage(): Promise<void> {
-  memoryUsageList.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: i18n.t("loading") }));
-  memoryUsageDialog.showModal();
-  try {
-    const chromeAny = chrome as unknown as { processes?: { getProcessInfo: (ids: number[], fetchProcessTree: boolean) => Promise<Record<string, ChromeProcess>> } };
-    const processInfo = chromeAny.processes
-      ? await chromeAny.processes.getProcessInfo([], false)
-      : {} as Record<string, ChromeProcess>;
-    const tabMap = new Map<number, chrome.tabs.Tab>();
-    if (currentState) {
-      for (const card of currentState.groups) {
-        for (const tab of card.tabs) {
-          if (typeof tab.id === "number" && tab.id >= 0) {
-            tabMap.set(tab.id, { id: tab.id, title: tab.title, url: tab.url, favIconUrl: tab.favIconUrl } as chrome.tabs.Tab);
-          }
-        }
-      }
-    }
-    const tabMem = new Map<number, number>();
-    for (const proc of Object.values(processInfo)) {
-      const procTyped = proc as ChromeProcess;
-      const mem = procTyped.privateMemory ?? 0;
-      if (procTyped.tabs && procTyped.tabs.length > 0) {
-        const share = Math.ceil(mem / procTyped.tabs.length);
-        for (const tid of procTyped.tabs) {
-          tabMem.set(tid, (tabMem.get(tid) ?? 0) + share);
-        }
-      }
-    }
-    const items: ProcessTabInfo[] = [];
-    for (const [tabId, memoryKB] of tabMem.entries()) {
-      const tab = tabMap.get(tabId);
-      if (tab) {
-        items.push({ tabId, title: tab.title || i18n.t("unnamedTab"), url: tab.url, favIconUrl: tab.favIconUrl, memoryKB });
-      }
-    }
-    items.sort((a, b) => b.memoryKB - a.memoryKB);
-    if (!items.length) {
-      memoryUsageList.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: i18n.t("noMatchingTabs") }));
-      return;
-    }
-    const maxKB = items[0]!.memoryKB || 1;
-    const fallback = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
-    closeTopMemory.textContent = i18n.t("closeTopUsers", [String(Math.min(5, items.length))]);
-    memoryUsageList.replaceChildren(...items.map((item) => {
-      const row = document.createElement("div");
-      row.className = "memory-row";
-      row.dataset.tabId = String(item.tabId);
-      const size = document.createElement("span");
-      size.className = "memory-size";
-      if (item.memoryKB >= 1024) size.textContent = i18n.t("memoryMB", [(item.memoryKB / 1024).toFixed(1)]);
-      else size.textContent = i18n.t("memoryKB", [String(item.memoryKB)]);
-      const bar = document.createElement("div");
-      bar.className = "memory-bar";
-      const fill = document.createElement("div");
-      fill.className = "memory-bar-fill";
-      fill.style.width = `${Math.max(2, Math.round((item.memoryKB / maxKB) * 100))}%`;
-      bar.append(fill);
-      const icon = document.createElement("img");
-      icon.className = "memory-icon";
-      icon.alt = "";
-      icon.src = item.favIconUrl || faviconFor(item.url) || fallback;
-      icon.addEventListener("error", () => { if (icon.src !== fallback) icon.src = fallback; });
-      icon.classList.toggle("github-tab-icon", item.url ? getSiteKey(item.url) === "github.com" : false);
-      const title = document.createElement("span");
-      title.className = "memory-title";
-      title.textContent = item.title;
-      title.title = item.url || item.title;
-      row.append(size, bar, icon, title);
-      row.addEventListener("click", () => void activateTab(item.tabId));
-      row.style.cursor = "pointer";
-      return row;
-    }));
-  } catch (error) {
-    memoryUsageList.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: error instanceof Error ? error.message : String(error) }));
-  }
-}
-
-async function closeTopMemoryTabs(): Promise<void> {
-  const rows = memoryUsageList.querySelectorAll<HTMLElement>(".memory-row");
-  const ids: number[] = [];
-  rows.forEach((row, index) => {
-    if (index < 5) {
-      const tid = Number(row.dataset.tabId);
-      if (Number.isInteger(tid) && tid >= 0) ids.push(tid);
-    }
-  });
-  if (!ids.length) return;
-  try {
-    for (const id of ids) {
-      await send({ type: "close-board-tab", tabId: id });
-    }
-    memoryUsageDialog.close();
-    showStatus(i18n.t("closedDuplicates", [String(ids.length)]));
-    await load();
-  } catch (error) { showStatus(error instanceof Error ? error.message : String(error), true); }
 }
 
 function rebuildNavOrder(): void {
@@ -2083,7 +1969,6 @@ function setWorkspaceMode(on: boolean): void {
   viewToggleBoard.classList.toggle("hidden", on);
   viewToggleTimeline.classList.toggle("hidden", on);
   recentlyClosedBtn.classList.toggle("hidden", on);
-  memoryUsageBtn.classList.toggle("hidden", on);
   if (on && selectMode) setSelectMode(false);
   if (on && viewMode === "timeline") setViewMode("board");
   // 仅在工作区模式隐藏；切回“当前”时不主动显示，由 renderDeferredTabs 按数据决定，避免空列表先弹出再隐藏的闪烁。
@@ -2418,10 +2303,6 @@ timelineSort.addEventListener("change", renderTimeline);
 recentlyClosedBtn.addEventListener("click", () => void openRecentlyClosed());
 closeRecentlyClosed.addEventListener("click", () => recentlyClosedDialog.close());
 cancelRecentlyClosed.addEventListener("click", () => recentlyClosedDialog.close());
-memoryUsageBtn.addEventListener("click", () => void openMemoryUsage());
-closeMemoryUsage.addEventListener("click", () => memoryUsageDialog.close());
-cancelMemoryUsage.addEventListener("click", () => memoryUsageDialog.close());
-closeTopMemory.addEventListener("click", () => void closeTopMemoryTabs());
 document.addEventListener("keydown", (event) => {
   const target = event.target;
   if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement) return;

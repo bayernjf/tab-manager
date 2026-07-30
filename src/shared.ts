@@ -1206,16 +1206,6 @@ export interface RecentlyClosedTab {
   sessionId?: string;
 }
 
-export interface TabProcessInfo {
-  tabId: number;
-  title: string;
-  url?: string;
-  processId?: number;
-  memoryKB?: number;
-  cpuUsage?: number;
-  capturedAt: string;
-}
-
 export interface WorkspaceVersion {
   version: number;
   snapshot: WorkspaceSnapshot;
@@ -1246,19 +1236,6 @@ export function validateRecentlyClosedTab(value: unknown): RecentlyClosedTab | n
 
 export function isRecentlyClosedTab(value: unknown): value is RecentlyClosedTab {
   return validateRecentlyClosedTab(value) !== null;
-}
-
-export function validateTabProcessInfo(value: unknown): TabProcessInfo | null {
-  if (!isPlainObject(value) || typeof value.tabId !== "number" || !Number.isInteger(value.tabId) || value.tabId <= 0 || typeof value.title !== "string" || typeof value.capturedAt !== "string" || !Number.isFinite(Date.parse(value.capturedAt))) return null;
-  const url = typeof value.url === "string" && value.url.length <= 4_000 ? value.url : undefined;
-  const processId = typeof value.processId === "number" && Number.isInteger(value.processId) && value.processId >= 0 ? value.processId : undefined;
-  const memoryKB = typeof value.memoryKB === "number" && Number.isFinite(value.memoryKB) && value.memoryKB >= 0 ? value.memoryKB : undefined;
-  const cpuUsage = typeof value.cpuUsage === "number" && Number.isFinite(value.cpuUsage) && value.cpuUsage >= 0 && value.cpuUsage <= 100 ? value.cpuUsage : undefined;
-  return { tabId: value.tabId, title: value.title.trim() || value.title, ...(url ? { url } : {}), ...(processId !== undefined ? { processId } : {}), ...(memoryKB !== undefined ? { memoryKB } : {}), ...(cpuUsage !== undefined ? { cpuUsage } : {}), capturedAt: value.capturedAt };
-}
-
-export function isTabProcessInfo(value: unknown): value is TabProcessInfo {
-  return validateTabProcessInfo(value) !== null;
 }
 
 export function validateWorkspaceVersion(value: unknown): WorkspaceVersion | null {

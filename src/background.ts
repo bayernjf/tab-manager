@@ -24,7 +24,6 @@ import {
   validateWorkspaceTab,
   validateWorkspaceSnapshot,
   validateRecentlyClosedTab,
-  validateTabProcessInfo,
   validateWorkspacePortableData,
   workspaceRestorePreview,
   workspaceTab,
@@ -46,7 +45,6 @@ import {
   type WorkspaceSnapshot,
   type DeferredTab,
   type RecentlyClosedTab,
-  type TabProcessInfo,
   type WorkspaceHistory,
   type WorkspacePortableImportPreview,
   isDeferredTabDue,
@@ -73,10 +71,6 @@ import {
   appendRecentlyClosedTab,
   removeRecentlyClosedTab,
   clearRecentlyClosedTabs,
-  loadTabProcesses,
-  saveTabProcesses,
-  upsertTabProcess,
-  clearTabProcesses,
   loadTabCreatedAtMap,
   recordTabCreatedAt,
   removeTabCreatedAt,
@@ -167,8 +161,6 @@ type PopupMessage =
   | { type: "restore-recently-closed"; id: unknown; windowId: unknown }
   | { type: "remove-recently-closed"; id: unknown }
   | { type: "clear-recently-closed" }
-  | { type: "get-tab-processes" }
-  | { type: "refresh-tab-processes" }
   | { type: "get-workspace-history"; id: unknown }
   | { type: "save-workspace-history-version"; id: unknown; note?: unknown }
   | { type: "restore-workspace-history-version"; id: unknown; version: unknown; windowId: unknown; confirmed?: boolean }
@@ -1372,53 +1364,6 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       await requireBoardUser();
       await clearRecentlyClosedTabs();
       return { ok: true };
-    }
-    if (message.type === "get-tab-processes") {
-      await requireBoardUser();
-      return { processes: await loadTabProcesses(), capturedAt: new Date().toISOString() };
-    }
-    if (message.type === "refresh-tab-processes") {
-      await requireBoardUser();
-      const windows = await chrome.windows.getAll({ populate: true, windowTypes: ["normal"] });
-      const captured = new Date().toISOString();
-      const processes: TabProcessInfo[] = [];
-      const chromeAny = chrome as typeof chrome & {
-        processes?: {
-          getProcessIdForTab(tabId: number): Promise<number>;
-          getProcessInfo(processIds: number[], includeMemory: boolean): Promise<Record<number, { privateMemory?: number; cpu?: number }>>;
-        };
-      };
-      for (const window of windows) {
-        for (const tab of window.tabs ?? []) {
-          if (tab.id == null) continue;
-          const info: TabProcessInfo = {
-            tabId: tab.id,
-            title: tab.title || "未命名标签页",
-            ...(tab.url ? { url: tab.url } : {}),
-            capturedAt: captured,
-          };
-          if (chromeAny.processes) {
-            try {
-              const proc = await chromeAny.processes.getProcessIdForTab(tab.id).catch(() => -1);
-              if (proc && proc > 0) {
-                info.processId = proc;
-                const processInfo = await chromeAny.processes.getProcessInfo([proc], false).catch(() => ({})) as Record<number, { privateMemory?: number; cpu?: number }>;
-                const p = processInfo[proc];
-                if (p) {
-                  if (typeof p.privateMemory === "number") info.memoryKB = Math.round(p.privateMemory / 1024);
-                  if (typeof p.cpu === "number") info.cpuUsage = Math.min(100, Math.max(0, p.cpu));
-                }
-              }
-            } catch {
-              // Process API may be unavailable; skip silently.
-            }
-          }
-          const validated = validateTabProcessInfo(info);
-          if (validated) processes.push(validated);
-        }
-      }
-      await saveTabProcesses(processes);
-      return { processes, capturedAt: captured };
     }
     if (message.type === "get-workspace-history") {
       const user = await requireBoardUser();

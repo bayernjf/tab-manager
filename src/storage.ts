@@ -5,7 +5,6 @@ import {
   resetOptionsForUser,
   appendWorkspaceVersion,
   validateRecentlyClosedTab,
-  validateTabProcessInfo,
   validateWorkspaceHistory,
   type BoardCustomGroup,
   type BoardLayout,
@@ -17,7 +16,6 @@ import {
   type WorkspaceSnapshot,
   type DeferredTab,
   type RecentlyClosedTab,
-  type TabProcessInfo,
   type WorkspaceHistory,
   MAX_RECENTLY_CLOSED_TABS,
 } from "./shared.js";
@@ -152,30 +150,6 @@ export async function removeRecentlyClosedTab(id: string): Promise<RecentlyClose
 
 export async function clearRecentlyClosedTabs(): Promise<void> {
   await chrome.storage.local.set({ recentlyClosedTabs: [] });
-}
-
-export async function loadTabProcesses(): Promise<TabProcessInfo[]> {
-  const data = await chrome.storage.local.get("tabProcesses");
-  const raw = (data.tabProcesses as unknown[] | undefined) ?? [];
-  if (!Array.isArray(raw)) return [];
-  return raw.map(validateTabProcessInfo).filter((info): info is TabProcessInfo => info !== null);
-}
-
-export async function saveTabProcesses(processes: readonly TabProcessInfo[]): Promise<void> {
-  await chrome.storage.local.set({ tabProcesses: [...processes] });
-}
-
-export async function upsertTabProcess(info: TabProcessInfo): Promise<TabProcessInfo[]> {
-  const existing = await loadTabProcesses();
-  const next = existing.some((item) => item.tabId === info.tabId)
-    ? existing.map((item) => (item.tabId === info.tabId ? info : item))
-    : [...existing, info];
-  await saveTabProcesses(next);
-  return next;
-}
-
-export async function clearTabProcesses(): Promise<void> {
-  await chrome.storage.local.set({ tabProcesses: [] });
 }
 
 export async function loadTabCreatedAtMap(): Promise<Record<number, number>> {
