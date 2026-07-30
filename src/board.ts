@@ -423,10 +423,10 @@ async function openRecentlyClosed(): Promise<void> {
     const items: { tab: ClosedTab; time: number }[] = [];
     for (const session of sessions) {
       if (session.tab) {
-        items.push({ tab: session.tab as ClosedTab, time: session.lastModified ?? 0 });
+        items.push({ tab: session.tab as ClosedTab, time: (session.lastModified ?? 0) * 1000 });
       } else if (session.window?.tabs?.length) {
         for (const tab of session.window.tabs.slice(0, 3)) {
-          items.push({ tab: tab as ClosedTab, time: session.lastModified ?? 0 });
+          items.push({ tab: tab as ClosedTab, time: (session.lastModified ?? 0) * 1000 });
         }
       }
     }
@@ -979,9 +979,9 @@ async function openWorkspaceHistoryDialog(workspaceId: string, workspaceTitle: s
   workspaceHistoryList.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: i18n.t("loading") }));
   workspaceHistoryDialog.showModal();
   try {
-    const result = await send<{ history: WorkspaceHistory; maxVersions: number }>({ type: "get-workspace-history", id: workspaceId });
-    currentHistory = result.history;
-    renderWorkspaceHistory(result.history, result.maxVersions);
+    const result = await send<{ history: WorkspaceHistory | null; maxVersions: number }>({ type: "get-workspace-history", id: workspaceId });
+    currentHistory = result.history ?? { workspaceId, versions: [] };
+    renderWorkspaceHistory(currentHistory, result.maxVersions);
   } catch (error) {
     workspaceHistoryList.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: error instanceof Error ? error.message : String(error) }));
   }
