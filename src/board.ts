@@ -1,5 +1,5 @@
 import { i18n } from "./i18n.js";
-import { boardCardsForDevice, boardTabMatchesQuery, formatDeferredDateTime, getSiteKey, heightUnitsForTabCount, isBoardKey, manualBoardGridRow, moveManualBoardCard, nextDeferredOccurrence, placeBoardCards, isDeferredTabDue, segmentTabs, validateWorkspaceTitle, DEFAULT_SETTINGS, type BoardKey, type BoardLayout, type BoardSegmentCard, type BoardTab, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type Settings, type Theme, type WorkspaceSnapshot, type WorkspaceTab, type WorkspaceHistory, type WorkspaceVersion, type WorkspacePortableData } from "./shared.js";
+import { boardCardsForDevice, boardTabMatchesQuery, formatDeferredDateTime, getSiteKey, heightUnitsForTabCount, isBoardKey, manualBoardGridRow, moveManualBoardCard, nextDeferredOccurrence, placeBoardCards, isDeferredTabDue, matchesTimelineFilter, segmentTabs, validateWorkspaceTitle, DEFAULT_SETTINGS, type BoardKey, type BoardLayout, type BoardSegmentCard, type BoardTab, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type Settings, type Theme, type TimelineFilterRange, type WorkspaceSnapshot, type WorkspaceTab, type WorkspaceHistory, type WorkspaceVersion, type WorkspacePortableData } from "./shared.js";
 
 interface BoardState {
   user: { id: string; email?: string } | null;
@@ -67,9 +67,11 @@ const viewToggleBoard = $<HTMLButtonElement>("#view-toggle-board");
 const viewToggleTimeline = $<HTMLButtonElement>("#view-toggle-timeline");
 const timelineToolbar = $("#timeline-toolbar");
 const timelineSort = $<HTMLSelectElement>("#timeline-sort");
+const timelineFilter = $("#timeline-filter");
 const recentlyClosedBtn = $<HTMLButtonElement>("#recently-closed-btn");
 const recentlyClosedDialog = $<HTMLDialogElement>("#recently-closed-dialog");
 const recentlyClosedList = $("#recently-closed-list");
+const recentlyClosedSearch = $<HTMLInputElement>("#recently-closed-search");
 const closeRecentlyClosed = $<HTMLButtonElement>("#close-recently-closed");
 const cancelRecentlyClosed = $<HTMLButtonElement>("#cancel-recently-closed");
 const batchMoveDialog = $<HTMLDialogElement>("#batch-move-dialog");
@@ -111,6 +113,9 @@ const selectedTabIds = new Set<number>();
 type ViewMode = "board" | "timeline";
 let viewMode: ViewMode = "board";
 const collapsedGroups = new Set<string>();
+let currentWindowId: number | undefined;
+let timelineFilterValue: TimelineFilterRange = "all";
+let recentlyClosedItems: { tab: NonNullable<chrome.sessions.Session["tab"]> & { sessionId?: string }; time: number }[] = [];
 let navFocusIndex = -1;
 let navTabIds: number[] = [];
 const COLLAPSED_STORAGE_KEY = "board_collapsed_groups";
@@ -373,7 +378,12 @@ async function renderTimeline(): Promise<void> {
       // current tabs visible in the timeline and skip the reminder rows.
     }
   }
-  items.sort((a, b) => {
+  const now = Date.now();
+  const filtered = items.filter((item) => {
+    const refDate = sortBy === "due" && item.dueAt ? Date.parse(item.dueAt) : item.createdAt ?? 0;
+    return matchesTimelineFilter(refDate, timelineFilterValue, now);
+  });
+  filtered.sort((a, b) => {
     if (sortBy === "due") {
       const ad = a.dueAt ? Date.parse(a.dueAt) : Number.MAX_SAFE_INTEGER;
       const bd = b.dueAt ? Date.parse(b.dueAt) : Number.MAX_SAFE_INTEGER;
@@ -384,13 +394,13 @@ async function renderTimeline(): Promise<void> {
     return bc - ac;
   });
   const fallback = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
-  if (!items.length) {
+  if (!filtered.length) {
     boardGrid.className = "board-timeline";
     boardGrid.replaceChildren(Object.assign(document.createElement("p"), { className: "empty board-empty", textContent: i18n.t("noMatchingTabs") }));
     return;
   }
   boardGrid.className = "board-timeline";
-  boardGrid.replaceChildren(...items.map((item) => {
+  boardGrid.replaceChildren(...filtered.map((item) => {
     const row = document.createElement("div");
     row.className = "timeline-row";
     const time = document.createElement("span");
@@ -2300,7 +2310,15 @@ saveWorkspaceVersionBtn.addEventListener("click", () => void saveWorkspaceVersio
 viewToggleBoard.addEventListener("click", () => { if (!selectMode) setViewMode("board"); });
 viewToggleTimeline.addEventListener("click", () => { if (!selectMode) setViewMode("timeline"); });
 timelineSort.addEventListener("change", renderTimeline);
+timelineFilter.addEventListener("click", (event) => {
+  const btn = (event.target as HTMLElement).closest(".timeline-filter-btn") as HTMLElement | null;
+  if (!btn) return;
+  timelineFilterValue = (btn.dataset.filter ?? "all") as TimelineFilterRange;
+  timelineFilter.querySelectorAll(".timeline-filter-btn").forEach((el) => el.classList.toggle("active", el === btn));
+  renderTimeline();
+});
 recentlyClosedBtn.addEventListener("click", () => void openRecentlyClosed());
+recentlyClosedSearch.addEventListener("input", () => renderRecentlyClosedList(recentlyClosedSearch.value));
 closeRecentlyClosed.addEventListener("click", () => recentlyClosedDialog.close());
 cancelRecentlyClosed.addEventListener("click", () => recentlyClosedDialog.close());
 document.addEventListener("keydown", (event) => {

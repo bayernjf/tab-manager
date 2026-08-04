@@ -407,6 +407,11 @@ button.scope-nav-scope[aria-pressed="true"] { background: var(--accent); color: 
 .timeline-due { flex: 0 0 auto; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; }
 .timeline-due.due { color: var(--text-due); background: var(--bg-danger); }
 .timeline-due.scheduled { color: var(--text-scheduled); background: var(--bg-deferred); }
+.timeline-filter-sep { width: 1px; height: 20px; background: var(--border-input); flex: 0 0 1px; }
+.timeline-filter { display: inline-flex; gap: 4px; }
+.timeline-filter-btn { padding: 4px 10px; border: 1px solid var(--border-input); border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: 11px; cursor: pointer; transition: all .14s ease; }
+.timeline-filter-btn:hover { border-color: var(--accent); color: var(--accent); }
+.timeline-filter-btn.active { background: var(--accent); color: var(--text-on-accent); border-color: var(--accent); }
 .card-title .group-collapse { margin-right: 2px; transition: transform .14s ease; }
 .group-card.collapsed .group-collapse { transform: rotate(-90deg); }
 .group-card.collapsed .tabs { display: none; }

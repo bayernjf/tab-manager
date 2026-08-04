@@ -46,12 +46,19 @@
         </div>
       </div>
       <div id="timeline-toolbar" class="timeline-toolbar hidden">
-        <label class="timeline-sort-label"><span data-i18n="timelineByCreated">排序方式</span>
+        <label class="timeline-sort-label"><span data-i18n="timelineSortBy">排序</span>
           <select id="timeline-sort">
             <option value="created" data-i18n="timelineByCreated">按创建时间</option>
             <option value="due" data-i18n="timelineByDue">按提醒时间</option>
           </select>
         </label>
+        <span class="timeline-filter-sep"></span>
+        <div id="timeline-filter" class="timeline-filter">
+          <button class="timeline-filter-btn active" data-filter="all" data-i18n="timelineFilterAll">全部</button>
+          <button class="timeline-filter-btn" data-filter="today" data-i18n="timelineFilterToday">今天</button>
+          <button class="timeline-filter-btn" data-filter="3days" data-i18n="timelineFilter3Days">3天内</button>
+          <button class="timeline-filter-btn" data-filter="7days" data-i18n="timelineFilter7Days">1周内</button>
+        </div>
       </div>
       <div class="board-toolbar">
         <div class="toolbar-filters" role="search">
