@@ -1,5 +1,7 @@
 # Local Workspaces Implementation Plan
 
+> **Status:** ✅ 已实现（v0.1.11）
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Save selected board tabs as local named workspaces and restore them into the board window only after a preview and explicit confirmation.

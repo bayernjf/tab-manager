@@ -1,5 +1,7 @@
 # Tab Garden Options Page Implementation Plan
 
+> **Status:** ✅ 已实现（v0.1.11）
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a dedicated options page with synced domain rules, ignored sites, default automatic-group color, privacy controls, and safe local JSON import/export.

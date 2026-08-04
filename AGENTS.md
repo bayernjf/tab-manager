@@ -24,22 +24,26 @@ tab-manager/
 ├── src/
 │   ├── manifest.json          # 扩展权限、后台和 popup 配置
 │   ├── background.ts          # 消息路由、标签分组、设置同步
-│   ├── popup.html             # 登录和标签管理界面
-│   ├── popup.ts               # popup 交互逻辑
-│   ├── popup.css              # popup 样式
+│   ├── board.html / .ts / .css # 标签看板（新标签页）
+│   ├── options.html / .ts / .css # 选项页（设置、分组规则、快捷提醒）
+│   ├── popup.html / .ts / .css # 登录和标签管理界面
 │   ├── shared.ts              # 通用类型、常量和纯函数
 │   ├── storage.ts             # chrome.storage.local 读写
 │   ├── auth.ts                # Supabase Auth REST 客户端
 │   ├── sync.ts                # Supabase user_settings 同步
+│   ├── i18n.ts                # 国际化 helper
+│   ├── _locales/              # 多语言文件（en / zh_CN）
 │   └── supabase-config.ts     # 构建时替换的配置占位符
 ├── scripts/
 │   └── inject-env.mjs         # 将 .env.local 注入 dist 配置
-├── supabase/migrations/
-│   └── 001_create_user_sync_tables.sql
+├── supabase/migrations/       # 数据库迁移（001–011）
 ├── tests/
-│   └── shared.test.js         # Node.js 单元测试
+│   └── shared.test.js         # Node.js 单元测试（127 条）
+├── e2e/                       # Playwright E2E 测试
+├── docs/superpowers/          # 功能计划与设计文档
 ├── .env.example
-├── PULL_REQUEST_WORKFLOW.md # PR、Actions、发布和分支回同步流程
+├── handoff.md                 # 项目交接文档
+├── PULL_REQUEST_WORKFLOW.md   # PR、Actions、发布和分支回同步流程
 ├── package.json
 └── tsconfig.json
 ```
@@ -91,16 +95,17 @@ SUPABASE_ANON_KEY=your-anon-or-publishable-key
 
 ## 运行架构
 
-### Popup 与后台通信
+### 前台与后台通信
 
-Popup 不直接管理认证会话或数据库访问。`popup.ts` 通过 `chrome.runtime.sendMessage` 调用 `background.ts`，后台负责：
+Popup、看板（`board.ts`）和选项页（`options.ts`）均不直接管理认证会话或数据库访问，统一通过 `chrome.runtime.sendMessage` 调用 `background.ts`，后台负责：
 
 - 注册、登录、退出和恢复会话
 - 刷新过期 access token
 - 读取及同步用户设置
 - 查询和修改浏览器标签页/标签组
+- 工作区、稍后提醒、最近关闭等数据的读写
 
-新增消息类型时，应同时更新 `PopupMessage` 联合类型和后台消息处理分支。错误应通过 `{ error: string }` 返回给 popup。
+新增消息类型时，应同时更新 `PopupMessage` 联合类型和后台消息处理分支。错误应通过 `{ error: string }` 返回给前台。
 
 ### Supabase 认证
 

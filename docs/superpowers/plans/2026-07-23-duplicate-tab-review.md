@@ -1,5 +1,7 @@
 # Duplicate Tab Review Implementation Plan
 
+> **Status:** ✅ 已实现（v0.1.11）
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let a signed-in user review exact duplicate browser tabs and explicitly close only the reviewed extras.
