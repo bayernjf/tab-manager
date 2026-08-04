@@ -2045,6 +2045,10 @@ test("prepares persisted options for the authenticated account before reading th
         return Object.fromEntries(requested.flatMap((key) => key in values ? [[key, values[key]]] : []));
       },
       set: async (next) => Object.assign(values, next),
+      remove: async (keys) => {
+        const requested = Array.isArray(keys) ? keys : [keys];
+        for (const key of requested) delete values[key];
+      },
     },
   };
   const { prepareOptionsForUser } = await import("../dist/storage.js");
@@ -2060,4 +2064,130 @@ test("only confirms an import preview for its original signed-in user", () => {
   assert.equal(canConfirmOptionsImport("account-a", "account-a"), true);
   assert.equal(canConfirmOptionsImport("account-a", "account-b"), false);
   assert.equal(canConfirmOptionsImport("account-a", null), false);
+});
+
+test("clearUserData removes per-user keys but preserves device-level keys", async () => {
+  const values = {
+    optionsUserId: "account-a",
+    deferredTabs: [{ id: "d1", title: "Old", url: "https://old.com", deferredAt: "2026-07-30T00:00:00.000Z", dueAt: "2026-07-31T00:00:00.000Z" }],
+    recentlyClosedTabs: [{ id: "r1", title: "Closed", url: "https://closed.com", closedAt: "2026-07-30T00:00:00.000Z" }],
+    workspaceSnapshots: [{ id: "w1", title: "WS", tabs: [], createdAt: "2026-07-30T00:00:00.000Z" }],
+    workspaceHistories: { w1: { workspaceId: "w1", versions: [] } },
+    boardAssignments: { "1:2": { boardKey: "auto:x", windowId: 1, tabId: 2 } },
+    tabCreatedAt: { 1: 1000, 2: 2000 },
+    board_collapsed_groups: ["auto:x"],
+    deviceId: "device-abc",
+    deviceName: "Mac-Chrome",
+  };
+  globalThis.chrome.storage = {
+    local: {
+      get: async (keys) => {
+        const requested = Array.isArray(keys) ? keys : [keys];
+        return Object.fromEntries(requested.flatMap((key) => key in values ? [[key, values[key]]] : []));
+      },
+      set: async (next) => Object.assign(values, next),
+      remove: async (keys) => {
+        const requested = Array.isArray(keys) ? keys : [keys];
+        for (const key of requested) delete values[key];
+      },
+    },
+  };
+  const { clearUserData } = await import("../dist/storage.js");
+
+  await clearUserData();
+
+  // Per-user data must be gone
+  assert.equal(values.deferredTabs, undefined);
+  assert.equal(values.recentlyClosedTabs, undefined);
+  assert.equal(values.workspaceSnapshots, undefined);
+  assert.equal(values.workspaceHistories, undefined);
+  assert.equal(values.boardAssignments, undefined);
+  assert.equal(values.tabCreatedAt, undefined);
+  assert.equal(values.board_collapsed_groups, undefined);
+  // Device-level keys must survive
+  assert.equal(values.deviceId, "device-abc");
+  assert.equal(values.deviceName, "Mac-Chrome");
+});
+
+test("prepareOptionsForUser clears per-user data when switching accounts", async () => {
+  const values = {
+    optionsUserId: "account-a",
+    settings: { autoGroupEnabled: false, minimumTabs: 6, defaultGroupColor: "purple" },
+    groupRules: [],
+    ignoredSites: [],
+    boardCustomGroups: [],
+    boardLayouts: [],
+    deferredTabs: [{ id: "d1", title: "Old", url: "https://old.com", deferredAt: "2026-07-30T00:00:00.000Z", dueAt: "2026-07-31T00:00:00.000Z" }],
+    recentlyClosedTabs: [{ id: "r1", title: "Closed", url: "https://closed.com", closedAt: "2026-07-30T00:00:00.000Z" }],
+    workspaceSnapshots: [],
+    workspaceHistories: {},
+    boardAssignments: {},
+    tabCreatedAt: {},
+    board_collapsed_groups: ["auto:x"],
+  };
+  globalThis.chrome.storage = {
+    local: {
+      get: async (keys) => {
+        const requested = Array.isArray(keys) ? keys : [keys];
+        return Object.fromEntries(requested.flatMap((key) => key in values ? [[key, values[key]]] : []));
+      },
+      set: async (next) => Object.assign(values, next),
+      remove: async (keys) => {
+        const requested = Array.isArray(keys) ? keys : [keys];
+        for (const key of requested) delete values[key];
+      },
+    },
+  };
+  const { prepareOptionsForUser } = await import("../dist/storage.js");
+
+  await prepareOptionsForUser("account-b");
+
+  // Per-user data must be cleared after account switch
+  assert.equal(values.deferredTabs, undefined);
+  assert.equal(values.recentlyClosedTabs, undefined);
+  assert.equal(values.board_collapsed_groups, undefined);
+  // Options must be reset for the new user
+  assert.equal(values.optionsUserId, "account-b");
+});
+
+test("matchesTimelineFilter returns true for 'all' range regardless of date", async () => {
+  const { matchesTimelineFilter } = await import("../dist/shared.js");
+  const now = Date.now();
+  assert.equal(matchesTimelineFilter(now, "all"), true);
+  assert.equal(matchesTimelineFilter(now - 86_400_000 * 30, "all"), true);
+  assert.equal(matchesTimelineFilter(0, "all"), true);
+});
+
+test("matchesTimelineFilter filters by today (less than 1 day ago)", async () => {
+  const { matchesTimelineFilter } = await import("../dist/shared.js");
+  const now = Date.now();
+  assert.equal(matchesTimelineFilter(now, "today"), true);
+  assert.equal(matchesTimelineFilter(now - 3600_000, "today"), true);
+  assert.equal(matchesTimelineFilter(now - 86_400_000, "today"), false);
+  assert.equal(matchesTimelineFilter(now - 86_400_000 * 3, "today"), false);
+});
+
+test("matchesTimelineFilter filters by 3 days", async () => {
+  const { matchesTimelineFilter } = await import("../dist/shared.js");
+  const now = Date.now();
+  assert.equal(matchesTimelineFilter(now, "3days"), true);
+  assert.equal(matchesTimelineFilter(now - 86_400_000 * 2, "3days"), true);
+  assert.equal(matchesTimelineFilter(now - 86_400_000 * 3, "3days"), false);
+  assert.equal(matchesTimelineFilter(now - 86_400_000 * 7, "3days"), false);
+});
+
+test("matchesTimelineFilter filters by 7 days", async () => {
+  const { matchesTimelineFilter } = await import("../dist/shared.js");
+  const now = Date.now();
+  assert.equal(matchesTimelineFilter(now, "7days"), true);
+  assert.equal(matchesTimelineFilter(now - 86_400_000 * 6, "7days"), true);
+  assert.equal(matchesTimelineFilter(now - 86_400_000 * 7, "7days"), false);
+  assert.equal(matchesTimelineFilter(now - 86_400_000 * 30, "7days"), false);
+});
+
+test("matchesTimelineFilter always returns true when refDate is 0", async () => {
+  const { matchesTimelineFilter } = await import("../dist/shared.js");
+  assert.equal(matchesTimelineFilter(0, "today"), true);
+  assert.equal(matchesTimelineFilter(0, "3days"), true);
+  assert.equal(matchesTimelineFilter(0, "7days"), true);
 });
