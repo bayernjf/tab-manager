@@ -170,7 +170,8 @@ async function loadWorkspaces(): Promise<void> { await refreshWorkspacesCache();
 async function loadCollapsedGroups(): Promise<void> {
   try {
     const data = await chrome.storage.local.get(COLLAPSED_STORAGE_KEY);
-    const stored = data[COLLAPSED_STORAGE_KEY] as string[] | undefined;
+    const allData = data[COLLAPSED_STORAGE_KEY] as Record<string, string[]> | undefined;
+    const stored = currentWindowId != null ? allData?.[String(currentWindowId)] : undefined;
     if (Array.isArray(stored)) {
       collapsedGroups.clear();
       stored.forEach((key) => collapsedGroups.add(key));
@@ -180,7 +181,10 @@ async function loadCollapsedGroups(): Promise<void> {
 
 async function saveCollapsedGroups(): Promise<void> {
   try {
-    await chrome.storage.local.set({ [COLLAPSED_STORAGE_KEY]: [...collapsedGroups] });
+    const data = await chrome.storage.local.get(COLLAPSED_STORAGE_KEY);
+    const allData = (data[COLLAPSED_STORAGE_KEY] as Record<string, string[]> | undefined) ?? {};
+    if (currentWindowId != null) allData[String(currentWindowId)] = [...collapsedGroups];
+    await chrome.storage.local.set({ [COLLAPSED_STORAGE_KEY]: allData });
   } catch {}
 }
 
@@ -2065,6 +2069,7 @@ function applyTheme(theme: Theme): void {
 
 async function load(): Promise<void> {
   const boardTab = await chrome.tabs.getCurrent();
+  currentWindowId = boardTab?.windowId;
   const state = await send<BoardState>({ type: "get-board-state", windowId: boardTab?.windowId });
   currentState = state;
   applyTheme(state.settings?.theme ?? "light");
