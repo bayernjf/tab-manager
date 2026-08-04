@@ -327,5 +327,13 @@
   "importWorkspace": { "message": "Import", "description": "Import workspace button" },
   "importPreviewSummary": { "message": "Importing $workspaceCount$ workspace(s) with $totalTabs$ tab(s)", "description": "Import preview summary", "placeholders": { "workspaceCount": { "content": "$1", "example": "3" }, "totalTabs": { "content": "$2", "example": "12" } } },
   "importPreviewHint": { "message": "The following workspaces will be imported. Conflicting names will be renamed automatically.", "description": "Import preview hint" },
-  "selectWorkspaceFile": { "message": "Select workspace JSON file", "description": "Select workspace file" }
+  "selectWorkspaceFile": { "message": "Select workspace JSON file", "description": "Select workspace file" },
+  "timelineFilterAll": { "message": "All", "description": "Timeline filter - all" },
+  "timelineFilterToday": { "message": "Today", "description": "Timeline filter - today" },
+  "timelineFilter3Days": { "message": "3 Days", "description": "Timeline filter - 3 days" },
+  "timelineFilter7Days": { "message": "1 Week", "description": "Timeline filter - 1 week" },
+  "timelineSortBy": { "message": "Sort", "description": "Timeline sort label" },
+  "recentlyClosedSearch": { "message": "Search title or URL\u2026", "description": "Recently closed search placeholder" },
+  "tabAlreadyOpen": { "message": "Open", "description": "Tab already open badge" },
+  "willOpenTabsSkipAlready": { "message": "Opening $new$ tabs, $already$ already open", "description": "Restore workspace skip already open", "placeholders": { "new": { "content": "$1", "example": "3" }, "already": { "content": "$2", "example": "2" } } }
 }
