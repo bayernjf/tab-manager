@@ -423,6 +423,9 @@ button.scope-nav-scope[aria-pressed="true"] { background: var(--accent); color: 
 .recently-closed-title { min-width: 0; flex: 1; overflow: hidden; color: var(--text-primary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .recently-closed-restore { padding: 4px 10px; border: 1px solid var(--border-action); border-radius: 6px; background: var(--accent); color: var(--text-on-accent); font-size: 11px; font-weight: 650; cursor: pointer; }
 .recently-closed-restore:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.recently-closed-search-wrap { padding: 0 4px 8px; }
+#recently-closed-search { width: 100%; height: 32px; padding: 0 10px; border: 1px solid var(--border-input); border-radius: 7px; background: var(--bg-input); color: var(--text-input); font-size: 12px; box-sizing: border-box; }
+#recently-closed-search:focus { outline: none; border-color: var(--accent); }
 .batch-move-option { display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 12px; margin-bottom: 6px; border: 1px solid var(--border-card); border-radius: 8px; background: var(--bg-card); color: var(--text-primary); font-size: 13px; text-align: left; cursor: pointer; transition: all .14s ease; }
 .batch-move-option:hover { border-color: var(--border-hover); background: var(--bg-hover); }
 .batch-move-swatch { width: 12px; height: 12px; border-radius: 3px; flex: 0 0 12px; }
