@@ -80,6 +80,7 @@ import {
   saveWorkspaceHistory,
   saveWorkspaceVersion,
   deleteWorkspaceHistory,
+  clearUserData,
 } from "./storage.js";
 import { getCurrentUser, getStoredUser, signIn, signOut, signUp } from "./auth.js";
 import { pushSettings, replaceBoardSyncData, replaceOptionalSyncData, restoreBoardSyncData, restoreOptionalSyncData, syncSettings, fetchWorkspaces, upsertWorkspace, deleteWorkspaceRow, renameDeviceWorkspaces } from "./sync.js";
@@ -776,6 +777,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       return result;
     }
     if (message.type === "auth-sign-out") {
+      await clearUserData();
       await signOut();
       pendingOptionsImport = null;
       return { ok: true };
