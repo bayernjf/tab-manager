@@ -426,6 +426,8 @@ button.scope-nav-scope[aria-pressed="true"] { background: var(--accent); color: 
 .recently-closed-search-wrap { padding: 0 4px 8px; }
 #recently-closed-search { width: 100%; height: 32px; padding: 0 10px; border: 1px solid var(--border-input); border-radius: 7px; background: var(--bg-input); color: var(--text-input); font-size: 12px; box-sizing: border-box; }
 #recently-closed-search:focus { outline: none; border-color: var(--accent); }
+.workspace-restore-tab.already-open { opacity: .5; }
+.workspace-restore-tab.already-open .tab-title::after { content: " \2714 \5DF2\6253\5F00"; font-size: 10px; color: var(--text-muted); }
 .batch-move-option { display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 12px; margin-bottom: 6px; border: 1px solid var(--border-card); border-radius: 8px; background: var(--bg-card); color: var(--text-primary); font-size: 13px; text-align: left; cursor: pointer; transition: all .14s ease; }
 .batch-move-option:hover { border-color: var(--border-hover); background: var(--bg-hover); }
 .batch-move-swatch { width: 12px; height: 12px; border-radius: 3px; flex: 0 0 12px; }

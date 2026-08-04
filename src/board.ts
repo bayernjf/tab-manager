@@ -783,12 +783,22 @@ async function saveCurrentWorkspace(): Promise<void> {
   await loadWorkspaces();
   showStatus(i18n.t("workspaceSaved"));
 }
-function showWorkspaceRestorePreview(tabs: readonly WorkspaceTab[], unavailableCount = 0): void {
-  workspaceRestoreSummary.textContent = unavailableCount ? i18n.t("willOpenTabsSkip", [String(tabs.length), String(unavailableCount)]) : i18n.t("willOpenTabs", [String(tabs.length)]);
+function showWorkspaceRestorePreview(tabs: readonly WorkspaceTab[], unavailableCount = 0, alreadyOpenUrls?: Set<string>): void {
+  const alreadyOpen = alreadyOpenUrls ? tabs.filter((tab) => alreadyOpenUrls.has(tab.url)) : [];
+  const newCount = tabs.length - alreadyOpen.length;
+  if (alreadyOpen.length > 0 && newCount > 0) {
+    workspaceRestoreSummary.textContent = i18n.t("willOpenTabsSkipAlready", [String(newCount), String(alreadyOpen.length)]);
+  } else if (unavailableCount) {
+    workspaceRestoreSummary.textContent = i18n.t("willOpenTabsSkip", [String(tabs.length), String(unavailableCount)]);
+  } else {
+    workspaceRestoreSummary.textContent = i18n.t("willOpenTabs", [String(tabs.length)]);
+  }
   const fallback = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
   workspaceRestoreList.replaceChildren(...tabs.map((tab) => {
+    const isOpen = alreadyOpenUrls?.has(tab.url) ?? false;
     const row = document.createElement("div");
     row.className = "tab-row workspace-restore-tab";
+    if (isOpen) row.classList.add("already-open");
     row.title = tab.url;
     const content = document.createElement("div");
     content.className = "tab-open";
@@ -807,20 +817,35 @@ function showWorkspaceRestorePreview(tabs: readonly WorkspaceTab[], unavailableC
   }));
   workspaceRestoreDialog.showModal();
 }
-async function previewWorkspaceRestore(id: string): Promise<void> { const result = await send<{ preview: { tabs: WorkspaceTab[]; unavailableCount: number } }>({ type: "get-workspace-restore-preview", id }); restoreWorkspaceId = id; restoreWorkspaceTabs = null; showWorkspaceRestorePreview(result.preview.tabs, result.preview.unavailableCount); }
-function previewWorkspaceCardRestore(card: BoardSegmentCard): void {
+async function getOpenTabUrls(): Promise<Set<string>> {
+  try {
+    const tabs = await chrome.tabs.query({});
+    return new Set(tabs.map((tab) => tab.url).filter((url): url is string => typeof url === "string"));
+  } catch { return new Set(); }
+}
+async function previewWorkspaceRestore(id: string): Promise<void> {
+  const [result, openUrls] = await Promise.all([
+    send<{ preview: { tabs: WorkspaceTab[]; unavailableCount: number } }>({ type: "get-workspace-restore-preview", id }),
+    getOpenTabUrls(),
+  ]);
+  restoreWorkspaceId = id; restoreWorkspaceTabs = null;
+  showWorkspaceRestorePreview(result.preview.tabs, result.preview.unavailableCount, openUrls);
+}
+async function previewWorkspaceCardRestore(card: BoardSegmentCard): Promise<void> {
   const tabs = card.tabs.flatMap((tab) => tab.url ? [{ title: tab.title, url: tab.url }] : []);
   if (!tabs.length) { showStatus(i18n.t("groupHasNoRestorableTabs"), true); return; }
   restoreWorkspaceId = null;
   restoreWorkspaceTabs = tabs;
-  showWorkspaceRestorePreview(tabs);
+  const openUrls = await getOpenTabUrls();
+  showWorkspaceRestorePreview(tabs, 0, openUrls);
 }
 async function restoreWorkspace(): Promise<void> {
   const tab = await chrome.tabs.getCurrent();
+  const openUrls = await getOpenTabUrls();
   const result = restoreWorkspaceId
-    ? await send<{ created: number }>({ type: "restore-workspace", id: restoreWorkspaceId, windowId: tab?.windowId, confirmed: true })
+    ? await send<{ created: number }>({ type: "restore-workspace", id: restoreWorkspaceId, windowId: tab?.windowId, confirmed: true, skipUrls: [...openUrls] })
     : restoreWorkspaceTabs
-      ? await send<{ created: number }>({ type: "restore-workspace-tabs", tabs: restoreWorkspaceTabs, windowId: tab?.windowId, confirmed: true })
+      ? await send<{ created: number }>({ type: "restore-workspace-tabs", tabs: restoreWorkspaceTabs, windowId: tab?.windowId, confirmed: true, skipUrls: [...openUrls] })
       : null;
   if (!result) return;
   workspaceRestoreDialog.close();
@@ -989,12 +1014,14 @@ async function confirmRestoreVersion(version: WorkspaceVersion): Promise<void> {
     : `确认恢复版本 #${version.version}？将打开 ${tabCount} 个标签。`;
   if (!window.confirm(message)) return;
   try {
+    const openUrls = await getOpenTabUrls();
     const result = await send<{ ok: boolean; created: number }>({
       type: "restore-workspace-history-version",
       id: historyWorkspaceId,
       version: version.version,
       windowId,
       confirmed: true,
+      skipUrls: [...openUrls],
     });
     workspaceHistoryDialog.close();
     showStatus(i18n.t("openedTabs", [String(result.created)]));
@@ -1781,7 +1808,7 @@ function renderWorkspaceCard(card: BoardSegmentCard, placement: { slot: number; 
   const actions = document.createElement("div");
   actions.className = "deferred-actions";
   const restore = makeButton(i18n.t("restore"), "deferred-action deferred-open", `${i18n.t("restore")} ${card.title} ${i18n.t("tabs")}`);
-  restore.addEventListener("click", () => previewWorkspaceCardRestore(card));
+  restore.addEventListener("click", () => void previewWorkspaceCardRestore(card));
   actions.append(restore);
   heading.append(actions);
   const tabs = document.createElement("div");
