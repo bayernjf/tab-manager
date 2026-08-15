@@ -407,6 +407,11 @@ button.scope-nav-scope[aria-pressed="true"] { background: var(--accent); color: 
 .timeline-due { flex: 0 0 auto; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; }
 .timeline-due.due { color: var(--text-due); background: var(--bg-danger); }
 .timeline-due.scheduled { color: var(--text-scheduled); background: var(--bg-deferred); }
+.timeline-filter-sep { width: 1px; height: 20px; background: var(--border-input); flex: 0 0 1px; }
+.timeline-filter { display: inline-flex; gap: 4px; }
+.timeline-filter-btn { padding: 4px 10px; border: 1px solid var(--border-input); border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: 11px; cursor: pointer; transition: all .14s ease; }
+.timeline-filter-btn:hover { border-color: var(--accent); color: var(--accent); }
+.timeline-filter-btn.active { background: var(--accent); color: var(--text-on-accent); border-color: var(--accent); }
 .card-title .group-collapse { margin-right: 2px; transition: transform .14s ease; }
 .group-card.collapsed .group-collapse { transform: rotate(-90deg); }
 .group-card.collapsed .tabs { display: none; }
@@ -418,6 +423,11 @@ button.scope-nav-scope[aria-pressed="true"] { background: var(--accent); color: 
 .recently-closed-title { min-width: 0; flex: 1; overflow: hidden; color: var(--text-primary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .recently-closed-restore { padding: 4px 10px; border: 1px solid var(--border-action); border-radius: 6px; background: var(--accent); color: var(--text-on-accent); font-size: 11px; font-weight: 650; cursor: pointer; }
 .recently-closed-restore:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.recently-closed-search-wrap { padding: 0 4px 8px; }
+#recently-closed-search { width: 100%; height: 32px; padding: 0 10px; border: 1px solid var(--border-input); border-radius: 7px; background: var(--bg-input); color: var(--text-input); font-size: 12px; box-sizing: border-box; }
+#recently-closed-search:focus { outline: none; border-color: var(--accent); }
+.workspace-restore-tab.already-open { opacity: .5; }
+.workspace-restore-tab.already-open .tab-title::after { content: " \2714 \5DF2\6253\5F00"; font-size: 10px; color: var(--text-muted); }
 .batch-move-option { display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 12px; margin-bottom: 6px; border: 1px solid var(--border-card); border-radius: 8px; background: var(--bg-card); color: var(--text-primary); font-size: 13px; text-align: left; cursor: pointer; transition: all .14s ease; }
 .batch-move-option:hover { border-color: var(--border-hover); background: var(--bg-hover); }
 .batch-move-swatch { width: 12px; height: 12px; border-radius: 3px; flex: 0 0 12px; }

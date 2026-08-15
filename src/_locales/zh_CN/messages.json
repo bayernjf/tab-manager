@@ -327,5 +327,13 @@
   "importWorkspace": { "message": "导入工作区", "description": "导入工作区按钮" },
   "importPreviewSummary": { "message": "即将导入 $workspaceCount$ 个工作区，共 $totalTabs$ 个标签", "description": "导入预览摘要", "placeholders": { "workspaceCount": { "content": "$1", "example": "3" }, "totalTabs": { "content": "$2", "example": "12" } } },
   "importPreviewHint": { "message": "以下工作区将被导入。名称冲突时会自动重命名。", "description": "导入预览提示" },
-  "selectWorkspaceFile": { "message": "选择工作区 JSON 文件", "description": "选择工作区文件" }
+  "selectWorkspaceFile": { "message": "选择工作区 JSON 文件", "description": "选择工作区文件" },
+  "timelineFilterAll": { "message": "全部", "description": "时间线筛选-全部" },
+  "timelineFilterToday": { "message": "今天", "description": "时间线筛选-今天" },
+  "timelineFilter3Days": { "message": "3天内", "description": "时间线筛选-3天内" },
+  "timelineFilter7Days": { "message": "1周内", "description": "时间线筛选-1周内" },
+  "timelineSortBy": { "message": "排序", "description": "时间线排序标签" },
+  "recentlyClosedSearch": { "message": "搜索标题或网址…", "description": "最近关闭搜索框占位符" },
+  "tabAlreadyOpen": { "message": "已打开", "description": "标签已打开标记" },
+  "willOpenTabsSkipAlready": { "message": "将打开 $new$ 个标签，$already$ 个已打开", "description": "恢复工作区时跳过已打开标签", "placeholders": { "new": { "content": "$1", "example": "3" }, "already": { "content": "$2", "example": "2" } } }
 }

@@ -1,5 +1,7 @@
 # New Tab Board Implementation Plan
 
+> **Status:** ✅ 已实现（v0.1.11）
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a synchronized user preference that opens Tab Garden's board for browser-created new tabs only when enabled.

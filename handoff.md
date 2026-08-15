@@ -1,8 +1,9 @@
 # Tab Garden 项目交接文档
 
-> 最后更新时间：2026-07-30  
-> 当前分支：`feature/20260719`  
-> 验证状态：typecheck ✅ / 120 unit tests ✅ / 10 E2E tests ✅ (4 skipped) / diff-check ✅ / 构建通过 ✅
+> 最后更新时间：2026-07-31
+> 当前分支：`feature/20260719`（已合并至 `dev` PR #26 → `main` PR #27）
+> 最新版本：`v0.1.11`
+> 验证状态：typecheck ✅ / 127 unit tests ✅ / 10 E2E tests ✅ (4 skipped) / diff-check ✅ / 构建通过 ✅
 
 ---
 
@@ -53,29 +54,26 @@ npm run e2e          # Playwright E2E 测试（默认 headed 模式，需先 bui
 
 ---
 
-## 3. 本轮提交（7 个原子 Commit，未 Push）
+## 3. 本轮提交（已 Push 并合并）
 
-按职责拆分，便于回溯与回滚：
+feature/20260719 分支共 30+ 个 commit，已全部 push 并通过 PR 合并：
 
-```
-06c47bd  chore(build): add notifications/alarms/sessions/processes permissions and commands
-3fae067  docs(i18n): add keys for batch/recent/timeline/collapse/memory/history/commands
-9589abb  feat(shared): add workspace history/recent tab/process types and validators
-f7a65c3  feat(storage): add recently closed/memory process/workspace history helpers
-fe491da  feat(background): due notifications, commands, recent capture and new RPCs
-ba7e1a1  feat(board): add batch bar/recent dialog/timeline/collapse/memory dialog structure and styles
-be424ea  feat(board): batch select, recent, timeline, collapse, keyboard, memory interactions
-```
+- **PR #26**：`feature/20260719` → `dev`（合并 commit `b8c8a49`）
+- **PR #27**：`dev` → `main`（合并 commit `9c439cb`，tag `v0.1.11`）
 
-| Commit | 文件 | 说明 |
+主要 commit 分类：
+
+| 类别 | 代表 Commit | 说明 |
 |---|---|---|
-| 06c47bd | `src/manifest.json` | 新增 `notifications / alarms / sessions` 权限；注册 Alt+B / Alt+D / Alt+S commands（`processes` 权限已移除，MV3 不可用） |
-| 3fae067 | `src/_locales/{zh_CN,en}/messages.json` | 新增 ~50 个翻译键，覆盖批量操作 / 最近关闭 / 时间线 / 折叠 / 内存 / 历史版本 / 工作区导入导出 / 命令描述 |
-| 9589abb | `src/shared.ts` | 新增 6 个领域类型 + 12+ 纯验证转换函数；常量 `MAX_RECENTLY_CLOSED_TABS=50` / `MAX_WORKSPACE_HISTORY_VERSIONS=10` |
-| f7a65c3 | `src/storage.ts` | 最近关闭 / 进程缓存 / 工作区历史 三组存储辅助函数 |
-| fe491da | `src/background.ts` | alarms 定时检查到期 + 系统通知；commands 快捷键；tabs.onRemoved 自动捕获最近关闭；~15 个新 PopupMessage RPC |
-| ba7e1a1 | `src/board.html` / `src/board.css` | 批量操作栏 + 批量移动 / 最近关闭 / 内存弹窗结构；时间线工具栏 + 折叠 / 选中 / 焦点等样式 |
-| be424ea | `src/board.ts` | 批量选择、最近关闭会话恢复、看板/时间线切换、分组折叠持久化、j/k/d/m 键盘导航、进程内存排序等全部交互逻辑 |
+| 权限与构建 | `06c47bd`, `be501a8`, `dde0fb8`, `37a9662` | 新增 permissions、Playwright 依赖、Mac 快捷键修正 |
+| 国际化 | `3fae067`, `9ce2bfe`, `8bde78c`, `c8b1d11`, `ca76906` | 批量操作 / 快捷键 / 导入导出 / 时间线等 ~50+ 翻译键 |
+| 共享类型 | `9589abb`, `dd90ef5` | 6 个领域类型 + 12+ 纯验证函数 + 快捷键格式化 |
+| 存储层 | `f7a65c3`, `cd93495` | 最近关闭 / 工作区历史 / tab 创建时间存储 |
+| 后台 RPC | `fe491da`, `25af0a7`, `738e061`, `c80e686` | 通知 / 快捷键 / 批量操作 / 导入合并 / 到期 alarms |
+| 看板 UI | `ba7e1a1`, `be424ea`, `4543601`, `b186edc` | 批量选择 / 时间线 / 折叠 / 工作区导入导出 / 版本历史 |
+| 选项页 | `dd90ef5`, `1226dc6` | 快捷键展示卡片 / 表单重构 |
+| E2E 测试 | `ebb003a` | Playwright 框架 + 看板 / 选项页测试套件 |
+| 审计修复 | `e550a95`, `5d46e77`, `c3a2004`, `9366f0b`, `3885c78` | 键盘循环 / 标题截断 / 空值处理 / 移除不可用功能 / 云端失败保护 |
 
 ---
 
@@ -216,12 +214,13 @@ npx playwright show-report               # 查看HTML报告
 | 4 | 「保存偏好设置」按钮显示原始 key `savePreferences` | 选项页按钮文案异常 | 中英文 locale JSON 新增 `"savePreferences"` 键 |
 | 5 | 工作区标题校验：>80 字符直接拒绝 | 用户常有超 80 字符标题场景 | 改为 160 字符自动截断（`slice(0, 160)`） |
 | 6 | 5 个 workspace 写操作云端失败导致本地数据丢失 | `upsertWorkspace` 无 `.catch()`，云端异常时后续 `saveWorkspaceSnapshots` 不执行 | 补齐 `.catch(() => {})`，与命令快捷键路径行为一致 |
+| 7 | 账号切换时本地用户数据未清理 | 退出/切换账号后 `deferredTabs` / `recentlyClosedTabs` / `workspaceSnapshots` / `workspaceHistories` / `boardAssignments` / `tabCreatedAt` / `board_collapsed_groups` 残留，新用户可见前用户数据 | `storage.ts` 新增 `clearUserData()` 清理 7 个用户级存储键；`prepareOptionsForUser()` 账号变更时调用；`auth-sign-out` 退出时调用；保留设备级 `deviceId` / `deviceName` |
 
 ### 6.2 权限与安全审计（需手动验证）
 
 | 项目 | 状态 | 说明 |
 |---|---|---|
-| 账号切换数据隔离 | ⚠️ 部分实现 | 设置/规则/忽略列表正确重置；`deferredTabs` / `recentlyClosedTabs` / `workspaceHistories` 跨账号存留 |
+| 账号切换数据隔离 | ✅ 已修复 | 6.1 #7：`clearUserData()` 清理 7 个用户级存储键，账号切换和退出登录时均调用 |
 | 离线/Supabase 故障保护 | ✅ 已修复 | 6.1 中 #6 已补齐 catch；`loadAllWorkspaces` 云端失败降级本地 |
 | RLS 数据隔离 | ✅ | 所有表基于 `auth.uid() = user_id`，本轮无数据库变更 |
 | service_role key 不进构建 | ✅ | `inject-env.mjs` 仅注入 `SUPABASE_URL` + `SUPABASE_ANON_KEY` |
@@ -229,6 +228,18 @@ npx playwright show-report               # 查看HTML报告
 ### 6.3 影响文件
 
 本轮修改涉及 `background.ts` / `board.ts` / `board.css` / `board.html` / `shared.ts` / `storage.ts` / `_locales/*/messages.json` / `tests/shared.test.js` / `handoff.md`。
+
+### 6.4 本轮新增功能（2026-07-31）
+
+| 功能 | 涉及文件 | 说明 |
+|---|---|---|
+| 工作区恢复智能对比 | `background.ts` / `board.ts` / `board.css` / `shared.ts` / `_locales` | 恢复预览检测已打开标签，显示「✔ 已打开」标记，确认时自动跳过重复 URL |
+| 时间线过滤按钮 | `board.ts` / `board.html` / `board.css` / `shared.ts` / `_locales` | 时间线工具栏新增「全部 / 今天 / 3天内 / 1周内」快捷过滤按钮 |
+| 最近关闭全文搜索 | `board.ts` / `board.html` / `board.css` / `_locales` | 最近关闭弹窗新增搜索框，支持按 title/url 实时过滤 |
+| 折叠状态按窗口记忆 | `board.ts` | `board_collapsed_groups` 存储格式从 `string[]` 改为 `Record<windowId, string[]>` |
+| 账号切换数据清理 | `background.ts` / `storage.ts` / `tests/shared.test.js` | `clearUserData()` 清理 7 个用户级存储键，账号切换和退出登录时调用 |
+
+新增 5 条单元测试（`matchesTimelineFilter` 纯函数），总计 127 条测试全部通过。
 
 ---
 
@@ -239,14 +250,15 @@ npx playwright show-report               # 查看HTML报告
 - **通知无声音配置**：系统通知默认无 sound，Chrome MV3 限制较多；如需声音建议后续走自定义按钮 + HTML5 audio（在 popup/看板中实现）。
 - **工作区 10 版上限写死**：如需调整，改 `shared.ts` 的 `MAX_WORKSPACE_HISTORY_VERSIONS` 常量即可，无需动业务代码。
 - **工作区标题 160 字符截断**：超长标题自动截断至 160 字符（`validateWorkspaceTitle`）。
-- **最近关闭无全文搜索**：列表仅按关闭时间倒序，后续可加 title/url 过滤。
+- **最近关闭无全文搜索**：✅ 已实现。列表支持按 title/url 实时过滤。
+- **工作区恢复未对比已打开标签**：✅ 已实现。恢复预览显示「✔ 已打开」标记，确认时自动跳过。
 
 ### 7.2 后续建议优先级
 
-- **P1**：工作区恢复时智能对比当前标签，提示「该标签已打开，是否跳转到现有 tab」，避免重复打开翻倍。
+- **P1**：~~工作区恢复时智能对比当前标签~~ ✅ 已实现。预览显示已打开标签标记，确认时自动跳过重复 URL。
 - **P2**：快捷键在 `chrome://` 页、PDF 预览等特殊页面有时不触发，manifest 已声明但需按 Chrome 版本做文档说明。
-- **P2**：折叠状态按窗口维度记忆（现在按 boardKey 全局），多窗口看板体验更好。
-- **P3**：时间线视图增加「已过期 / 3 天内 / 1 周内」过滤快捷按钮。
+- **P2**：~~折叠状态按窗口维度记忆~~ ✅ 已实现。`board_collapsed_groups` 存储格式改为 `Record<windowId, boardKey[]>`。
+- **P3**：~~时间线视图增加「已过期 / 3 天内 / 1 周内」过滤快捷按钮~~ ✅ 已实现。时间线工具栏新增「全部 / 今天 / 3天内 / 1周内」过滤按钮。
 
 ---
 
@@ -272,10 +284,13 @@ SUPABASE_ANON_KEY=your-anon-or-publishable-key
 
 ---
 
-## 9. Git 分支与 Push 提醒
+## 9. Git 分支与发布状态
 
-- 当前分支：`feature/20260719`，7 个功能 commit 在本地，**未 push**。
-- E2E 测试框架相关文件（`playwright.config.js` / `e2e/` / `package.json` / `.gitignore`）尚未提交，等待用户确认后按原子规则拆分 commit。
+- **所有代码已合并发布**：
+  - `feature/20260719` → PR #26 → `dev`（`b8c8a49`，tag `dev-preview`）
+  - `dev` → PR #27 → `main`（`9c439cb`，tag `v0.1.11`）
+- 当前分支 `feature/20260719` 工作区干净，与远端同步。
+- 后续新功能应基于最新 `dev` 创建 `feature/*` 分支。
 - 按 `PULL_REQUEST_WORKFLOW.md`：
   - push 前先 `git pull --rebase` 检查冲突；
   - 合入 `dev` 推荐走 PR + Actions 自动校验；
