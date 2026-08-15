@@ -80,6 +80,7 @@ import {
   saveWorkspaceHistory,
   saveWorkspaceVersion,
   deleteWorkspaceHistory,
+  clearUserData,
 } from "./storage.js";
 import { getCurrentUser, getStoredUser, signIn, signOut, signUp } from "./auth.js";
 import { pushSettings, replaceBoardSyncData, replaceOptionalSyncData, restoreBoardSyncData, restoreOptionalSyncData, syncSettings, fetchWorkspaces, upsertWorkspace, deleteWorkspaceRow, renameDeviceWorkspaces } from "./sync.js";
@@ -135,8 +136,8 @@ type PopupMessage =
   | { type: "get-workspaces" }
   | { type: "save-workspace"; title: unknown; tabs: unknown }
   | { type: "get-workspace-restore-preview"; id: unknown }
-  | { type: "restore-workspace"; id: unknown; windowId: unknown; confirmed?: boolean }
-  | { type: "restore-workspace-tabs"; tabs: unknown; windowId: unknown; confirmed?: boolean }
+  | { type: "restore-workspace"; id: unknown; windowId: unknown; confirmed?: boolean; skipUrls?: string[] }
+  | { type: "restore-workspace-tabs"; tabs: unknown; windowId: unknown; confirmed?: boolean; skipUrls?: string[] }
   | { type: "delete-workspace"; id: unknown }
   | { type: "set-device-name"; name: unknown }
   | { type: "add-tab-to-workspace"; id: unknown; tab: unknown }
@@ -163,7 +164,7 @@ type PopupMessage =
   | { type: "clear-recently-closed" }
   | { type: "get-workspace-history"; id: unknown }
   | { type: "save-workspace-history-version"; id: unknown; note?: unknown }
-  | { type: "restore-workspace-history-version"; id: unknown; version: unknown; windowId: unknown; confirmed?: boolean }
+  | { type: "restore-workspace-history-version"; id: unknown; version: unknown; windowId: unknown; confirmed?: boolean; skipUrls?: string[] }
   | { type: "export-workspaces-json" }
   | { type: "import-workspaces-json"; data?: unknown; confirmed?: boolean; cancelled?: boolean }
   | { type: "batch-close-tabs"; tabIds: unknown[] }
@@ -776,6 +777,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       return result;
     }
     if (message.type === "auth-sign-out") {
+      await clearUserData();
       await signOut();
       pendingOptionsImport = null;
       return { ok: true };
@@ -859,8 +861,10 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const window = await chrome.windows.get(message.windowId);
       if (!workspace || window.type !== "normal") throw new Error(i18n.t("workspaceOrWindowNotFound"));
       const preview = workspaceRestorePreview(workspace);
-      for (const tab of preview.tabs) await chrome.tabs.create({ windowId: message.windowId, url: tab.url, active: false });
-      return { ok: true, created: preview.tabs.length, unavailableCount: preview.unavailableCount };
+      const skipSet = new Set(Array.isArray(message.skipUrls) ? message.skipUrls : []);
+      const toCreate = preview.tabs.filter((tab) => !skipSet.has(tab.url));
+      for (const tab of toCreate) await chrome.tabs.create({ windowId: message.windowId, url: tab.url, active: false });
+      return { ok: true, created: toCreate.length, unavailableCount: preview.unavailableCount };
     }
     if (message.type === "restore-workspace-tabs") {
       await requireBoardUser();
@@ -875,8 +879,10 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
         throw new Error(i18n.t("tabValidationError", [String(firstInvalid + 1), workspaceTabValidationMessage(validation.status, (k) => i18n.t(k))]));
       }
       const tabs = validations.flatMap((validation) => validation.status === "valid" ? [validation.tab] : []);
-      for (const tab of tabs) await chrome.tabs.create({ windowId: typeof message.windowId === "number" ? message.windowId : undefined, url: tab.url, active: false });
-      return { ok: true, created: tabs.length, unavailableCount: 0 };
+      const skipSet = new Set(Array.isArray(message.skipUrls) ? message.skipUrls : []);
+      const toCreate = tabs.filter((tab) => !skipSet.has(tab.url));
+      for (const tab of toCreate) await chrome.tabs.create({ windowId: typeof message.windowId === "number" ? message.windowId : undefined, url: tab.url, active: false });
+      return { ok: true, created: toCreate.length, unavailableCount: 0 };
     }
     if (message.type === "delete-workspace") {
       const user = await requireBoardUser();
@@ -1393,8 +1399,10 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const window = await chrome.windows.get(message.windowId);
       if (!version || window.type !== "normal") throw new Error("历史版本或窗口不存在");
       const preview = workspaceRestorePreview(version.snapshot);
-      for (const tab of preview.tabs) await chrome.tabs.create({ windowId: message.windowId, url: tab.url, active: false });
-      return { ok: true, created: preview.tabs.length, unavailableCount: preview.unavailableCount };
+      const skipSet = new Set(Array.isArray(message.skipUrls) ? message.skipUrls : []);
+      const toCreate = preview.tabs.filter((tab) => !skipSet.has(tab.url));
+      for (const tab of toCreate) await chrome.tabs.create({ windowId: message.windowId, url: tab.url, active: false });
+      return { ok: true, created: toCreate.length, unavailableCount: preview.unavailableCount };
     }
     if (message.type === "export-workspaces-json") {
       const user = await requireBoardUser();

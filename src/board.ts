@@ -1,5 +1,5 @@
 import { i18n } from "./i18n.js";
-import { boardCardsForDevice, boardTabMatchesQuery, formatDeferredDateTime, getSiteKey, heightUnitsForTabCount, isBoardKey, manualBoardGridRow, moveManualBoardCard, nextDeferredOccurrence, placeBoardCards, isDeferredTabDue, segmentTabs, validateWorkspaceTitle, DEFAULT_SETTINGS, type BoardKey, type BoardLayout, type BoardSegmentCard, type BoardTab, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type Settings, type Theme, type WorkspaceSnapshot, type WorkspaceTab, type WorkspaceHistory, type WorkspaceVersion, type WorkspacePortableData } from "./shared.js";
+import { boardCardsForDevice, boardTabMatchesQuery, formatDeferredDateTime, getSiteKey, heightUnitsForTabCount, isBoardKey, manualBoardGridRow, moveManualBoardCard, nextDeferredOccurrence, placeBoardCards, isDeferredTabDue, matchesTimelineFilter, segmentTabs, validateWorkspaceTitle, DEFAULT_SETTINGS, type BoardKey, type BoardLayout, type BoardSegmentCard, type BoardTab, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type Settings, type Theme, type TimelineFilterRange, type WorkspaceSnapshot, type WorkspaceTab, type WorkspaceHistory, type WorkspaceVersion, type WorkspacePortableData } from "./shared.js";
 
 interface BoardState {
   user: { id: string; email?: string } | null;
@@ -67,9 +67,11 @@ const viewToggleBoard = $<HTMLButtonElement>("#view-toggle-board");
 const viewToggleTimeline = $<HTMLButtonElement>("#view-toggle-timeline");
 const timelineToolbar = $("#timeline-toolbar");
 const timelineSort = $<HTMLSelectElement>("#timeline-sort");
+const timelineFilter = $("#timeline-filter");
 const recentlyClosedBtn = $<HTMLButtonElement>("#recently-closed-btn");
 const recentlyClosedDialog = $<HTMLDialogElement>("#recently-closed-dialog");
 const recentlyClosedList = $("#recently-closed-list");
+const recentlyClosedSearch = $<HTMLInputElement>("#recently-closed-search");
 const closeRecentlyClosed = $<HTMLButtonElement>("#close-recently-closed");
 const cancelRecentlyClosed = $<HTMLButtonElement>("#cancel-recently-closed");
 const batchMoveDialog = $<HTMLDialogElement>("#batch-move-dialog");
@@ -111,6 +113,9 @@ const selectedTabIds = new Set<number>();
 type ViewMode = "board" | "timeline";
 let viewMode: ViewMode = "board";
 const collapsedGroups = new Set<string>();
+let currentWindowId: number | undefined;
+let timelineFilterValue: TimelineFilterRange = "all";
+let recentlyClosedItems: { tab: NonNullable<chrome.sessions.Session["tab"]> & { sessionId?: string }; time: number }[] = [];
 let navFocusIndex = -1;
 let navTabIds: number[] = [];
 const COLLAPSED_STORAGE_KEY = "board_collapsed_groups";
@@ -165,7 +170,8 @@ async function loadWorkspaces(): Promise<void> { await refreshWorkspacesCache();
 async function loadCollapsedGroups(): Promise<void> {
   try {
     const data = await chrome.storage.local.get(COLLAPSED_STORAGE_KEY);
-    const stored = data[COLLAPSED_STORAGE_KEY] as string[] | undefined;
+    const allData = data[COLLAPSED_STORAGE_KEY] as Record<string, string[]> | undefined;
+    const stored = currentWindowId != null ? allData?.[String(currentWindowId)] : undefined;
     if (Array.isArray(stored)) {
       collapsedGroups.clear();
       stored.forEach((key) => collapsedGroups.add(key));
@@ -175,7 +181,10 @@ async function loadCollapsedGroups(): Promise<void> {
 
 async function saveCollapsedGroups(): Promise<void> {
   try {
-    await chrome.storage.local.set({ [COLLAPSED_STORAGE_KEY]: [...collapsedGroups] });
+    const data = await chrome.storage.local.get(COLLAPSED_STORAGE_KEY);
+    const allData = (data[COLLAPSED_STORAGE_KEY] as Record<string, string[]> | undefined) ?? {};
+    if (currentWindowId != null) allData[String(currentWindowId)] = [...collapsedGroups];
+    await chrome.storage.local.set({ [COLLAPSED_STORAGE_KEY]: allData });
   } catch {}
 }
 
@@ -373,7 +382,12 @@ async function renderTimeline(): Promise<void> {
       // current tabs visible in the timeline and skip the reminder rows.
     }
   }
-  items.sort((a, b) => {
+  const now = Date.now();
+  const filtered = items.filter((item) => {
+    const refDate = sortBy === "due" && item.dueAt ? Date.parse(item.dueAt) : item.createdAt ?? 0;
+    return matchesTimelineFilter(refDate, timelineFilterValue, now);
+  });
+  filtered.sort((a, b) => {
     if (sortBy === "due") {
       const ad = a.dueAt ? Date.parse(a.dueAt) : Number.MAX_SAFE_INTEGER;
       const bd = b.dueAt ? Date.parse(b.dueAt) : Number.MAX_SAFE_INTEGER;
@@ -384,13 +398,13 @@ async function renderTimeline(): Promise<void> {
     return bc - ac;
   });
   const fallback = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
-  if (!items.length) {
+  if (!filtered.length) {
     boardGrid.className = "board-timeline";
     boardGrid.replaceChildren(Object.assign(document.createElement("p"), { className: "empty board-empty", textContent: i18n.t("noMatchingTabs") }));
     return;
   }
   boardGrid.className = "board-timeline";
-  boardGrid.replaceChildren(...items.map((item) => {
+  boardGrid.replaceChildren(...filtered.map((item) => {
     const row = document.createElement("div");
     row.className = "timeline-row";
     const time = document.createElement("span");
@@ -432,59 +446,69 @@ async function renderTimeline(): Promise<void> {
 }
 
 async function openRecentlyClosed(): Promise<void> {
+  recentlyClosedSearch.value = "";
   recentlyClosedList.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: i18n.t("loading") }));
   recentlyClosedDialog.showModal();
   try {
     const sessions = await chrome.sessions.getRecentlyClosed({ maxResults: 25 });
     type ClosedTab = NonNullable<chrome.sessions.Session["tab"]> & { sessionId?: string };
-    const items: { tab: ClosedTab; time: number }[] = [];
+    recentlyClosedItems = [];
     for (const session of sessions) {
       if (session.tab) {
-        items.push({ tab: session.tab as ClosedTab, time: (session.lastModified ?? 0) * 1000 });
+        recentlyClosedItems.push({ tab: session.tab as ClosedTab, time: (session.lastModified ?? 0) * 1000 });
       } else if (session.window?.tabs?.length) {
         for (const tab of session.window.tabs.slice(0, 3)) {
-          items.push({ tab: tab as ClosedTab, time: (session.lastModified ?? 0) * 1000 });
+          recentlyClosedItems.push({ tab: tab as ClosedTab, time: (session.lastModified ?? 0) * 1000 });
         }
       }
     }
-    if (!items.length) {
-      recentlyClosedList.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: i18n.t("recentlyClosedEmpty") }));
-      return;
-    }
-    const fallback = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
-    recentlyClosedList.replaceChildren(...items.map((item) => {
-      const row = document.createElement("div");
-      row.className = "recently-closed-row";
-      const t = item.tab as ClosedTab;
-      const time = document.createElement("span");
-      time.className = "recently-closed-time";
-      const diff = Date.now() - item.time;
-      if (diff < 60000) time.textContent = `${Math.floor(diff / 1000)}s`;
-      else if (diff < 3600000) time.textContent = `${Math.floor(diff / 60000)}m`;
-      else if (diff < 86400000) time.textContent = `${Math.floor(diff / 3600000)}h`;
-      else time.textContent = new Date(item.time).toLocaleDateString();
-      const icon = document.createElement("img");
-      icon.className = "recently-closed-icon";
-      icon.alt = "";
-      icon.src = t.favIconUrl || (t.url ? faviconFor(t.url) : "") || fallback;
-      icon.addEventListener("error", () => { if (icon.src !== fallback) icon.src = fallback; });
-      icon.classList.toggle("github-tab-icon", t.url ? getSiteKey(t.url) === "github.com" : false);
-      const title = document.createElement("span");
-      title.className = "recently-closed-title";
-      title.textContent = t.title || t.url || i18n.t("unnamedTab");
-      title.title = t.url || t.title || "";
-      const restore = makeButton(i18n.t("restoreTab"), "recently-closed-restore", i18n.t("restoreTab"));
-      restore.addEventListener("click", () => {
-        if (t.sessionId) void chrome.sessions.restore(t.sessionId);
-        else if (t.url) void chrome.tabs.create({ url: t.url });
-        recentlyClosedDialog.close();
-      });
-      row.append(time, icon, title, restore);
-      return row;
-    }));
+    renderRecentlyClosedList("");
   } catch (error) {
     recentlyClosedList.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: error instanceof Error ? error.message : String(error) }));
   }
+}
+
+function renderRecentlyClosedList(query: string): void {
+  const q = query.trim().toLowerCase();
+  const items = q ? recentlyClosedItems.filter((item) => {
+    const t = item.tab;
+    return (t.title && t.title.toLowerCase().includes(q)) || (t.url && t.url.toLowerCase().includes(q));
+  }) : recentlyClosedItems;
+  if (!items.length) {
+    recentlyClosedList.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: recentlyClosedItems.length ? i18n.t("noMatchingTabs") : i18n.t("recentlyClosedEmpty") }));
+    return;
+  }
+  const fallback = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
+  recentlyClosedList.replaceChildren(...items.map((item) => {
+    const row = document.createElement("div");
+    row.className = "recently-closed-row";
+    const t = item.tab;
+    const time = document.createElement("span");
+    time.className = "recently-closed-time";
+    const diff = Date.now() - item.time;
+    if (diff < 60000) time.textContent = `${Math.floor(diff / 1000)}s`;
+    else if (diff < 3600000) time.textContent = `${Math.floor(diff / 60000)}m`;
+    else if (diff < 86400000) time.textContent = `${Math.floor(diff / 3600000)}h`;
+    else time.textContent = new Date(item.time).toLocaleDateString();
+    const icon = document.createElement("img");
+    icon.className = "recently-closed-icon";
+    icon.alt = "";
+    icon.src = t.favIconUrl || (t.url ? faviconFor(t.url) : "") || fallback;
+    icon.addEventListener("error", () => { if (icon.src !== fallback) icon.src = fallback; });
+    icon.classList.toggle("github-tab-icon", t.url ? getSiteKey(t.url) === "github.com" : false);
+    const title = document.createElement("span");
+    title.className = "recently-closed-title";
+    title.textContent = t.title || t.url || i18n.t("unnamedTab");
+    title.title = t.url || t.title || "";
+    const restore = makeButton(i18n.t("restoreTab"), "recently-closed-restore", i18n.t("restoreTab"));
+    restore.addEventListener("click", () => {
+      if (t.sessionId) void chrome.sessions.restore(t.sessionId);
+      else if (t.url) void chrome.tabs.create({ url: t.url });
+      recentlyClosedDialog.close();
+    });
+    row.append(time, icon, title, restore);
+    return row;
+  }));
 }
 
 function rebuildNavOrder(): void {
@@ -763,12 +787,22 @@ async function saveCurrentWorkspace(): Promise<void> {
   await loadWorkspaces();
   showStatus(i18n.t("workspaceSaved"));
 }
-function showWorkspaceRestorePreview(tabs: readonly WorkspaceTab[], unavailableCount = 0): void {
-  workspaceRestoreSummary.textContent = unavailableCount ? i18n.t("willOpenTabsSkip", [String(tabs.length), String(unavailableCount)]) : i18n.t("willOpenTabs", [String(tabs.length)]);
+function showWorkspaceRestorePreview(tabs: readonly WorkspaceTab[], unavailableCount = 0, alreadyOpenUrls?: Set<string>): void {
+  const alreadyOpen = alreadyOpenUrls ? tabs.filter((tab) => alreadyOpenUrls.has(tab.url)) : [];
+  const newCount = tabs.length - alreadyOpen.length;
+  if (alreadyOpen.length > 0 && newCount > 0) {
+    workspaceRestoreSummary.textContent = i18n.t("willOpenTabsSkipAlready", [String(newCount), String(alreadyOpen.length)]);
+  } else if (unavailableCount) {
+    workspaceRestoreSummary.textContent = i18n.t("willOpenTabsSkip", [String(tabs.length), String(unavailableCount)]);
+  } else {
+    workspaceRestoreSummary.textContent = i18n.t("willOpenTabs", [String(tabs.length)]);
+  }
   const fallback = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
   workspaceRestoreList.replaceChildren(...tabs.map((tab) => {
+    const isOpen = alreadyOpenUrls?.has(tab.url) ?? false;
     const row = document.createElement("div");
     row.className = "tab-row workspace-restore-tab";
+    if (isOpen) row.classList.add("already-open");
     row.title = tab.url;
     const content = document.createElement("div");
     content.className = "tab-open";
@@ -787,20 +821,35 @@ function showWorkspaceRestorePreview(tabs: readonly WorkspaceTab[], unavailableC
   }));
   workspaceRestoreDialog.showModal();
 }
-async function previewWorkspaceRestore(id: string): Promise<void> { const result = await send<{ preview: { tabs: WorkspaceTab[]; unavailableCount: number } }>({ type: "get-workspace-restore-preview", id }); restoreWorkspaceId = id; restoreWorkspaceTabs = null; showWorkspaceRestorePreview(result.preview.tabs, result.preview.unavailableCount); }
-function previewWorkspaceCardRestore(card: BoardSegmentCard): void {
+async function getOpenTabUrls(): Promise<Set<string>> {
+  try {
+    const tabs = await chrome.tabs.query({});
+    return new Set(tabs.map((tab) => tab.url).filter((url): url is string => typeof url === "string"));
+  } catch { return new Set(); }
+}
+async function previewWorkspaceRestore(id: string): Promise<void> {
+  const [result, openUrls] = await Promise.all([
+    send<{ preview: { tabs: WorkspaceTab[]; unavailableCount: number } }>({ type: "get-workspace-restore-preview", id }),
+    getOpenTabUrls(),
+  ]);
+  restoreWorkspaceId = id; restoreWorkspaceTabs = null;
+  showWorkspaceRestorePreview(result.preview.tabs, result.preview.unavailableCount, openUrls);
+}
+async function previewWorkspaceCardRestore(card: BoardSegmentCard): Promise<void> {
   const tabs = card.tabs.flatMap((tab) => tab.url ? [{ title: tab.title, url: tab.url }] : []);
   if (!tabs.length) { showStatus(i18n.t("groupHasNoRestorableTabs"), true); return; }
   restoreWorkspaceId = null;
   restoreWorkspaceTabs = tabs;
-  showWorkspaceRestorePreview(tabs);
+  const openUrls = await getOpenTabUrls();
+  showWorkspaceRestorePreview(tabs, 0, openUrls);
 }
 async function restoreWorkspace(): Promise<void> {
   const tab = await chrome.tabs.getCurrent();
+  const openUrls = await getOpenTabUrls();
   const result = restoreWorkspaceId
-    ? await send<{ created: number }>({ type: "restore-workspace", id: restoreWorkspaceId, windowId: tab?.windowId, confirmed: true })
+    ? await send<{ created: number }>({ type: "restore-workspace", id: restoreWorkspaceId, windowId: tab?.windowId, confirmed: true, skipUrls: [...openUrls] })
     : restoreWorkspaceTabs
-      ? await send<{ created: number }>({ type: "restore-workspace-tabs", tabs: restoreWorkspaceTabs, windowId: tab?.windowId, confirmed: true })
+      ? await send<{ created: number }>({ type: "restore-workspace-tabs", tabs: restoreWorkspaceTabs, windowId: tab?.windowId, confirmed: true, skipUrls: [...openUrls] })
       : null;
   if (!result) return;
   workspaceRestoreDialog.close();
@@ -969,12 +1018,14 @@ async function confirmRestoreVersion(version: WorkspaceVersion): Promise<void> {
     : `确认恢复版本 #${version.version}？将打开 ${tabCount} 个标签。`;
   if (!window.confirm(message)) return;
   try {
+    const openUrls = await getOpenTabUrls();
     const result = await send<{ ok: boolean; created: number }>({
       type: "restore-workspace-history-version",
       id: historyWorkspaceId,
       version: version.version,
       windowId,
       confirmed: true,
+      skipUrls: [...openUrls],
     });
     workspaceHistoryDialog.close();
     showStatus(i18n.t("openedTabs", [String(result.created)]));
@@ -1761,7 +1812,7 @@ function renderWorkspaceCard(card: BoardSegmentCard, placement: { slot: number; 
   const actions = document.createElement("div");
   actions.className = "deferred-actions";
   const restore = makeButton(i18n.t("restore"), "deferred-action deferred-open", `${i18n.t("restore")} ${card.title} ${i18n.t("tabs")}`);
-  restore.addEventListener("click", () => previewWorkspaceCardRestore(card));
+  restore.addEventListener("click", () => void previewWorkspaceCardRestore(card));
   actions.append(restore);
   heading.append(actions);
   const tabs = document.createElement("div");
@@ -2018,6 +2069,7 @@ function applyTheme(theme: Theme): void {
 
 async function load(): Promise<void> {
   const boardTab = await chrome.tabs.getCurrent();
+  currentWindowId = boardTab?.windowId;
   const state = await send<BoardState>({ type: "get-board-state", windowId: boardTab?.windowId });
   currentState = state;
   applyTheme(state.settings?.theme ?? "light");
@@ -2300,7 +2352,15 @@ saveWorkspaceVersionBtn.addEventListener("click", () => void saveWorkspaceVersio
 viewToggleBoard.addEventListener("click", () => { if (!selectMode) setViewMode("board"); });
 viewToggleTimeline.addEventListener("click", () => { if (!selectMode) setViewMode("timeline"); });
 timelineSort.addEventListener("change", renderTimeline);
+timelineFilter.addEventListener("click", (event) => {
+  const btn = (event.target as HTMLElement).closest(".timeline-filter-btn") as HTMLElement | null;
+  if (!btn) return;
+  timelineFilterValue = (btn.dataset.filter ?? "all") as TimelineFilterRange;
+  timelineFilter.querySelectorAll(".timeline-filter-btn").forEach((el) => el.classList.toggle("active", el === btn));
+  renderTimeline();
+});
 recentlyClosedBtn.addEventListener("click", () => void openRecentlyClosed());
+recentlyClosedSearch.addEventListener("input", () => renderRecentlyClosedList(recentlyClosedSearch.value));
 closeRecentlyClosed.addEventListener("click", () => recentlyClosedDialog.close());
 cancelRecentlyClosed.addEventListener("click", () => recentlyClosedDialog.close());
 document.addEventListener("keydown", (event) => {

@@ -78,6 +78,7 @@ export async function prepareOptionsForUser(userId: string): Promise<StoredState
   const [state, data] = await Promise.all([loadState(), chrome.storage.local.get("optionsUserId")]);
   const prepared = resetOptionsForUser(state, data.optionsUserId as string | undefined, userId);
   if (prepared.changed) {
+    await clearUserData();
     await chrome.storage.local.set({
       optionsUserId: userId,
       settings: prepared.state.settings,
@@ -234,4 +235,23 @@ export async function deleteWorkspaceHistory(workspaceId: string): Promise<void>
 
 export async function clearAllWorkspaceHistories(): Promise<void> {
   await chrome.storage.local.set({ workspaceHistories: {} });
+}
+
+/** Keys that hold per-user data and must be wiped on sign-out or account switch. */
+const USER_DATA_KEYS: string[] = [
+  "deferredTabs",
+  "recentlyClosedTabs",
+  "workspaceSnapshots",
+  "workspaceHistories",
+  "boardAssignments",
+  "tabCreatedAt",
+  "board_collapsed_groups",
+];
+
+/**
+ * Remove all per-user data from local storage.
+ * Device-level keys (`deviceId`, `deviceName`) and the auth session are preserved.
+ */
+export async function clearUserData(): Promise<void> {
+  await chrome.storage.local.remove(USER_DATA_KEYS);
 }

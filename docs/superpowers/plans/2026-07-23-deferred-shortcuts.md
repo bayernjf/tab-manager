@@ -1,5 +1,7 @@
 # Deferred Reminder Shortcuts Implementation Plan
 
+> **Status:** ✅ 已实现（v0.1.11）
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Configure up to five reminder shortcuts and use them from a board tab’s defer menu.

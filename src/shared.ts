@@ -468,6 +468,17 @@ export function isDeferredTabDue(tab: DeferredTab, now = Date.now()): boolean {
   return Date.parse(tab.dueAt) <= now;
 }
 
+export type TimelineFilterRange = "all" | "today" | "3days" | "7days";
+
+export function matchesTimelineFilter(refDateMs: number, range: TimelineFilterRange, now = Date.now()): boolean {
+  if (range === "all" || refDateMs === 0) return true;
+  const daysAgo = (now - refDateMs) / 86_400_000;
+  if (range === "today") return daysAgo < 1;
+  if (range === "3days") return daysAgo < 3;
+  if (range === "7days") return daysAgo < 7;
+  return true;
+}
+
 export function formatDeferredDateTime(value: string): string {
   const date = new Date(value);
   const pad = (part: number): string => String(part).padStart(2, "0");
