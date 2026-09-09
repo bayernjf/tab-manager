@@ -82,7 +82,7 @@ import {
   deleteWorkspaceHistory,
   clearUserData,
 } from "./storage.js";
-import { getCurrentUser, getStoredUser, signIn, signOut, signUp } from "./auth.js";
+import { getCurrentUser, getLocalUser, getStoredUser, signIn, signOut, signUp } from "./auth.js";
 import { pushSettings, replaceBoardSyncData, replaceOptionalSyncData, restoreBoardSyncData, restoreOptionalSyncData, syncSettings, fetchWorkspaces, upsertWorkspace, deleteWorkspaceRow, renameDeviceWorkspaces } from "./sync.js";
 
 void i18n.initFromStorage();
@@ -463,7 +463,7 @@ async function loadAllWorkspaces(userId: string, cloudSyncEnabled: boolean): Pro
 }
 
 async function requireBoardUser() {
-  const user = await getCurrentUser();
+  const user = await getLocalUser();
   if (!user) throw new Error(i18n.t("loginRequiredToModify"));
   return user;
 }
@@ -1090,12 +1090,10 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
         const id = drop.targetBoardKey.slice("custom:".length);
         if (!state.boardCustomGroups.some((group) => group.id === id)) throw new Error(i18n.t("workspaceNotFound"));
       }
-      const targetTabs = ((await boardLogicalGroups(state)).find((group) => group.boardKey === drop.targetBoardKey)?.tabs ?? []).filter((candidate) => candidate.id !== drop.tabId);
-      const targetIndex = drop.targetTabId === undefined ? targetTabs.length : targetTabs.findIndex((candidate) => candidate.id === drop.targetTabId);
-      if (targetIndex < 0) throw new Error(i18n.t("targetGroupChanged"));
-      const insertionIndex = drop.position === "before" ? targetIndex : drop.position === "after" ? targetIndex + 1 : targetTabs.length;
-      targetTabs.splice(insertionIndex, 0, source);
-      state.boardAssignments = targetTabs.reduce((assignments, candidate, order) => moveVirtualBoardAssignment(assignments, candidate.windowId!, candidate.id, drop.targetBoardKey, order), state.boardAssignments);
+      const groupTabs = (await boardLogicalGroups(state)).find((group) => group.boardKey === drop.targetBoardKey)?.tabs ?? [];
+      const insertion = planBoardTabInsertion(groupTabs, source, drop);
+      if (insertion.status === "target-missing") throw new Error(i18n.t("targetGroupChanged"));
+      state.boardAssignments = insertion.tabs.reduce((assignments, candidate, order) => moveVirtualBoardAssignment(assignments, candidate.windowId!, candidate.id, drop.targetBoardKey, order), state.boardAssignments);
       await saveBoardAssignments(state.boardAssignments);
       return { ok: true };
     }

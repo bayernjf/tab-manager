@@ -60,6 +60,14 @@ export async function getStoredUser(): Promise<AuthUser | null> {
   return (await storedSession())?.user ?? null;
 }
 
+/** Authorizes local-only actions from the cached session; writes still refresh their own token. */
+export async function getLocalUser(): Promise<AuthUser | null> {
+  const session = await storedSession();
+  if (!session) return null;
+  if (!isRememberedSessionValid(session.rememberUntil)) return null;
+  return session.user;
+}
+
 export async function signUp(email: string, password: string): Promise<{ user: AuthUser | null; requiresEmailConfirmation: boolean }> {
   const data = await request<{ access_token?: string; refresh_token?: string; expires_in?: number; user: AuthUser | null }>("/signup", {
     method: "POST", body: JSON.stringify({ email, password }),
