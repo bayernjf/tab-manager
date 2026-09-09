@@ -1395,3 +1395,12 @@ export function previewWorkspacePortableImport(value: unknown): WorkspacePortabl
   const totalTabs = data.workspaces.reduce((sum, ws) => sum + ws.tabs.length, 0);
   return { data, workspaceCount: data.workspaces.length, totalTabs };
 }
+
+/** Background requests fail fast so a stalled connection cannot outlive the MV3 worker. */
+export const SUPABASE_REQUEST_TIMEOUT_MS = 8000;
+/** Sign-in and sign-up get a longer budget because the user is actively waiting. */
+export const SUPABASE_INTERACTIVE_TIMEOUT_MS = 15000;
+
+export function isRequestTimeout(error: unknown): boolean {
+  return error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+}

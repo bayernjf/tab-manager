@@ -2514,3 +2514,47 @@ test("closing a board tab relies on the tab listener refresh instead of an extra
   assert.doesNotMatch(closeFn, /await load\(\)/);
   assert.match(script, /chrome\.tabs\.onRemoved\.addListener/);
 });
+
+test("isRequestTimeout recognizes abort and timeout rejections only", async () => {
+  const { isRequestTimeout } = await import("../dist/shared.js");
+  const timeout = new Error("timed out");
+  timeout.name = "TimeoutError";
+  const aborted = new Error("aborted");
+  aborted.name = "AbortError";
+  assert.equal(isRequestTimeout(timeout), true);
+  assert.equal(isRequestTimeout(aborted), true);
+  assert.equal(isRequestTimeout(new Error("offline")), false);
+  assert.equal(isRequestTimeout(null), false);
+  assert.equal(isRequestTimeout("TimeoutError"), false);
+});
+
+test("a timed-out request never counts as an explicit authentication failure", async () => {
+  const { isExplicitAuthenticationFailure } = await import("../dist/auth.js");
+  const timeout = new Error("连接 Supabase 超时，请检查网络");
+  timeout.name = "TimeoutError";
+  assert.equal(isExplicitAuthenticationFailure(timeout), false);
+  assert.equal(isExplicitAuthenticationFailure({ status: 401 }), true);
+});
+
+test("supabase requests abort on a timeout instead of hanging forever", async () => {
+  const [shared, auth, sync] = await Promise.all([
+    readFile(new URL("../dist/shared.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/auth.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/sync.js", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(shared, /SUPABASE_REQUEST_TIMEOUT_MS = 8000/);
+  assert.match(shared, /SUPABASE_INTERACTIVE_TIMEOUT_MS = 15000/);
+
+  const authRequest = auth.slice(auth.indexOf("async function request"), auth.indexOf("export function isExplicitAuthenticationFailure"));
+  assert.match(authRequest, /AbortSignal\.timeout\(timeoutMs\)/);
+  assert.match(authRequest, /isRequestTimeout\(error\)/);
+  assert.match(authRequest, /超时/);
+
+  const dbRequest = sync.slice(sync.indexOf("async function databaseRequest"), sync.indexOf("function settingsSyncRow"));
+  assert.match(dbRequest, /AbortSignal\.timeout\(SUPABASE_REQUEST_TIMEOUT_MS\)/);
+  assert.match(dbRequest, /isRequestTimeout\(error\)/);
+
+  assert.match(auth, /"\/token\?grant_type=password"[\s\S]{0,220}SUPABASE_INTERACTIVE_TIMEOUT_MS/);
+  assert.match(auth, /"\/signup"[\s\S]{0,220}SUPABASE_INTERACTIVE_TIMEOUT_MS/);
+});
