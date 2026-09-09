@@ -584,6 +584,27 @@ export function planBoardTabInsertion<T extends { id: number }>(
   return { status: "ok", tabs };
 }
 
+export type WorkspaceTabsPayloadValidation =
+  | { status: "empty" }
+  | { status: "too-many" }
+  | { status: "invalid"; displayIndex: number; reason: Exclude<WorkspaceTabValidation["status"], "valid"> }
+  | { status: "ok"; tabs: WorkspaceTab[] };
+
+export function validateWorkspaceTabsPayload(value: unknown, limit = 200): WorkspaceTabsPayloadValidation {
+  if (!Array.isArray(value) || value.length < 1) return { status: "empty" };
+  if (value.length > limit) return { status: "too-many" };
+  const validations = value.map(validateWorkspaceTab);
+  const firstInvalid = validations.findIndex((validation) => validation.status !== "valid");
+  if (firstInvalid >= 0) {
+    const candidate = value[firstInvalid];
+    // 优先用看板传来的真实序号，让报错和用户看到的列表编号一致；勾选非连续时下标会指向错误的标签。
+    const index = isPlainObject(candidate) && typeof candidate.index === "number" && Number.isInteger(candidate.index) && candidate.index >= 0 ? candidate.index : firstInvalid;
+    const validation = validations[firstInvalid];
+    return { status: "invalid", displayIndex: index, reason: validation && validation.status !== "valid" ? validation.status : "invalid-data" };
+  }
+  return { status: "ok", tabs: validations.flatMap((validation) => validation.status === "valid" ? [validation.tab] : []) };
+}
+
 const BROWSER_KINDS: readonly BrowserKind[] = ["chrome", "edge"];
 const BOARD_GROUP_KINDS: readonly BoardGroupKind[] = ["automatic", "custom", "ungrouped"];
 

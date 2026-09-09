@@ -58,6 +58,7 @@ const {
   moveVirtualBoardAssignment,
   moveBoardTabOptimistically,
   planBoardTabInsertion,
+  validateWorkspaceTabsPayload,
   detectBrowserKind,
   groupWorkspaceTabsByDomain,
   moveWorkspaceTab,
@@ -1161,6 +1162,57 @@ test("planBoardTabInsertion does not mutate the group it was given", () => {
   planBoardTabInsertion(tabs, { id: 9 }, { position: "append" });
 
   assert.deepEqual(tabs.map((tab) => tab.id), [1, 2]);
+});
+
+test("validateWorkspaceTabsPayload rejects a non-array or empty selection", () => {
+  assert.deepEqual(validateWorkspaceTabsPayload(undefined), { status: "empty" });
+  assert.deepEqual(validateWorkspaceTabsPayload([]), { status: "empty" });
+});
+
+test("validateWorkspaceTabsPayload rejects a selection above the limit", () => {
+  const tabs = Array.from({ length: 201 }, (_value, index) => ({ title: `Tab ${index}`, url: `https://example.com/${index}` }));
+
+  assert.deepEqual(validateWorkspaceTabsPayload(tabs), { status: "too-many" });
+});
+
+test("validateWorkspaceTabsPayload normalizes valid tabs", () => {
+  const result = validateWorkspaceTabsPayload([{ title: "  Example  ", url: "https://example.com/a" }]);
+
+  assert.deepEqual(result, { status: "ok", tabs: [{ title: "Example", url: "https://example.com/a" }] });
+});
+
+test("validateWorkspaceTabsPayload reports the board index of the offending tab, not its position in the selection", () => {
+  const result = validateWorkspaceTabsPayload([
+    { title: "Third", url: "https://example.com/c", index: 2 },
+    { title: "Seventh", url: "chrome://settings", index: 6 },
+  ]);
+
+  assert.deepEqual(result, { status: "invalid", displayIndex: 6, reason: "unsupported-url" });
+});
+
+test("validateWorkspaceTabsPayload falls back to the array position when no board index was sent", () => {
+  const result = validateWorkspaceTabsPayload([
+    { title: "One", url: "https://example.com/a" },
+    { title: "Two", url: "not-a-url" },
+  ]);
+
+  assert.deepEqual(result, { status: "invalid", displayIndex: 1, reason: "invalid-url" });
+});
+
+test("validateWorkspaceTabsPayload ignores a malformed board index", () => {
+  const result = validateWorkspaceTabsPayload([{ title: "", url: "https://example.com/a", index: "3" }]);
+
+  assert.deepEqual(result, { status: "invalid", displayIndex: 0, reason: "empty-title" });
+});
+
+test("validateWorkspaceTabsPayload surfaces the first invalid tab when several are broken", () => {
+  const result = validateWorkspaceTabsPayload([
+    { title: "Fine", url: "https://example.com/a", index: 0 },
+    { title: "", url: "https://example.com/b", index: 4 },
+    { title: "Also broken", url: "ftp://example.com", index: 9 },
+  ]);
+
+  assert.deepEqual(result, { status: "invalid", displayIndex: 4, reason: "empty-title" });
 });
 
 test("moves a logical board group to a new rank without moving Ungrouped", () => {
