@@ -49,6 +49,7 @@ import {
   type WorkspacePortableImportPreview,
   isDeferredTabDue,
   nextDeferredOccurrence,
+  planBoardTabInsertion,
   formatDeferredDateTime,
   MAX_WORKSPACE_HISTORY_VERSIONS,
 } from "./shared.js";

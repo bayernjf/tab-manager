@@ -571,6 +571,19 @@ export function moveBoardTabOptimistically(
   return rebalanceBoardSegments(next, drop.targetBoardKey);
 }
 
+export function planBoardTabInsertion<T extends { id: number }>(
+  groupTabs: readonly T[],
+  source: T,
+  drop: Pick<BoardTabDrop, "position" | "targetTabId">,
+): { status: "ok"; tabs: T[] } | { status: "target-missing" } {
+  const tabs = groupTabs.filter((candidate) => candidate.id !== source.id);
+  const targetIndex = drop.targetTabId === undefined ? tabs.length : tabs.findIndex((candidate) => candidate.id === drop.targetTabId);
+  if (targetIndex < 0) return { status: "target-missing" };
+  const insertionIndex = drop.position === "before" ? targetIndex : drop.position === "after" ? targetIndex + 1 : tabs.length;
+  tabs.splice(insertionIndex, 0, source);
+  return { status: "ok", tabs };
+}
+
 const BROWSER_KINDS: readonly BrowserKind[] = ["chrome", "edge"];
 const BOARD_GROUP_KINDS: readonly BoardGroupKind[] = ["automatic", "custom", "ungrouped"];
 

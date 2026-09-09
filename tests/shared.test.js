@@ -57,6 +57,7 @@ const {
   buildVirtualBoardGroups,
   moveVirtualBoardAssignment,
   moveBoardTabOptimistically,
+  planBoardTabInsertion,
   detectBrowserKind,
   groupWorkspaceTabsByDomain,
   moveWorkspaceTab,
@@ -1113,6 +1114,53 @@ test("moveBoardTabOptimistically keeps cards ordered by rank then segment index"
     ["auto:a.example", 0],
     ["auto:a.example", 1],
   ]);
+});
+
+test("planBoardTabInsertion inserts before the target tab", () => {
+  const tabs = [{ id: 1 }, { id: 2 }, { id: 3 }];
+
+  const result = planBoardTabInsertion(tabs, { id: 9 }, { position: "before", targetTabId: 2 });
+
+  assert.equal(result.status, "ok");
+  assert.deepEqual(result.tabs.map((tab) => tab.id), [1, 9, 2, 3]);
+});
+
+test("planBoardTabInsertion inserts after the target tab", () => {
+  const result = planBoardTabInsertion([{ id: 1 }, { id: 2 }], { id: 9 }, { position: "after", targetTabId: 1 });
+
+  assert.deepEqual(result.tabs.map((tab) => tab.id), [1, 9, 2]);
+});
+
+test("planBoardTabInsertion appends when no target tab is given", () => {
+  const result = planBoardTabInsertion([{ id: 1 }, { id: 2 }], { id: 9 }, { position: "append" });
+
+  assert.deepEqual(result.tabs.map((tab) => tab.id), [1, 2, 9]);
+});
+
+test("planBoardTabInsertion reports target-missing when the target tab left the group", () => {
+  assert.deepEqual(planBoardTabInsertion([{ id: 1 }], { id: 9 }, { position: "before", targetTabId: 404 }), { status: "target-missing" });
+});
+
+test("planBoardTabInsertion excludes the moved tab before computing the target index", () => {
+  const result = planBoardTabInsertion([{ id: 1 }, { id: 2 }, { id: 3 }], { id: 1 }, { position: "after", targetTabId: 3 });
+
+  assert.deepEqual(result.tabs.map((tab) => tab.id), [2, 3, 1]);
+});
+
+test("planBoardTabInsertion orders Ungrouped tabs so the manual position can be persisted", () => {
+  const ungrouped = [{ id: 10 }, { id: 11 }, { id: 12 }];
+
+  const result = planBoardTabInsertion(ungrouped, { id: 12 }, { position: "before", targetTabId: 10 });
+
+  assert.deepEqual(result.tabs.map((tab) => tab.id), [12, 10, 11]);
+});
+
+test("planBoardTabInsertion does not mutate the group it was given", () => {
+  const tabs = [{ id: 1 }, { id: 2 }];
+
+  planBoardTabInsertion(tabs, { id: 9 }, { position: "append" });
+
+  assert.deepEqual(tabs.map((tab) => tab.id), [1, 2]);
 });
 
 test("moves a logical board group to a new rank without moving Ungrouped", () => {
