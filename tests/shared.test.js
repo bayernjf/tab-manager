@@ -56,6 +56,7 @@ const {
   updateGroupRuleFromInput,
   buildVirtualBoardGroups,
   moveVirtualBoardAssignment,
+  moveBoardTabOptimistically,
   detectBrowserKind,
   groupWorkspaceTabsByDomain,
   moveWorkspaceTab,
@@ -1008,6 +1009,109 @@ test("builds board cards from ten-tab segments and retains an empty custom card"
     ["custom:7c5e0df8-d6b4-4b10-a820-2d1d1ef9b573", 0, 1, 0, 1],
     ["auto:example.com", 0, 2, 10, 2],
     ["auto:example.com", 1, 2, 1, 1],
+  ]);
+});
+
+function boardCardFixture(boardKey, segmentIndex, tabIds, extra = {}) {
+  return {
+    boardKey,
+    kind: boardKey === "ungrouped" ? "ungrouped" : boardKey.startsWith("custom:") ? "custom" : "automatic",
+    title: boardKey,
+    color: "blue",
+    rank: boardKey === "ungrouped" ? 0 : 1,
+    segmentIndex,
+    segmentCount: 1,
+    heightUnits: 1,
+    tabs: tabIds.map((id) => ({ id, title: `Tab ${id}` })),
+    ...extra,
+  };
+}
+
+test("moveBoardTabOptimistically inserts before the target tab within the same card", () => {
+  const cards = [boardCardFixture("auto:a.example", 0, [1, 2, 3])];
+
+  const moved = moveBoardTabOptimistically(cards, { tabId: 3, targetBoardKey: "auto:a.example", position: "before", targetSegmentIndex: 0, targetTabId: 1 });
+
+  assert.deepEqual(moved[0].tabs.map((tab) => tab.id), [3, 1, 2]);
+});
+
+test("moveBoardTabOptimistically inserts after the target tab", () => {
+  const cards = [boardCardFixture("auto:a.example", 0, [1, 2, 3])];
+
+  const moved = moveBoardTabOptimistically(cards, { tabId: 1, targetBoardKey: "auto:a.example", position: "after", targetSegmentIndex: 0, targetTabId: 3 });
+
+  assert.deepEqual(moved[0].tabs.map((tab) => tab.id), [2, 3, 1]);
+});
+
+test("moveBoardTabOptimistically appends to the end when position is append", () => {
+  const cards = [boardCardFixture("auto:a.example", 0, [1, 2]), boardCardFixture("ungrouped", 0, [7, 8])];
+
+  const moved = moveBoardTabOptimistically(cards, { tabId: 1, targetBoardKey: "ungrouped", position: "append", targetSegmentIndex: 0 });
+
+  assert.deepEqual(moved.find((card) => card.boardKey === "ungrouped").tabs.map((tab) => tab.id), [7, 8, 1]);
+  assert.deepEqual(moved.find((card) => card.boardKey === "auto:a.example").tabs.map((tab) => tab.id), [2]);
+});
+
+test("moveBoardTabOptimistically reorders within Ungrouped so the drag survives an optimistic render", () => {
+  const cards = [boardCardFixture("ungrouped", 0, [10, 11, 12])];
+
+  const moved = moveBoardTabOptimistically(cards, { tabId: 12, targetBoardKey: "ungrouped", position: "before", targetSegmentIndex: 0, targetTabId: 10 });
+
+  assert.deepEqual(moved[0].tabs.map((tab) => tab.id), [12, 10, 11]);
+});
+
+test("moveBoardTabOptimistically falls back to appending when the target tab is gone", () => {
+  const cards = [boardCardFixture("auto:a.example", 0, [1, 2])];
+
+  const moved = moveBoardTabOptimistically(cards, { tabId: 1, targetBoardKey: "auto:a.example", position: "before", targetSegmentIndex: 0, targetTabId: 999 });
+
+  assert.deepEqual(moved[0].tabs.map((tab) => tab.id), [2, 1]);
+});
+
+test("moveBoardTabOptimistically returns the board unchanged when the dragged tab is unknown", () => {
+  const cards = [boardCardFixture("auto:a.example", 0, [1, 2])];
+
+  const moved = moveBoardTabOptimistically(cards, { tabId: 404, targetBoardKey: "auto:a.example", position: "append", targetSegmentIndex: 0 });
+
+  assert.deepEqual(moved.map((card) => card.tabs.map((tab) => tab.id)), [[1, 2]]);
+});
+
+test("moveBoardTabOptimistically does not mutate the cards it was given", () => {
+  const cards = [boardCardFixture("auto:a.example", 0, [1, 2, 3])];
+
+  moveBoardTabOptimistically(cards, { tabId: 3, targetBoardKey: "auto:a.example", position: "before", targetSegmentIndex: 0, targetTabId: 1 });
+
+  assert.deepEqual(cards[0].tabs.map((tab) => tab.id), [1, 2, 3]);
+});
+
+test("moveBoardTabOptimistically rebalances segments and heights after a cross-segment move", () => {
+  const cards = [
+    boardCardFixture("auto:a.example", 0, Array.from({ length: 10 }, (_value, index) => index + 1), { segmentCount: 2, heightUnits: 2 }),
+    boardCardFixture("auto:a.example", 1, [11], { segmentCount: 2 }),
+  ];
+
+  const moved = moveBoardTabOptimistically(cards, { tabId: 11, targetBoardKey: "auto:a.example", position: "before", targetSegmentIndex: 0, targetTabId: 1 });
+
+  assert.deepEqual(moved.map((card) => [card.segmentIndex, card.segmentCount, card.tabs.length, card.heightUnits]), [
+    [0, 2, 10, 2],
+    [1, 2, 1, 1],
+  ]);
+  assert.equal(moved[0].tabs[0].id, 11);
+});
+
+test("moveBoardTabOptimistically keeps cards ordered by rank then segment index", () => {
+  const cards = [
+    boardCardFixture("ungrouped", 0, [9]),
+    boardCardFixture("auto:a.example", 0, Array.from({ length: 10 }, (_value, index) => index + 1), { segmentCount: 2, rank: 2 }),
+    boardCardFixture("auto:a.example", 1, [11], { segmentCount: 2, rank: 2 }),
+  ];
+
+  const moved = moveBoardTabOptimistically(cards, { tabId: 9, targetBoardKey: "auto:a.example", position: "append", targetSegmentIndex: 1 });
+
+  assert.deepEqual(moved.map((card) => [card.boardKey, card.segmentIndex]), [
+    ["ungrouped", 0],
+    ["auto:a.example", 0],
+    ["auto:a.example", 1],
   ]);
 });
 
@@ -2190,4 +2294,28 @@ test("matchesTimelineFilter always returns true when refDate is 0", async () => 
   assert.equal(matchesTimelineFilter(0, "today"), true);
   assert.equal(matchesTimelineFilter(0, "3days"), true);
   assert.equal(matchesTimelineFilter(0, "7days"), true);
+});
+
+test("board mutations authorize against the locally cached session without a network round trip", async () => {
+  const [auth, background] = await Promise.all([
+    readFile(new URL("../dist/auth.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/background.js", import.meta.url), "utf8"),
+  ]);
+  const getLocalUser = auth.slice(auth.indexOf("export async function getLocalUser"), auth.indexOf("export async function signUp"));
+
+  assert.match(getLocalUser, /await storedSession\(\)/);
+  assert.match(getLocalUser, /isRememberedSessionValid\(session\.rememberUntil\)/);
+  assert.doesNotMatch(getLocalUser, /request\(/);
+
+  const requireBoardUser = background.slice(background.indexOf("async function requireBoardUser"), background.indexOf("async function syncBoardMutation"));
+  assert.match(requireBoardUser, /await getLocalUser\(\)/);
+  assert.doesNotMatch(requireBoardUser, /getCurrentUser\(\)/);
+});
+
+test("closing a board tab relies on the tab listener refresh instead of an extra load", async () => {
+  const script = await readFile(new URL("../dist/board.js", import.meta.url), "utf8");
+  const closeFn = script.slice(script.indexOf("async function closeTab"), script.indexOf("function applyOptimisticGroupReorder"));
+
+  assert.doesNotMatch(closeFn, /await load\(\)/);
+  assert.match(script, /chrome\.tabs\.onRemoved\.addListener/);
 });

@@ -1,5 +1,5 @@
 import { i18n } from "./i18n.js";
-import { boardCardsForDevice, boardTabMatchesQuery, formatDeferredDateTime, getSiteKey, heightUnitsForTabCount, isBoardKey, manualBoardGridRow, moveManualBoardCard, nextDeferredOccurrence, placeBoardCards, isDeferredTabDue, matchesTimelineFilter, segmentTabs, validateWorkspaceTitle, DEFAULT_SETTINGS, type BoardKey, type BoardLayout, type BoardSegmentCard, type BoardTab, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type Settings, type Theme, type TimelineFilterRange, type WorkspaceSnapshot, type WorkspaceTab, type WorkspaceHistory, type WorkspaceVersion, type WorkspacePortableData } from "./shared.js";
+import { boardCardsForDevice, boardTabMatchesQuery, formatDeferredDateTime, getSiteKey, isBoardKey, moveBoardTabOptimistically, manualBoardGridRow, moveManualBoardCard, nextDeferredOccurrence, placeBoardCards, isDeferredTabDue, matchesTimelineFilter, validateWorkspaceTitle, DEFAULT_SETTINGS, type BoardKey, type BoardLayout, type BoardSegmentCard, type BoardTab, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type Settings, type Theme, type TimelineFilterRange, type WorkspaceSnapshot, type WorkspaceTab, type WorkspaceHistory, type WorkspaceVersion, type WorkspacePortableData } from "./shared.js";
 
 interface BoardState {
   user: { id: string; email?: string } | null;
@@ -2091,54 +2091,11 @@ async function load(): Promise<void> {
   void refreshWorkspacesCache().catch(() => {});
 }
 
-function rebalanceGroupSegments(boardKey: BoardKey): void {
-  if (!currentState) return;
-  const cards = currentState.groups.filter((card) => card.boardKey === boardKey);
-  if (cards.length <= 1) return;
-  const template = cards[0];
-  if (!template) return;
-  const allTabs = cards.flatMap((card) => card.tabs);
-  const segments = segmentTabs(allTabs).length ? segmentTabs(allTabs) : [[]];
-  const existing = currentState.groups.filter((card) => card.boardKey !== boardKey);
-  const rebuilt: BoardSegmentCard[] = segments.map((tabs, index) => ({
-    ...template,
-    tabs,
-    segmentIndex: index,
-    segmentCount: segments.length,
-    heightUnits: heightUnitsForTabCount(tabs.length),
-  }));
-  currentState.groups = [...existing, ...rebuilt].sort((left, right) => {
-    if (left.boardKey !== right.boardKey) return (left.rank ?? 0) - (right.rank ?? 0);
-    return left.segmentIndex - right.segmentIndex;
-  });
-}
-
-function applyOptimisticTabMove(tabId: number, targetBoardKey: BoardKey, position: "before" | "after" | "append", targetSegmentIndex: number, targetTabId?: number): void {
-  if (!currentState) return;
-  let movedTab: BoardSegmentCard["tabs"][number] | undefined;
-  for (const card of currentState.groups) {
-    const index = card.tabs.findIndex((tab) => tab.id === tabId);
-    if (index >= 0) { [movedTab] = card.tabs.splice(index, 1); break; }
-  }
-  if (!movedTab) return;
-  const targetCard = currentState.groups.find((card) => card.boardKey === targetBoardKey && card.segmentIndex === targetSegmentIndex);
-  if (targetCard) {
-    if (position === "append" || targetTabId === undefined) {
-      targetCard.tabs.push(movedTab);
-    } else {
-      const targetIndex = targetCard.tabs.findIndex((tab) => tab.id === targetTabId);
-      if (targetIndex < 0) { targetCard.tabs.push(movedTab); }
-      else { targetCard.tabs.splice(position === "before" ? targetIndex : targetIndex + 1, 0, movedTab); }
-    }
-  }
-  rebalanceGroupSegments(targetBoardKey);
-}
-
 async function moveTab(tabId: number, targetBoardKey: BoardKey, position: "before" | "after" | "append", targetSegmentIndex: number, targetTabId?: number): Promise<void> {
   if (!currentState) return;
   const snapshot = structuredClone(currentState);
   try {
-    applyOptimisticTabMove(tabId, targetBoardKey, position, targetSegmentIndex, targetTabId);
+    currentState.groups = moveBoardTabOptimistically(currentState.groups, { tabId, targetBoardKey, position, targetSegmentIndex, ...(targetTabId === undefined ? {} : { targetTabId }) });
     renderBoard(currentState);
     await send({ type: "move-board-tab", drop: { tabId, targetBoardKey, position, ...(targetTabId === undefined ? {} : { targetTabId }) } });
     showStatus(i18n.t("tabMoved"));
@@ -2159,7 +2116,6 @@ async function closeTab(tabId: number, anchor?: HTMLElement): Promise<void> {
   try {
     await send({ type: "close-board-tab", tabId });
     boardToast(i18n.t("tabClosed"), false, anchor);
-    await load();
   } catch (error) { boardToast(error instanceof Error ? error.message : String(error), true, anchor); }
 }
 

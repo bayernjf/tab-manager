@@ -529,6 +529,48 @@ export function buildBoardCards(groups: readonly BoardLogicalGroup[]): BoardSegm
   return cards;
 }
 
+function rebalanceBoardSegments(cards: readonly BoardSegmentCard[], boardKey: BoardKey): BoardSegmentCard[] {
+  const target = cards.filter((card) => card.boardKey === boardKey);
+  const template = target[0];
+  if (!template || target.length <= 1) return [...cards];
+  const segments = segmentTabs(target.flatMap((card) => card.tabs));
+  const cardTabs = segments.length ? segments : [[]];
+  const rebuilt = cardTabs.map((tabs, segmentIndex) => ({
+    ...template,
+    tabs,
+    segmentIndex,
+    segmentCount: cardTabs.length,
+    heightUnits: heightUnitsForTabCount(tabs.length),
+  }));
+  return [...cards.filter((card) => card.boardKey !== boardKey), ...rebuilt].sort((left, right) => {
+    if (left.boardKey !== right.boardKey) return (left.rank ?? 0) - (right.rank ?? 0);
+    return left.segmentIndex - right.segmentIndex;
+  });
+}
+
+export function moveBoardTabOptimistically(
+  cards: readonly BoardSegmentCard[],
+  drop: BoardTabDrop & { targetSegmentIndex: number },
+): BoardSegmentCard[] {
+  const next = cards.map((card) => ({ ...card, tabs: [...card.tabs] }));
+  let movedTab: BoardTab | undefined;
+  for (const card of next) {
+    const index = card.tabs.findIndex((tab) => tab.id === drop.tabId);
+    if (index >= 0) {
+      [movedTab] = card.tabs.splice(index, 1);
+      break;
+    }
+  }
+  if (!movedTab) return [...cards];
+  const targetCard = next.find((card) => card.boardKey === drop.targetBoardKey && card.segmentIndex === drop.targetSegmentIndex);
+  if (targetCard) {
+    const targetIndex = drop.targetTabId === undefined ? -1 : targetCard.tabs.findIndex((tab) => tab.id === drop.targetTabId);
+    if (drop.position === "append" || targetIndex < 0) targetCard.tabs.push(movedTab);
+    else targetCard.tabs.splice(drop.position === "before" ? targetIndex : targetIndex + 1, 0, movedTab);
+  }
+  return rebalanceBoardSegments(next, drop.targetBoardKey);
+}
+
 const BROWSER_KINDS: readonly BrowserKind[] = ["chrome", "edge"];
 const BOARD_GROUP_KINDS: readonly BoardGroupKind[] = ["automatic", "custom", "ungrouped"];
 
