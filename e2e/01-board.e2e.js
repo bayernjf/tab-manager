@@ -190,4 +190,77 @@ test.describe("Board page local flows", () => {
     for (let i = 0; i < 2; i++) { await page.keyboard.press("k"); await page.waitForTimeout(60); }
     expect(errors, `j/k caused page errors: ${errors.join("\n")}`).toEqual([]);
   });
+
+  test("workspace dialog puts the select-all box above the tab list", async ({ boardPage: page }) => {
+    await page.locator("#open-workspaces").click();
+    await expect(page.locator("#workspace-dialog")).toBeVisible({ timeout: 5_000 });
+    // 全选框必须排在列表之前，否则会盖住列表上方的报错提示。
+    const selectAllPrecedesList = await page.evaluate(() => {
+      const selectAll = document.querySelector(".workspace-select-all");
+      const list = document.querySelector("#workspace-tabs");
+      if (!selectAll || !list) return null;
+      return Boolean(selectAll.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+    expect(selectAllPrecedesList, "expected .workspace-select-all and #workspace-tabs to both exist").not.toBeNull();
+    expect(selectAllPrecedesList, "#workspace-tabs must come after .workspace-select-all in the DOM").toBe(true);
+    await page.locator("#close-workspace-dialog").click();
+  });
+
+  test("workspace dialog tab rows carry a 1-based index, an icon and the board index", async ({ boardPage: page }) => {
+    await page.locator("#open-workspaces").click();
+    await expect(page.locator("#workspace-dialog")).toBeVisible({ timeout: 5_000 });
+    const rows = page.locator("#workspace-tabs .workspace-tab-row");
+    const count = await rows.count();
+    if (count === 0) {
+      test.skip(true, "No board tabs in this profile (likely not signed in), so the workspace tab list is empty.");
+      return;
+    }
+    const shape = await page.evaluate(() =>
+      Array.from(document.querySelectorAll("#workspace-tabs .workspace-tab-row")).map((row) => ({
+        index: row.querySelector(".workspace-tab-index")?.textContent,
+        hasIcon: Boolean(row.querySelector("img.tab-icon")),
+        hasTitle: Boolean(row.querySelector(".workspace-tab-title")),
+        datasetIndex: row.querySelector('input[type="checkbox"]')?.dataset.index,
+      })),
+    );
+    // 显示的序号是 1-based，而 dataset.index 是 0-based —— 报错文案依赖后者指向正确的标签。
+    shape.forEach((row, position) => {
+      expect(row.index, `row ${position} should show a 1-based index`).toBe(String(position + 1));
+      expect(row.datasetIndex, `row ${position} should carry its board index`).toBe(String(position));
+      expect(row.hasIcon, `row ${position} should render a favicon`).toBe(true);
+      expect(row.hasTitle, `row ${position} should render a title span`).toBe(true);
+    });
+    await page.locator("#close-workspace-dialog").click();
+  });
+
+  test("returning to the current board never flashes the deferred reminders section", async ({ boardPage: page }) => {
+    const scopeButtons = page.locator("#scope-nav .scope-nav-scope");
+    if ((await scopeButtons.count()) < 2) {
+      test.skip(true, "Scope nav has no workspace entry in this profile (likely not signed in), so returning to 当前 cannot be exercised.");
+      return;
+    }
+    // 记录 class 变化序列：切回“当前”时不允许出现“移除 hidden”，否则就是空列表先弹出再隐藏的闪烁。
+    await page.evaluate(() => {
+      const section = document.querySelector("#deferred-reminders");
+      if (!section) return;
+      window.__deferredVisibility = [section.classList.contains("hidden")];
+      new MutationObserver(() => {
+        window.__deferredVisibility.push(section.classList.contains("hidden"));
+      }).observe(section, { attributes: true, attributeFilter: ["class"] });
+    });
+    await scopeButtons.nth(1).click();
+    await page.waitForTimeout(600);
+    await page.locator("#scope-nav .scope-nav-scope").first().click();
+    await page.waitForTimeout(1_200);
+    const { sequence, reminderCount } = await page.evaluate(() => ({
+      sequence: window.__deferredVisibility ?? [],
+      reminderCount: document.querySelectorAll("#deferred-list > *").length,
+    }));
+    if (reminderCount > 0) {
+      test.skip(true, "This profile has due reminders, so the section is legitimately shown and the flash cannot be distinguished.");
+      return;
+    }
+    const everShown = sequence.some((hidden) => hidden === false);
+    expect(everShown, `#deferred-reminders became visible with an empty list; class sequence (hidden=true): ${JSON.stringify(sequence)}`).toBe(false);
+  });
 });
