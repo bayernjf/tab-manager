@@ -100,6 +100,26 @@ currentState.groups = moveBoardTabOptimistically(currentState.groups, { tabId, t
 3. **未分组拖拽顺序持久化**：拖动后 reload，断言顺序不回弹。依赖真实拖放 + 登录，作为
    credential-gated 用例；若环境不具备则 skip 并在断言前显式说明原因。
 
+## 落地结果（2026-09-09）
+
+已全部完成，5 次原子提交（`e472eb4` → `72e0b19`，中间 `dc900aa` 是并发会话的无关提交）。
+
+单测 127 → 155（+28），`npm run typecheck` 通过。两个关键防回归用例做过变异验证：把 bug
+改回原写法后测试确实失败，不是空转断言。
+
+E2E 新增 3 个用例，其中 2 个需登录态，未登录时按既有约定 `test.skip` 并给出明确原因；
+`workspace dialog puts the select-all box above the tab list` 无需登录，已通过并变异验证。
+
+`npm run e2e` 另有 2 个**既有**失败（`theme toggle flips data-theme`、`#shortcut-times hash
+jumps to privacy panel`），在本次改动前的干净树上同样失败，与本次无关，未处理。
+
+计划外发现，均未在本次处理：
+
+- `nextDeferredOccurrence`（`shared.ts`）实现的是"当前时间 + N 分钟"的**时长**语义，而非
+  "下一个该时刻"，与 `options.html` 的文案「点击后将在下一个该时刻提醒」矛盾，且零测试覆盖；
+- 未分组拖拽的真实拖放 e2e 未实现：HTML5 DnD 在 Playwright 里不稳定，而该逻辑已被
+  `moveBoardTabOptimistically` 与 `planBoardTabInsertion` 的单测覆盖，性价比不足。
+
 ## 落地顺序与提交划分
 
 按原子提交，每步跑 `npm test`：
