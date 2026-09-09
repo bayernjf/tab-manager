@@ -15,6 +15,19 @@ import { test, expect } from "./_fixtures.js";
  *   折叠：board-grid 中 .group-card + button with aria-label~="折叠"
  */
 test.describe("Board page local flows", () => {
+  /**
+   * The board only lists http(s) tabs, and a fresh test profile has none — just
+   * about:blank and extension pages. Requests are fulfilled locally so the
+   * precondition needs no network.
+   */
+  async function openStubTab(extContext, slug) {
+    await extContext.route("https://tab-garden.test/**", (route) =>
+      route.fulfill({ contentType: "text/html", body: `<title>Stub ${slug}</title>` }));
+    const stub = await extContext.newPage();
+    await stub.goto(`https://tab-garden.test/${slug}`, { waitUntil: "domcontentloaded" });
+    return stub;
+  }
+
   test("renders top toolbar and theme toggle flips data-theme", async ({ boardPage: page }) => {
     // Top toolbar buttons exist (not hidden)
     await expect(page.locator("#board-theme-toggle")).toBeVisible({ timeout: 15_000 });
@@ -206,15 +219,22 @@ test.describe("Board page local flows", () => {
     await page.locator("#close-workspace-dialog").click();
   });
 
-  test("workspace dialog tab rows carry a 1-based index, an icon and the board index", async ({ boardPage: page }) => {
+  test("workspace dialog tab rows carry a 1-based index, an icon and the board index", async ({ extContext, boardPage: page }) => {
+    const boardHidden = await page.locator("#board-content").evaluate((el) => el?.classList.contains("hidden"));
+    if (boardHidden) {
+      test.skip(true, "#board-content is hidden (likely not signed in), so the workspace tab list is empty.");
+      return;
+    }
+    const stub = await openStubTab(extContext, "workspace-row");
+    // The dialog renders from the board state held in memory and never
+    // re-renders, so the new tab has to be on the board before we open it.
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.locator("#board-grid .group-card .tab-row").first()).toBeAttached({ timeout: 15_000 });
     await page.locator("#open-workspaces").click();
     await expect(page.locator("#workspace-dialog")).toBeVisible({ timeout: 5_000 });
     const rows = page.locator("#workspace-tabs .workspace-tab-row");
-    const count = await rows.count();
-    if (count === 0) {
-      test.skip(true, "No board tabs in this profile (likely not signed in), so the workspace tab list is empty.");
-      return;
-    }
+    // Every board tab with a url becomes a row, so a populated board must yield rows.
+    expect(await rows.count(), "workspace dialog listed no tabs despite a populated board").toBeGreaterThan(0);
     const shape = await page.evaluate(() =>
       Array.from(document.querySelectorAll("#workspace-tabs .workspace-tab-row")).map((row) => ({
         index: row.querySelector(".workspace-tab-index")?.textContent,
@@ -231,14 +251,28 @@ test.describe("Board page local flows", () => {
       expect(row.hasTitle, `row ${position} should render a title span`).toBe(true);
     });
     await page.locator("#close-workspace-dialog").click();
+    await stub.close();
   });
 
-  test("returning to the current board never flashes the deferred reminders section", async ({ boardPage: page }) => {
-    const scopeButtons = page.locator("#scope-nav .scope-nav-scope");
-    if ((await scopeButtons.count()) < 2) {
-      test.skip(true, "Scope nav has no workspace entry in this profile (likely not signed in), so returning to 当前 cannot be exercised.");
+  test("returning to the current board never flashes the deferred reminders section", async ({ extContext, boardPage: page }) => {
+    const boardHidden = await page.locator("#board-content").evaluate((el) => el?.classList.contains("hidden"));
+    if (boardHidden) {
+      test.skip(true, "#board-content is hidden (likely not signed in), so scopes cannot be switched.");
       return;
     }
+    // 作用域导航永远只有“当前”和“从工作区加载”两个按钮，后者只是打开浮层，
+    // 所以必须先存一个工作区、再从浮层里选中它，才算真的离开了“当前”。
+    const stub = await openStubTab(extContext, "scope-switch");
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.locator("#board-grid .group-card .tab-row").first()).toBeAttached({ timeout: 15_000 });
+    const workspaceTitle = `e2e-scope-${Date.now()}`;
+    await page.locator("#open-workspaces").click();
+    await expect(page.locator("#workspace-dialog")).toBeVisible({ timeout: 5_000 });
+    await page.locator("#workspace-name").fill(workspaceTitle);
+    await page.locator("#save-workspace").click();
+    await expect(page.locator("#workspace-list")).toContainText(workspaceTitle, { timeout: 20_000 });
+    await page.locator("#close-workspace-dialog").click();
+
     // 记录 class 变化序列：切回“当前”时不允许出现“移除 hidden”，否则就是空列表先弹出再隐藏的闪烁。
     await page.evaluate(() => {
       const section = document.querySelector("#deferred-reminders");
@@ -248,7 +282,10 @@ test.describe("Board page local flows", () => {
         window.__deferredVisibility.push(section.classList.contains("hidden"));
       }).observe(section, { attributes: true, attributeFilter: ["class"] });
     });
-    await scopeButtons.nth(1).click();
+    await page.locator("#scope-nav .scope-nav-scope").nth(1).click();
+    await page.locator(".workspace-popover-item", { hasText: workspaceTitle }).click();
+    // 浮层会盖住“当前”按钮，选中后它必须已经消失。
+    await expect(page.locator(".workspace-popover")).toHaveCount(0, { timeout: 5_000 });
     await page.waitForTimeout(600);
     await page.locator("#scope-nav .scope-nav-scope").first().click();
     await page.waitForTimeout(1_200);
@@ -256,6 +293,14 @@ test.describe("Board page local flows", () => {
       sequence: window.__deferredVisibility ?? [],
       reminderCount: document.querySelectorAll("#deferred-list > *").length,
     }));
+
+    // 清理：工作区会同步到云端，留着会让后续运行的状态越积越多。
+    await page.locator("#open-workspaces").click();
+    await page.locator(`[aria-label="删除 ${workspaceTitle}"]`).click();
+    await expect(page.locator("#workspace-list")).not.toContainText(workspaceTitle, { timeout: 20_000 });
+    await page.locator("#close-workspace-dialog").click();
+    await stub.close();
+
     if (reminderCount > 0) {
       test.skip(true, "This profile has due reminders, so the section is legitimately shown and the flash cannot be distinguished.");
       return;
