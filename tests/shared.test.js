@@ -213,8 +213,9 @@ test("positions board tab close controls on the right", async () => {
 });
 
 test("shows close-tab feedback as a fixed toast centered on the group heading", async () => {
-  const [script, css] = await Promise.all([
+  const [script, dom, css] = await Promise.all([
     readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board-dom.js", import.meta.url), "utf8"),
     readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
   ]);
   const closeFn = script.slice(script.indexOf("async function closeTab"), script.indexOf("function applyOptimisticGroupReorder"));
@@ -225,12 +226,12 @@ test("shows close-tab feedback as a fixed toast centered on the group heading", 
   assert.match(script, /row\.closest\("\.group-card"\)/);
   assert.match(script, /card\?\.querySelector\("\.card-title"\)/);
   assert.match(script, /heading \?\? close/);
-  assert.match(script, /function boardToast/);
-  assert.match(script, /anchor\.classList\.contains\("card-title"\) \|\| anchor\.closest\("\.card-title"\)/);
-  assert.match(script, /isCardHeading/);
-  assert.match(script, /rect\.left \+ rect\.width \/ 2 - toastWidth \/ 2/);
-  assert.match(script, /document\.body\.append\(toast\)/);
-  assert.match(script, /setTimeout\(\(\) => \{ toast\.remove\(\); \}, 2200\)/);
+  assert.match(dom, /function boardToast/);
+  assert.match(dom, /anchor\.classList\.contains\("card-title"\) \|\| anchor\.closest\("\.card-title"\)/);
+  assert.match(dom, /isCardHeading/);
+  assert.match(dom, /rect\.left \+ rect\.width \/ 2 - toastWidth \/ 2/);
+  assert.match(dom, /document\.body\.append\(toast\)/);
+  assert.match(dom, /setTimeout\(\(\) => \{ toast\.remove\(\); \}, 2200\)/);
   assert.match(css, /\.board-toast \{[^}]*position: fixed/);
   assert.match(css, /\.board-toast\.success/);
   assert.match(css, /\.board-toast\.error/);

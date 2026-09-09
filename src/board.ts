@@ -1,5 +1,6 @@
 import { i18n } from "./i18n.js";
 import { boardCardsForDevice, boardTabMatchesQuery, deferredRemindersHidden, formatDeferredDateTime, getSiteKey, isBoardKey, moveBoardTabOptimistically, manualBoardGridRow, moveManualBoardCard, nextDeferredOccurrence, placeBoardCards, isDeferredTabDue, matchesTimelineFilter, validateWorkspaceTitle, DEFAULT_SETTINGS, type BoardKey, type BoardLayout, type BoardSegmentCard, type BoardTab, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type Settings, type Theme, type TimelineFilterRange, type WorkspaceSnapshot, type WorkspaceTab, type WorkspaceHistory, type WorkspaceVersion, type WorkspacePortableData } from "./shared.js";
+import { $, boardToast, faviconFor, getOpenTabUrls, makeButton, send, showStatus } from "./board-dom.js";
 
 interface BoardState {
   user: { id: string; email?: string } | null;
@@ -10,8 +11,6 @@ interface BoardState {
   settings?: Settings;
 }
 
-interface BoardResponse { error?: string }
-
 interface DuplicatePreview {
   groups: DuplicateBoardTabGroup[];
 }
@@ -20,12 +19,6 @@ interface DuplicateCloseResult {
   closed: number;
   skipped: number;
 }
-
-const $ = <T extends Element>(selector: string): T => {
-  const element = document.querySelector<T>(selector);
-  if (!element) throw new Error(`Missing element: ${selector}`);
-  return element;
-};
 
 const boardGrid = $<HTMLElement>("#board-grid");
 const boardContent = $("#board-content");
@@ -122,47 +115,6 @@ const COLLAPSED_STORAGE_KEY = "board_collapsed_groups";
 let historyWorkspaceId: string | null = null;
 let historyWorkspaceTitle: string = "";
 let currentHistory: WorkspaceHistory | null = null;
-
-async function send<T>(message: unknown): Promise<T> {
-  const response = await chrome.runtime.sendMessage(message) as T & BoardResponse;
-  if (response?.error) throw new Error(response.error);
-  return response;
-}
-
-function showStatus(message: string, error = false): void {
-  boardToast(message, error);
-}
-
-function boardToast(message: string, error = false, anchor?: HTMLElement): HTMLParagraphElement {
-  const toast = document.createElement("p");
-  toast.className = `board-toast ${error ? "error" : "success"}`;
-  toast.setAttribute("role", "status");
-  toast.setAttribute("aria-live", "polite");
-  toast.textContent = message;
-  document.body.append(toast);
-  if (anchor) {
-    const rect = anchor.getBoundingClientRect();
-    const margin = 6;
-    toast.style.maxWidth = `${Math.min(280, window.innerWidth - margin * 2)}px`;
-    const toastWidth = toast.offsetWidth;
-    const isCardHeading = anchor.classList.contains("card-title") || anchor.closest(".card-title") !== null;
-    let left: number;
-    if (isCardHeading) {
-      left = Math.max(margin, Math.min(rect.left + rect.width / 2 - toastWidth / 2, window.innerWidth - toastWidth - margin));
-    } else {
-      left = Math.max(margin, Math.min(rect.right - toastWidth, window.innerWidth - toastWidth - margin));
-    }
-    const top = Math.max(margin, rect.top - toast.offsetHeight - 4);
-    toast.style.top = `${top}px`;
-    toast.style.left = `${left}px`;
-  } else {
-    toast.style.top = "20px";
-    toast.style.left = "50%";
-    toast.style.transform = "translateX(-50%)";
-  }
-  window.setTimeout(() => { toast.remove(); }, 2200);
-  return toast;
-}
 
 async function refreshWorkspacesCache(): Promise<void> { const result = await send<{ workspaces: WorkspaceSnapshot[]; device: { id: string; name: string } }>({ type: "get-workspaces" }); workspaces = result.workspaces; currentDevice = result.device; }
 async function loadWorkspaces(): Promise<void> { await refreshWorkspacesCache(); if (!currentDevice) return; workspaceDeviceName.value = currentDevice.name; deviceNameOriginal = currentDevice.name; renderWorkspaces(); }
@@ -821,12 +773,6 @@ function showWorkspaceRestorePreview(tabs: readonly WorkspaceTab[], unavailableC
   }));
   workspaceRestoreDialog.showModal();
 }
-async function getOpenTabUrls(): Promise<Set<string>> {
-  try {
-    const tabs = await chrome.tabs.query({});
-    return new Set(tabs.map((tab) => tab.url).filter((url): url is string => typeof url === "string"));
-  } catch { return new Set(); }
-}
 async function previewWorkspaceRestore(id: string): Promise<void> {
   const [result, openUrls] = await Promise.all([
     send<{ preview: { tabs: WorkspaceTab[]; unavailableCount: number } }>({ type: "get-workspace-restore-preview", id }),
@@ -1074,16 +1020,6 @@ function groupColor(color: GroupColor): string {
     pink: "#d77ca4", purple: "#8b70ba", cyan: "#4fa4ac", orange: "#d68b4a",
   };
   return colors[color];
-}
-
-function makeButton(label: string, className: string, title: string): HTMLButtonElement {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = className;
-  button.title = title;
-  button.setAttribute("aria-label", title);
-  button.textContent = label;
-  return button;
 }
 
 function dragData(event: DragEvent, type: "board-tab" | "board-group" | "workspace-tab", value: string): void {
@@ -1826,17 +1762,6 @@ function renderWorkspaceCard(card: BoardSegmentCard, placement: { slot: number; 
   }
   article.append(heading, tabs);
   return article;
-}
-
-function faviconFor(url?: string): string {
-  if (!url) return "";
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
-    return `${parsed.origin}/favicon.ico`;
-  } catch {
-    return "";
-  }
 }
 
 function renderWorkspaceTab(tab: BoardSegmentCard["tabs"][number]): HTMLElement {
