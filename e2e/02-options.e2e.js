@@ -13,6 +13,18 @@ import { test, expect } from "./_fixtures.js";
  *     panel and verify theme + language controls visible.
  */
 test.describe("Options page navigation", () => {
+  /**
+   * The nav links ship enabled in options.html and are only disabled once
+   * render() applies the auth state, so sampling isEnabled() can catch a button
+   * that is about to be disabled. aria-disabled is absent in the markup and
+   * always set by setAuthenticatedUi, which makes it the "render has run" mark.
+   */
+  async function navIsEnabled(page, panel) {
+    const button = page.locator(`.nav-link[data-panel="${panel}"]`);
+    await expect(button).toHaveAttribute("aria-disabled", /.*/, { timeout: 20_000 });
+    return (await button.getAttribute("aria-disabled")) === "false";
+  }
+
   test("sidebar: account panel active by default, others disabled when not signed in", async ({ optionsPage: page }) => {
     const navButtons = page.locator(".nav-link");
     const total = await navButtons.count();
@@ -44,8 +56,7 @@ test.describe("Options page navigation", () => {
     // jump requires a non-disabled preferences nav button.
     const opts = await extContext.newPage();
     await opts.goto(`chrome-extension://${extensionId}/options.html`, { waitUntil: "domcontentloaded" });
-    const preferencesBtn = opts.locator('.nav-link[data-panel="preferences"]');
-    const enabled = await preferencesBtn.isEnabled();
+    const enabled = await navIsEnabled(opts, "preferences");
     if (!enabled) {
       test.skip(true, "Not authenticated in this profile; preferences nav button disabled so hash jump is intentionally a no-op.");
       await opts.close();
@@ -65,12 +76,11 @@ test.describe("Options page navigation", () => {
   });
 
   test("appearance panel can be switched to (once signed in) and renders controls", async ({ optionsPage: page }) => {
-    const appearanceBtn = page.locator('.nav-link[data-panel="appearance"]');
-    if (!(await appearanceBtn.isEnabled())) {
+    if (!(await navIsEnabled(page, "appearance"))) {
       test.skip(true, "Not authenticated; appearance nav button is disabled intentionally.");
       return;
     }
-    await appearanceBtn.click();
+    await page.locator('.nav-link[data-panel="appearance"]').click();
     await expect(page.locator("#appearance.panel")).not.toHaveAttribute("hidden", /.*/, { timeout: 8_000 });
     // theme-select + language-select are *visible* (not just attached) now.
     await expect(page.locator("#theme-select")).toBeVisible();
