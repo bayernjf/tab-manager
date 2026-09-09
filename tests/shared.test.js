@@ -59,6 +59,7 @@ const {
   moveBoardTabOptimistically,
   planBoardTabInsertion,
   validateWorkspaceTabsPayload,
+  deferredRemindersHidden,
   detectBrowserKind,
   groupWorkspaceTabsByDomain,
   moveWorkspaceTab,
@@ -1213,6 +1214,24 @@ test("validateWorkspaceTabsPayload surfaces the first invalid tab when several a
   ]);
 
   assert.deepEqual(result, { status: "invalid", displayIndex: 4, reason: "empty-title" });
+});
+
+test("deferredRemindersHidden hides the section in workspace mode even when reminders exist", () => {
+  assert.equal(deferredRemindersHidden({ workspaceMode: true, deferredCount: 3 }), true);
+  assert.equal(deferredRemindersHidden({ workspaceMode: true, deferredCount: 0 }), true);
+});
+
+test("deferredRemindersHidden shows the section on the current board only when reminders exist", () => {
+  assert.equal(deferredRemindersHidden({ workspaceMode: false, deferredCount: 3 }), false);
+  assert.equal(deferredRemindersHidden({ workspaceMode: false, deferredCount: 0 }), true);
+});
+
+test("board script decides deferred reminder visibility through a single helper", async () => {
+  const script = await readFile(new URL("../dist/board.js", import.meta.url), "utf8");
+  // 防回归：两处调用点都必须走 deferredRemindersHidden，否则切回“当前”会先显示空列表再隐藏。
+  assert.match(script, /deferredReminders\.classList\.toggle\("hidden", deferredRemindersHidden\(/);
+  assert.doesNotMatch(script, /deferredReminders\.classList\.toggle\("hidden", tabs\.length === 0\)/);
+  assert.doesNotMatch(script, /deferredReminders\.classList\.toggle\("hidden", on\)/);
 });
 
 test("moves a logical board group to a new rank without moving Ungrouped", () => {

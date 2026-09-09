@@ -1,5 +1,5 @@
 import { i18n } from "./i18n.js";
-import { boardCardsForDevice, boardTabMatchesQuery, formatDeferredDateTime, getSiteKey, isBoardKey, moveBoardTabOptimistically, manualBoardGridRow, moveManualBoardCard, nextDeferredOccurrence, placeBoardCards, isDeferredTabDue, matchesTimelineFilter, validateWorkspaceTitle, DEFAULT_SETTINGS, type BoardKey, type BoardLayout, type BoardSegmentCard, type BoardTab, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type Settings, type Theme, type TimelineFilterRange, type WorkspaceSnapshot, type WorkspaceTab, type WorkspaceHistory, type WorkspaceVersion, type WorkspacePortableData } from "./shared.js";
+import { boardCardsForDevice, boardTabMatchesQuery, deferredRemindersHidden, formatDeferredDateTime, getSiteKey, isBoardKey, moveBoardTabOptimistically, manualBoardGridRow, moveManualBoardCard, nextDeferredOccurrence, placeBoardCards, isDeferredTabDue, matchesTimelineFilter, validateWorkspaceTitle, DEFAULT_SETTINGS, type BoardKey, type BoardLayout, type BoardSegmentCard, type BoardTab, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type Settings, type Theme, type TimelineFilterRange, type WorkspaceSnapshot, type WorkspaceTab, type WorkspaceHistory, type WorkspaceVersion, type WorkspacePortableData } from "./shared.js";
 
 interface BoardState {
   user: { id: string; email?: string } | null;
@@ -1402,7 +1402,7 @@ function renderDeferredRow(tab: DeferredTab): HTMLElement {
 async function renderDeferredTabs(): Promise<void> {
   const tabs = (await send<{ tabs: DeferredTab[] }>({ type: "get-deferred-tabs" })).tabs
     .sort((first, second) => Date.parse(first.dueAt) - Date.parse(second.dueAt));
-  deferredReminders.classList.toggle("hidden", tabs.length === 0);
+  deferredReminders.classList.toggle("hidden", deferredRemindersHidden({ workspaceMode: scopeMode === "workspace", deferredCount: tabs.length }));
   deferredList.replaceChildren(...tabs.map(renderDeferredRow));
 }
 
@@ -2022,7 +2022,8 @@ function setWorkspaceMode(on: boolean): void {
   recentlyClosedBtn.classList.toggle("hidden", on);
   if (on && selectMode) setSelectMode(false);
   if (on && viewMode === "timeline") setViewMode("board");
-  // 仅在工作区模式隐藏；切回“当前”时不主动显示，由 renderDeferredTabs 按数据决定，避免空列表先弹出再隐藏的闪烁。
+  // 可见性只由 deferredRemindersHidden 判定：切回“当前”时保持隐藏，等 renderDeferredTabs 拿到数据再决定，
+  // 避免空列表先显示再隐藏的闪烁。
   if (on) deferredReminders.classList.add("hidden");
   workspaceHeader.classList.toggle("hidden", !on);
 }

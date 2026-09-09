@@ -605,6 +605,10 @@ export function validateWorkspaceTabsPayload(value: unknown, limit = 200): Works
   return { status: "ok", tabs: validations.flatMap((validation) => validation.status === "valid" ? [validation.tab] : []) };
 }
 
+export function deferredRemindersHidden(input: { workspaceMode: boolean; deferredCount: number }): boolean {
+  return input.workspaceMode || input.deferredCount === 0;
+}
+
 const BROWSER_KINDS: readonly BrowserKind[] = ["chrome", "edge"];
 const BOARD_GROUP_KINDS: readonly BoardGroupKind[] = ["automatic", "custom", "ungrouped"];
 
