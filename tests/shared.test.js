@@ -2823,3 +2823,233 @@ test("saveWorkspaceVersion appends a new version onto the existing history", asy
   assert.equal(updated.versions[1].note, "second pass");
   assert.deepEqual(values.workspaceHistories["ws-1"].versions.map((v) => v.version), [1, 2]);
 });
+
+// --- auth.ts ----------------------------------------------------------------
+
+const realFetch = globalThis.fetch;
+
+/**
+ * Routes auth requests to a scripted handler. dist/ is built with the real
+ * Supabase URL, so an unstubbed call would hit the live project — the default
+ * handler throws instead of letting that happen silently.
+ */
+function stubFetch(handler = (url) => { throw new Error(`unexpected network call: ${url}`); }) {
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init, body: init?.body ? JSON.parse(init.body) : undefined });
+    return handler(String(url), init, calls.length);
+  };
+  return calls;
+}
+
+function authResponse(body, status = 200) {
+  return { ok: status >= 200 && status < 300, status, json: async () => body };
+}
+
+function timeoutRejection() {
+  const error = new Error("The operation was aborted due to timeout");
+  error.name = "TimeoutError";
+  throw error;
+}
+
+const nowSeconds = () => Math.floor(Date.now() / 1000);
+const sessionFixture = (overrides = {}) => ({
+  access_token: "token-old",
+  refresh_token: "refresh-1",
+  expires_at: nowSeconds() + 3600,
+  user: { id: "user-1", email: "a@example.com" },
+  ...overrides,
+});
+
+test.afterEach(() => { globalThis.fetch = realFetch; });
+
+test("getLocalUser returns null for an expired remember-me window without any network call", async () => {
+  const values = stubStorage({ supabaseSession: sessionFixture({ rememberUntil: nowSeconds() - 1 }) });
+  stubFetch();
+  const { getLocalUser } = await import("../dist/auth.js");
+
+  assert.equal(await getLocalUser(), null);
+  // The stale session is left for getValidSession to clear; getLocalUser must stay offline.
+  assert.ok(values.supabaseSession);
+});
+
+test("getLocalUser accepts a session with no remember-me deadline", async () => {
+  stubStorage({ supabaseSession: sessionFixture() });
+  stubFetch();
+  const { getLocalUser } = await import("../dist/auth.js");
+
+  assert.deepEqual(await getLocalUser(), { id: "user-1", email: "a@example.com" });
+});
+
+test("an expired remember-me window signs the device out on the next validation", async () => {
+  const values = stubStorage({ supabaseSession: sessionFixture({ rememberUntil: nowSeconds() - 1 }) });
+  const calls = stubFetch();
+  const { getCurrentUser } = await import("../dist/auth.js");
+
+  assert.equal(await getCurrentUser(), null);
+  assert.equal(values.supabaseSession, undefined);
+  assert.deepEqual(calls, []);
+});
+
+test("a near-expiry token is refreshed and the new session preserves the remember-me deadline", async () => {
+  const rememberUntil = nowSeconds() + 86_400;
+  const values = stubStorage({ supabaseSession: sessionFixture({ expires_at: nowSeconds() + 30, rememberUntil }) });
+  const calls = stubFetch((url) => {
+    if (url.includes("grant_type=refresh_token")) {
+      return authResponse({ access_token: "token-new", refresh_token: "refresh-2", expires_in: 3600, user: { id: "user-1" } });
+    }
+    return authResponse({ id: "user-1", email: "a@example.com" });
+  });
+  const { getCurrentUser } = await import("../dist/auth.js");
+
+  assert.deepEqual(await getCurrentUser(), { id: "user-1", email: "a@example.com" });
+  assert.equal(values.supabaseSession.access_token, "token-new");
+  assert.equal(values.supabaseSession.refresh_token, "refresh-2");
+  assert.equal(values.supabaseSession.rememberUntil, rememberUntil);
+  assert.ok(values.supabaseSession.expires_at > nowSeconds() + 3000);
+  assert.equal(calls[0].body.refresh_token, "refresh-1");
+  // The refreshed token, not the stale one, must be used for the follow-up request.
+  assert.equal(calls[1].init.headers.Authorization, "Bearer token-new");
+});
+
+test("a rejected refresh token signs the user out before the profile is ever requested", async () => {
+  const values = stubStorage({ supabaseSession: sessionFixture({ expires_at: nowSeconds() + 30 }) });
+  const calls = stubFetch(() => authResponse({ msg: "Invalid Refresh Token" }, 401));
+  const { getCurrentUser } = await import("../dist/auth.js");
+
+  assert.equal(await getCurrentUser(), null);
+  assert.equal(values.supabaseSession, undefined);
+  // Bailing out here is what proves getValidSession cleared the session itself.
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /grant_type=refresh_token/);
+});
+
+test("a refresh that times out keeps the session instead of signing the user out", async () => {
+  const values = stubStorage({ supabaseSession: sessionFixture({ expires_at: nowSeconds() + 30 }) });
+  stubFetch((url) => {
+    if (url.includes("grant_type=refresh_token")) timeoutRejection();
+    return authResponse({ id: "user-1", email: "a@example.com" });
+  });
+  const { getCurrentUser } = await import("../dist/auth.js");
+
+  assert.deepEqual(await getCurrentUser(), { id: "user-1", email: "a@example.com" });
+  assert.ok(values.supabaseSession, "a flaky network must never clear the session");
+  assert.equal(values.supabaseSession.access_token, "token-old");
+});
+
+test("a server error during refresh keeps the session", async () => {
+  const values = stubStorage({ supabaseSession: sessionFixture({ expires_at: nowSeconds() + 30 }) });
+  stubFetch((url) => (url.includes("grant_type=refresh_token") ? authResponse({ message: "boom" }, 500) : authResponse({ id: "user-1" })));
+  const { getCurrentUser } = await import("../dist/auth.js");
+
+  assert.deepEqual(await getCurrentUser(), { id: "user-1" });
+  assert.ok(values.supabaseSession);
+});
+
+test("getCurrentUser falls back to the cached account when the profile request times out", async () => {
+  const values = stubStorage({ supabaseSession: sessionFixture() });
+  stubFetch(() => timeoutRejection());
+  const { getCurrentUser } = await import("../dist/auth.js");
+
+  assert.deepEqual(await getCurrentUser(), { id: "user-1", email: "a@example.com" });
+  assert.ok(values.supabaseSession);
+});
+
+test("getCurrentUser signs out when the profile request is explicitly rejected", async () => {
+  const values = stubStorage({ supabaseSession: sessionFixture() });
+  stubFetch(() => authResponse({ msg: "invalid claim" }, 403));
+  const { getCurrentUser } = await import("../dist/auth.js");
+
+  assert.equal(await getCurrentUser(), null);
+  assert.equal(values.supabaseSession, undefined);
+});
+
+test("getCurrentUser makes no request when nothing is stored", async () => {
+  stubStorage({});
+  const calls = stubFetch();
+  const { getCurrentUser } = await import("../dist/auth.js");
+
+  assert.equal(await getCurrentUser(), null);
+  assert.deepEqual(calls, []);
+});
+
+test("getAccessToken withholds an already-expired token", async () => {
+  stubStorage({ supabaseSession: sessionFixture({ expires_at: nowSeconds() - 10 }) });
+  stubFetch((url) => (url.includes("grant_type=refresh_token") ? timeoutRejection() : authResponse({})));
+  const { getAccessToken } = await import("../dist/auth.js");
+
+  // Refresh failed, so the retained session is stale and its token must not be handed out.
+  assert.equal(await getAccessToken(), null);
+});
+
+test("getAccessToken returns the token of a valid session", async () => {
+  stubStorage({ supabaseSession: sessionFixture() });
+  stubFetch();
+  const { getAccessToken } = await import("../dist/auth.js");
+
+  assert.equal(await getAccessToken(), "token-old");
+});
+
+test("signIn records a seven-day remember-me deadline only when asked", async () => {
+  const values = stubStorage({});
+  stubFetch(() => authResponse({ access_token: "t", refresh_token: "r", expires_in: 3600, user: { id: "user-1" } }));
+  const { signIn } = await import("../dist/auth.js");
+
+  await signIn("a@example.com", "pw", true);
+  const expected = nowSeconds() + 7 * 24 * 60 * 60;
+  assert.ok(Math.abs(values.supabaseSession.rememberUntil - expected) <= 5);
+
+  await signIn("a@example.com", "pw");
+  assert.equal("rememberUntil" in values.supabaseSession, false);
+});
+
+test("signUp awaiting email confirmation stores no session", async () => {
+  const values = stubStorage({});
+  stubFetch(() => authResponse({ user: { id: "user-1" } }));
+  const { signUp } = await import("../dist/auth.js");
+
+  assert.deepEqual(await signUp("a@example.com", "pw"), { user: { id: "user-1" }, requiresEmailConfirmation: true });
+  assert.equal(values.supabaseSession, undefined);
+});
+
+test("signUp that returns a session signs the user straight in", async () => {
+  const values = stubStorage({});
+  stubFetch(() => authResponse({ access_token: "t", refresh_token: "r", expires_in: 3600, user: { id: "user-1" } }));
+  const { signUp } = await import("../dist/auth.js");
+
+  const result = await signUp("a@example.com", "pw");
+
+  assert.equal(result.requiresEmailConfirmation, false);
+  assert.equal(values.supabaseSession.access_token, "t");
+});
+
+test("signOut clears the local session even when the logout request fails", async () => {
+  const values = stubStorage({ supabaseSession: sessionFixture() });
+  stubFetch(() => timeoutRejection());
+  const { signOut } = await import("../dist/auth.js");
+
+  await assert.rejects(signOut());
+  assert.equal(values.supabaseSession, undefined);
+});
+
+test("auth request failures are reported as actionable Chinese messages", async () => {
+  stubStorage({});
+  const { signIn } = await import("../dist/auth.js");
+
+  stubFetch(() => timeoutRejection());
+  await assert.rejects(signIn("a@example.com", "pw"), /连接 Supabase 超时/);
+
+  stubFetch(() => { throw new TypeError("Failed to fetch"); });
+  await assert.rejects(signIn("a@example.com", "pw"), /无法连接 Supabase/);
+});
+
+test("an HTTP auth error carries its status so it counts as an explicit failure", async () => {
+  stubStorage({});
+  stubFetch(() => authResponse({ msg: "Invalid login credentials" }, 400));
+  const { signIn, isExplicitAuthenticationFailure } = await import("../dist/auth.js");
+
+  const error = await signIn("a@example.com", "pw").then(() => null, (reason) => reason);
+  assert.equal(error.message, "Invalid login credentials");
+  assert.equal(error.status, 400);
+  assert.equal(isExplicitAuthenticationFailure(error), true);
+});
