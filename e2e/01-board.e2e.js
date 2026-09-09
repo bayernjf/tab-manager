@@ -6,11 +6,11 @@ import { test, expect } from "./_fixtures.js";
  *
  * 断言针对 board.html 中真实 id（见 `src/board.html` grep）：
  *   顶部工具栏：board-theme-toggle / view-toggle-board / view-toggle-timeline
- *                / toggle-select-mode / recently-closed-btn / memory-usage-btn
+ *                / toggle-select-mode / recently-closed-btn / auto-fill-wrapper
  *                / open-workspaces / review-duplicates / refresh
  *   批量操作栏：batch-action-bar / batch-select-all / exit-select-mode
  *   时间线工具栏：timeline-toolbar / timeline-sort
- *   弹窗：workspace-dialog / recently-closed-dialog / memory-usage-dialog
+ *   弹窗：workspace-dialog / recently-closed-dialog
  *         / workspace-import-preview-dialog / workspace-history-dialog
  *   折叠：board-grid 中 .group-card + button with aria-label~="折叠"
  */
@@ -22,7 +22,7 @@ test.describe("Board page local flows", () => {
     await expect(page.locator("#view-toggle-timeline")).toBeVisible();
     await expect(page.locator("#toggle-select-mode")).toBeVisible();
     await expect(page.locator("#recently-closed-btn")).toBeVisible();
-    await expect(page.locator("#memory-usage-btn")).toBeVisible();
+    await expect(page.locator("#auto-fill-wrapper")).toBeVisible();
     await expect(page.locator("#open-workspaces")).toBeVisible();
     await expect(page.locator("#review-duplicates")).toBeVisible();
     await expect(page.locator("#refresh")).toBeVisible();
