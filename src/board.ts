@@ -1,5 +1,7 @@
 import { i18n } from "./i18n.js";
-import { boardCardsForDevice, boardTabMatchesQuery, formatDeferredDateTime, getSiteKey, heightUnitsForTabCount, isBoardKey, manualBoardGridRow, moveManualBoardCard, nextDeferredOccurrence, placeBoardCards, isDeferredTabDue, matchesTimelineFilter, segmentTabs, validateWorkspaceTitle, DEFAULT_SETTINGS, type BoardKey, type BoardLayout, type BoardSegmentCard, type BoardTab, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type Settings, type Theme, type TimelineFilterRange, type WorkspaceSnapshot, type WorkspaceTab, type WorkspaceHistory, type WorkspaceVersion, type WorkspacePortableData } from "./shared.js";
+import { boardCardsForDevice, boardTabMatchesQuery, deferredRemindersHidden, formatDeferredDateTime, getSiteKey, isBoardKey, moveBoardTabOptimistically, manualBoardGridRow, moveManualBoardCard, nextDeferredOccurrence, placeBoardCards, isDeferredTabDue, matchesTimelineFilter, validateWorkspaceTitle, DEFAULT_SETTINGS, type BoardKey, type BoardLayout, type BoardSegmentCard, type BoardTab, type DeferredTab, type DuplicateBoardTabGroup, type GroupColor, type Settings, type Theme, type TimelineFilterRange, type WorkspaceSnapshot, type WorkspaceTab, type WorkspacePortableData } from "./shared.js";
+import { $, boardToast, faviconFor, getOpenTabUrls, makeButton, send, showStatus } from "./board-dom.js";
+import { openWorkspaceHistoryDialog, wireWorkspaceHistoryDialog } from "./board-history.js";
 
 interface BoardState {
   user: { id: string; email?: string } | null;
@@ -10,8 +12,6 @@ interface BoardState {
   settings?: Settings;
 }
 
-interface BoardResponse { error?: string }
-
 interface DuplicatePreview {
   groups: DuplicateBoardTabGroup[];
 }
@@ -20,12 +20,6 @@ interface DuplicateCloseResult {
   closed: number;
   skipped: number;
 }
-
-const $ = <T extends Element>(selector: string): T => {
-  const element = document.querySelector<T>(selector);
-  if (!element) throw new Error(`Missing element: ${selector}`);
-  return element;
-};
 
 const boardGrid = $<HTMLElement>("#board-grid");
 const boardContent = $("#board-content");
@@ -86,11 +80,6 @@ const workspaceImportPreviewList = $("#workspace-import-preview-list");
 const closeWorkspaceImportPreview = $<HTMLButtonElement>("#close-workspace-import-preview");
 const cancelWorkspaceImportPreview = $<HTMLButtonElement>("#cancel-workspace-import-preview");
 const confirmWorkspaceImportPreview = $<HTMLButtonElement>("#confirm-workspace-import-preview");
-const workspaceHistoryDialog = $<HTMLDialogElement>("#workspace-history-dialog");
-const workspaceHistoryTitle = $("#workspace-history-title");
-const workspaceHistoryList = $("#workspace-history-list");
-const closeWorkspaceHistory = $<HTMLButtonElement>("#close-workspace-history");
-const saveWorkspaceVersionBtn = $<HTMLButtonElement>("#save-workspace-version");
 
 interface WorkspaceImportPreview {
   workspaceCount: number;
@@ -119,50 +108,6 @@ let recentlyClosedItems: { tab: NonNullable<chrome.sessions.Session["tab"]> & { 
 let navFocusIndex = -1;
 let navTabIds: number[] = [];
 const COLLAPSED_STORAGE_KEY = "board_collapsed_groups";
-let historyWorkspaceId: string | null = null;
-let historyWorkspaceTitle: string = "";
-let currentHistory: WorkspaceHistory | null = null;
-
-async function send<T>(message: unknown): Promise<T> {
-  const response = await chrome.runtime.sendMessage(message) as T & BoardResponse;
-  if (response?.error) throw new Error(response.error);
-  return response;
-}
-
-function showStatus(message: string, error = false): void {
-  boardToast(message, error);
-}
-
-function boardToast(message: string, error = false, anchor?: HTMLElement): HTMLParagraphElement {
-  const toast = document.createElement("p");
-  toast.className = `board-toast ${error ? "error" : "success"}`;
-  toast.setAttribute("role", "status");
-  toast.setAttribute("aria-live", "polite");
-  toast.textContent = message;
-  document.body.append(toast);
-  if (anchor) {
-    const rect = anchor.getBoundingClientRect();
-    const margin = 6;
-    toast.style.maxWidth = `${Math.min(280, window.innerWidth - margin * 2)}px`;
-    const toastWidth = toast.offsetWidth;
-    const isCardHeading = anchor.classList.contains("card-title") || anchor.closest(".card-title") !== null;
-    let left: number;
-    if (isCardHeading) {
-      left = Math.max(margin, Math.min(rect.left + rect.width / 2 - toastWidth / 2, window.innerWidth - toastWidth - margin));
-    } else {
-      left = Math.max(margin, Math.min(rect.right - toastWidth, window.innerWidth - toastWidth - margin));
-    }
-    const top = Math.max(margin, rect.top - toast.offsetHeight - 4);
-    toast.style.top = `${top}px`;
-    toast.style.left = `${left}px`;
-  } else {
-    toast.style.top = "20px";
-    toast.style.left = "50%";
-    toast.style.transform = "translateX(-50%)";
-  }
-  window.setTimeout(() => { toast.remove(); }, 2200);
-  return toast;
-}
 
 async function refreshWorkspacesCache(): Promise<void> { const result = await send<{ workspaces: WorkspaceSnapshot[]; device: { id: string; name: string } }>({ type: "get-workspaces" }); workspaces = result.workspaces; currentDevice = result.device; }
 async function loadWorkspaces(): Promise<void> { await refreshWorkspacesCache(); if (!currentDevice) return; workspaceDeviceName.value = currentDevice.name; deviceNameOriginal = currentDevice.name; renderWorkspaces(); }
@@ -821,12 +766,6 @@ function showWorkspaceRestorePreview(tabs: readonly WorkspaceTab[], unavailableC
   }));
   workspaceRestoreDialog.showModal();
 }
-async function getOpenTabUrls(): Promise<Set<string>> {
-  try {
-    const tabs = await chrome.tabs.query({});
-    return new Set(tabs.map((tab) => tab.url).filter((url): url is string => typeof url === "string"));
-  } catch { return new Set(); }
-}
 async function previewWorkspaceRestore(id: string): Promise<void> {
   const [result, openUrls] = await Promise.all([
     send<{ preview: { tabs: WorkspaceTab[]; unavailableCount: number } }>({ type: "get-workspace-restore-preview", id }),
@@ -929,135 +868,6 @@ function cancelWorkspaceImport(): void {
   void send({ type: "import-workspaces-json", cancelled: true }).catch(() => {});
 }
 
-async function openWorkspaceHistoryDialog(workspaceId: string, workspaceTitle: string): Promise<void> {
-  historyWorkspaceId = workspaceId;
-  historyWorkspaceTitle = workspaceTitle;
-  workspaceHistoryTitle.textContent = i18n.t("workspaceHistoryTitle", [workspaceTitle]);
-  saveWorkspaceVersionBtn.textContent = i18n.t("saveAsVersion") || "保存为一版";
-  workspaceHistoryList.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: i18n.t("loading") }));
-  workspaceHistoryDialog.showModal();
-  try {
-    const result = await send<{ history: WorkspaceHistory | null; maxVersions: number }>({ type: "get-workspace-history", id: workspaceId });
-    currentHistory = result.history ?? { workspaceId, versions: [] };
-    renderWorkspaceHistory(currentHistory, result.maxVersions);
-  } catch (error) {
-    workspaceHistoryList.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: error instanceof Error ? error.message : String(error) }));
-  }
-}
-
-function renderWorkspaceHistory(history: WorkspaceHistory, maxVersions: number): void {
-  const versions = history.versions.slice().sort((a, b) => b.version - a.version);
-  if (versions.length === 0) {
-    workspaceHistoryList.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: i18n.t("noHistory") }));
-    return;
-  }
-  const fallback = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
-  workspaceHistoryList.replaceChildren(...versions.map((version) => {
-    const row = document.createElement("div");
-    row.className = "workspace-history-row";
-    const header = document.createElement("div");
-    header.className = "workspace-history-row-header";
-    const versionBadge = document.createElement("span");
-    versionBadge.className = "workspace-history-version";
-    versionBadge.textContent = `#${version.version}`;
-    const savedAt = document.createElement("span");
-    savedAt.className = "workspace-history-savedat";
-    savedAt.textContent = i18n.t("savedAtTime", [formatDeferredDateTime(version.savedAt)]);
-    const tabsCount = document.createElement("span");
-    tabsCount.className = "workspace-history-tabcount";
-    tabsCount.textContent = `${version.snapshot.tabs.length} ${i18n.t("tabs")}`;
-    header.append(versionBadge, savedAt, tabsCount);
-    const note = document.createElement("div");
-    note.className = "workspace-history-note";
-    note.textContent = version.note || i18n.t("noVersionNote") || "（无备注）";
-    const preview = document.createElement("div");
-    preview.className = "workspace-history-preview";
-    const previewTabs = version.snapshot.tabs.slice(0, 3);
-    previewTabs.forEach((tab) => {
-      const tabEl = document.createElement("div");
-      tabEl.className = "workspace-history-tab";
-      const icon = document.createElement("img");
-      icon.className = "tab-icon";
-      icon.alt = "";
-      icon.src = faviconFor(tab.url) || fallback;
-      icon.addEventListener("error", () => { if (icon.src !== fallback) icon.src = fallback; });
-      const title = document.createElement("span");
-      title.className = "workspace-history-tab-title";
-      title.textContent = tab.title;
-      title.title = tab.url || tab.title;
-      tabEl.append(icon, title);
-      preview.append(tabEl);
-    });
-    if (version.snapshot.tabs.length > 3) {
-      const more = document.createElement("span");
-      more.className = "workspace-history-more";
-      more.textContent = `+${version.snapshot.tabs.length - 3}`;
-      preview.append(more);
-    }
-    const actions = document.createElement("div");
-    actions.className = "deferred-actions workspace-history-actions";
-    const restoreBtn = makeButton(i18n.t("restoreVersion"), "deferred-action deferred-open", i18n.t("restoreVersion"));
-    restoreBtn.addEventListener("click", () => void confirmRestoreVersion(version));
-    actions.append(restoreBtn);
-    row.append(header, note, preview, actions);
-    return row;
-  }));
-}
-
-async function confirmRestoreVersion(version: WorkspaceVersion): Promise<void> {
-  if (!historyWorkspaceId) return;
-  const tab = await chrome.tabs.getCurrent();
-  const windowId = tab?.windowId;
-  if (!windowId) {
-    showStatus(i18n.t("invalidWindow"), true);
-    return;
-  }
-  const tabCount = version.snapshot.tabs.length;
-  const message = i18n.t("confirmRestoreVersionPrompt")
-    ? i18n.t("confirmRestoreVersionPrompt", [String(version.version), String(tabCount)])
-    : `确认恢复版本 #${version.version}？将打开 ${tabCount} 个标签。`;
-  if (!window.confirm(message)) return;
-  try {
-    const openUrls = await getOpenTabUrls();
-    const result = await send<{ ok: boolean; created: number }>({
-      type: "restore-workspace-history-version",
-      id: historyWorkspaceId,
-      version: version.version,
-      windowId,
-      confirmed: true,
-      skipUrls: [...openUrls],
-    });
-    workspaceHistoryDialog.close();
-    showStatus(i18n.t("openedTabs", [String(result.created)]));
-  } catch (error) {
-    showStatus(error instanceof Error ? error.message : String(error), true);
-  }
-}
-
-async function saveWorkspaceVersion(): Promise<void> {
-  if (!historyWorkspaceId) return;
-  const defaultNote = i18n.t("versionNoteDefault") || "手动保存";
-  const promptText = i18n.t("versionNotePrompt") || "输入备注（可选）：";
-  const noteInput = window.prompt(promptText, defaultNote);
-  if (noteInput === null) return;
-  try {
-    saveWorkspaceVersionBtn.disabled = true;
-    const note = noteInput.trim() || undefined;
-    const result = await send<{ ok: boolean; history: WorkspaceHistory }>({
-      type: "save-workspace-history-version",
-      id: historyWorkspaceId,
-      note,
-    });
-    currentHistory = result.history;
-    renderWorkspaceHistory(result.history, 50);
-    showStatus(i18n.t("versionSaved") || "已保存版本");
-  } catch (error) {
-    showStatus(error instanceof Error ? error.message : String(error), true);
-  } finally {
-    saveWorkspaceVersionBtn.disabled = false;
-  }
-}
-
 function deviceClass(): "desktop" | "tablet" | "mobile" {
   if (window.innerWidth <= 640) return "mobile";
   if (window.innerWidth <= 980) return "tablet";
@@ -1074,16 +884,6 @@ function groupColor(color: GroupColor): string {
     pink: "#d77ca4", purple: "#8b70ba", cyan: "#4fa4ac", orange: "#d68b4a",
   };
   return colors[color];
-}
-
-function makeButton(label: string, className: string, title: string): HTMLButtonElement {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = className;
-  button.title = title;
-  button.setAttribute("aria-label", title);
-  button.textContent = label;
-  return button;
 }
 
 function dragData(event: DragEvent, type: "board-tab" | "board-group" | "workspace-tab", value: string): void {
@@ -1402,7 +1202,7 @@ function renderDeferredRow(tab: DeferredTab): HTMLElement {
 async function renderDeferredTabs(): Promise<void> {
   const tabs = (await send<{ tabs: DeferredTab[] }>({ type: "get-deferred-tabs" })).tabs
     .sort((first, second) => Date.parse(first.dueAt) - Date.parse(second.dueAt));
-  deferredReminders.classList.toggle("hidden", tabs.length === 0);
+  deferredReminders.classList.toggle("hidden", deferredRemindersHidden({ workspaceMode: scopeMode === "workspace", deferredCount: tabs.length }));
   deferredList.replaceChildren(...tabs.map(renderDeferredRow));
 }
 
@@ -1828,17 +1628,6 @@ function renderWorkspaceCard(card: BoardSegmentCard, placement: { slot: number; 
   return article;
 }
 
-function faviconFor(url?: string): string {
-  if (!url) return "";
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
-    return `${parsed.origin}/favicon.ico`;
-  } catch {
-    return "";
-  }
-}
-
 function renderWorkspaceTab(tab: BoardSegmentCard["tabs"][number]): HTMLElement {
   const flatIndex = tab.id;
   const row = document.createElement("div");
@@ -2022,7 +1811,8 @@ function setWorkspaceMode(on: boolean): void {
   recentlyClosedBtn.classList.toggle("hidden", on);
   if (on && selectMode) setSelectMode(false);
   if (on && viewMode === "timeline") setViewMode("board");
-  // 仅在工作区模式隐藏；切回“当前”时不主动显示，由 renderDeferredTabs 按数据决定，避免空列表先弹出再隐藏的闪烁。
+  // 可见性只由 deferredRemindersHidden 判定：切回“当前”时保持隐藏，等 renderDeferredTabs 拿到数据再决定，
+  // 避免空列表先显示再隐藏的闪烁。
   if (on) deferredReminders.classList.add("hidden");
   workspaceHeader.classList.toggle("hidden", !on);
 }
@@ -2091,54 +1881,11 @@ async function load(): Promise<void> {
   void refreshWorkspacesCache().catch(() => {});
 }
 
-function rebalanceGroupSegments(boardKey: BoardKey): void {
-  if (!currentState) return;
-  const cards = currentState.groups.filter((card) => card.boardKey === boardKey);
-  if (cards.length <= 1) return;
-  const template = cards[0];
-  if (!template) return;
-  const allTabs = cards.flatMap((card) => card.tabs);
-  const segments = segmentTabs(allTabs).length ? segmentTabs(allTabs) : [[]];
-  const existing = currentState.groups.filter((card) => card.boardKey !== boardKey);
-  const rebuilt: BoardSegmentCard[] = segments.map((tabs, index) => ({
-    ...template,
-    tabs,
-    segmentIndex: index,
-    segmentCount: segments.length,
-    heightUnits: heightUnitsForTabCount(tabs.length),
-  }));
-  currentState.groups = [...existing, ...rebuilt].sort((left, right) => {
-    if (left.boardKey !== right.boardKey) return (left.rank ?? 0) - (right.rank ?? 0);
-    return left.segmentIndex - right.segmentIndex;
-  });
-}
-
-function applyOptimisticTabMove(tabId: number, targetBoardKey: BoardKey, position: "before" | "after" | "append", targetSegmentIndex: number, targetTabId?: number): void {
-  if (!currentState) return;
-  let movedTab: BoardSegmentCard["tabs"][number] | undefined;
-  for (const card of currentState.groups) {
-    const index = card.tabs.findIndex((tab) => tab.id === tabId);
-    if (index >= 0) { [movedTab] = card.tabs.splice(index, 1); break; }
-  }
-  if (!movedTab) return;
-  const targetCard = currentState.groups.find((card) => card.boardKey === targetBoardKey && card.segmentIndex === targetSegmentIndex);
-  if (targetCard) {
-    if (position === "append" || targetTabId === undefined) {
-      targetCard.tabs.push(movedTab);
-    } else {
-      const targetIndex = targetCard.tabs.findIndex((tab) => tab.id === targetTabId);
-      if (targetIndex < 0) { targetCard.tabs.push(movedTab); }
-      else { targetCard.tabs.splice(position === "before" ? targetIndex : targetIndex + 1, 0, movedTab); }
-    }
-  }
-  rebalanceGroupSegments(targetBoardKey);
-}
-
 async function moveTab(tabId: number, targetBoardKey: BoardKey, position: "before" | "after" | "append", targetSegmentIndex: number, targetTabId?: number): Promise<void> {
   if (!currentState) return;
   const snapshot = structuredClone(currentState);
   try {
-    applyOptimisticTabMove(tabId, targetBoardKey, position, targetSegmentIndex, targetTabId);
+    currentState.groups = moveBoardTabOptimistically(currentState.groups, { tabId, targetBoardKey, position, targetSegmentIndex, ...(targetTabId === undefined ? {} : { targetTabId }) });
     renderBoard(currentState);
     await send({ type: "move-board-tab", drop: { tabId, targetBoardKey, position, ...(targetTabId === undefined ? {} : { targetTabId }) } });
     showStatus(i18n.t("tabMoved"));
@@ -2159,7 +1906,6 @@ async function closeTab(tabId: number, anchor?: HTMLElement): Promise<void> {
   try {
     await send({ type: "close-board-tab", tabId });
     boardToast(i18n.t("tabClosed"), false, anchor);
-    await load();
   } catch (error) { boardToast(error instanceof Error ? error.message : String(error), true, anchor); }
 }
 
@@ -2347,8 +2093,7 @@ importWorkspacesInput.addEventListener("change", (event) => void handleImportFil
 closeWorkspaceImportPreview.addEventListener("click", cancelWorkspaceImport);
 cancelWorkspaceImportPreview.addEventListener("click", cancelWorkspaceImport);
 confirmWorkspaceImportPreview.addEventListener("click", () => void confirmWorkspaceImport());
-closeWorkspaceHistory.addEventListener("click", () => workspaceHistoryDialog.close());
-saveWorkspaceVersionBtn.addEventListener("click", () => void saveWorkspaceVersion());
+wireWorkspaceHistoryDialog();
 viewToggleBoard.addEventListener("click", () => { if (!selectMode) setViewMode("board"); });
 viewToggleTimeline.addEventListener("click", () => { if (!selectMode) setViewMode("timeline"); });
 timelineSort.addEventListener("change", renderTimeline);

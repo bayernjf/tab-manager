@@ -13,6 +13,18 @@ import { test, expect } from "./_fixtures.js";
  *     panel and verify theme + language controls visible.
  */
 test.describe("Options page navigation", () => {
+  /**
+   * The nav links ship enabled in options.html and are only disabled once
+   * render() applies the auth state, so sampling isEnabled() can catch a button
+   * that is about to be disabled. aria-disabled is absent in the markup and
+   * always set by setAuthenticatedUi, which makes it the "render has run" mark.
+   */
+  async function navIsEnabled(page, panel) {
+    const button = page.locator(`.nav-link[data-panel="${panel}"]`);
+    await expect(button).toHaveAttribute("aria-disabled", /.*/, { timeout: 20_000 });
+    return (await button.getAttribute("aria-disabled")) === "false";
+  }
+
   test("sidebar: account panel active by default, others disabled when not signed in", async ({ optionsPage: page }) => {
     const navButtons = page.locator(".nav-link");
     const total = await navButtons.count();
@@ -38,16 +50,15 @@ test.describe("Options page navigation", () => {
     expect(await langOpts.count(), "language-select options").toBeGreaterThanOrEqual(3);
   });
 
-  test("#shortcut-times hash jumps to privacy panel (once signed in)", async ({ extContext, extensionId, popupPage }) => {
+  test("#shortcut-times hash opens the preferences panel and reveals the shortcut card (once signed in)", async ({ extContext, extensionId, popupPage }) => {
     // In this profile, if the previous login e2e test authenticated we'll
     // have a session already. Otherwise, bail out with skip since the hash
-    // jump requires a non-disabled privacy nav button.
+    // jump requires a non-disabled preferences nav button.
     const opts = await extContext.newPage();
     await opts.goto(`chrome-extension://${extensionId}/options.html`, { waitUntil: "domcontentloaded" });
-    const privacyBtn = opts.locator('.nav-link[data-panel="privacy"]');
-    const enabled = await privacyBtn.isEnabled();
+    const enabled = await navIsEnabled(opts, "preferences");
     if (!enabled) {
-      test.skip(true, "Not authenticated in this profile; privacy nav button disabled so hash jump is intentionally a no-op.");
+      test.skip(true, "Not authenticated in this profile; preferences nav button disabled so hash jump is intentionally a no-op.");
       await opts.close();
       return;
     }
@@ -55,19 +66,21 @@ test.describe("Options page navigation", () => {
     await opts.close();
     const opts2 = await extContext.newPage();
     await opts2.goto(`chrome-extension://${extensionId}/options.html#shortcut-times`, { waitUntil: "domcontentloaded" });
-    await expect(opts2.locator("#privacy.panel")).not.toHaveAttribute("hidden", /.*/, { timeout: 10_000 });
-    // Active panel matches privacy nav.
-    await expect(opts2.locator('.nav-link[data-panel="privacy"]')).toHaveClass(/active/);
+    await expect(opts2.locator("#preferences.panel")).not.toHaveAttribute("hidden", /.*/, { timeout: 10_000 });
+    // Active panel matches preferences nav.
+    await expect(opts2.locator('.nav-link[data-panel="preferences"]')).toHaveClass(/active/);
+    // The hash exists to draw the eye to this one card, not just open the panel.
+    // The highlight is removed after 1.6s, so assert it right after the panel opens.
+    await expect(opts2.locator("#shortcut-times-card")).toHaveClass(/highlight/, { timeout: 3_000 });
     await opts2.close();
   });
 
   test("appearance panel can be switched to (once signed in) and renders controls", async ({ optionsPage: page }) => {
-    const appearanceBtn = page.locator('.nav-link[data-panel="appearance"]');
-    if (!(await appearanceBtn.isEnabled())) {
+    if (!(await navIsEnabled(page, "appearance"))) {
       test.skip(true, "Not authenticated; appearance nav button is disabled intentionally.");
       return;
     }
-    await appearanceBtn.click();
+    await page.locator('.nav-link[data-panel="appearance"]').click();
     await expect(page.locator("#appearance.panel")).not.toHaveAttribute("hidden", /.*/, { timeout: 8_000 });
     // theme-select + language-select are *visible* (not just attached) now.
     await expect(page.locator("#theme-select")).toBeVisible();

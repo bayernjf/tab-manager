@@ -1,3 +1,17 @@
+-- =====================================================
+-- Migration 013: Add updated at to workspace snapshots
+-- File: 013_add_workspace_snapshots_updated_at.sql
+-- Date: 2026-07-25 21:33
+-- Depends on: 011_create_workspace_snapshots.sql
+-- Run: Supabase SQL Editor, execute once
+-- =====================================================
+-- Note: Fixes an omission in the workspace snapshots
+--       migration: the table was created without an
+--       updated_at column while its trigger
+--       (set_workspace_snapshots_updated_at) sets
+--       NEW.updated_at, so UPDATEs failed. Adds the
+--       column.
+-- -----------------------------------------------------
 -- 修复 009 遗漏：workspace_snapshots 表创建了 set_workspace_snapshots_updated_at
 -- 触发器（执行 public.set_updated_at()，内部 `new.updated_at = now()`），但建表时
 -- 只有 created_at、漏了 updated_at 列。UPDATE 该表（例如把标签加入已有工作区，

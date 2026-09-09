@@ -1,3 +1,15 @@
+-- =====================================================
+-- Migration 011: Create workspace snapshots table
+-- File: 011_create_workspace_snapshots.sql
+-- Date: 2026-07-25 14:24
+-- Depends on: 001_create_user_sync_tables.sql
+-- Run: Supabase SQL Editor, execute once
+-- =====================================================
+-- Note: Creates workspace_snapshots for user-curated tab
+--       collections shared across all devices/browsers,
+--       always synced and unique per (user_id,
+--       device_name, title).
+-- -----------------------------------------------------
 -- Synced workspace snapshots: user-curated tab collections shared across all
 -- devices/browsers. Always synced (gated only by the master cloudSyncEnabled).
 -- Globally unique by (user_id, device_name, title): same title may coexist on

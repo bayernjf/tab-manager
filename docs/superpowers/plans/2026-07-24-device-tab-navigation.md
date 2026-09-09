@@ -23,7 +23,7 @@
 
 ## 遗留代码
 
-`device_tab_snapshots` 表和 `008_create_device_tab_snapshots.sql` 迁移仍存在于数据库中，但相关 TypeScript 代码和测试已移除。如需清理，可删除该表和迁移文件。
+`device_tab_snapshots` 表和 `010_create_device_tab_snapshots.sql` 迁移仍存在于数据库中，但相关 TypeScript 代码和测试已移除。如需清理，可删除该表和迁移文件。
 # Device & Browser Tab Navigation Implementation Plan
 
 > ⚠️ **作废（2026-07-24）**：本计划已被 `2026-07-24-workspace-board-nav.md` 推翻。设备/浏览器跨设备导航 + `device_tab_snapshots` 云同步的代码与测试已全部移除，改为「当前 / 从工作区加载」的工作区导航。本文件仅作历史保留，**勿据此实现**。
@@ -141,7 +141,7 @@ Expected: all tests pass.
 ### Task 2: Opt-in setting + migration
 
 **Files:**
-- Modify: `supabase/migrations/` (new `007_add_sync_tab_snapshots.sql`)
+- Modify: `supabase/migrations/` (new `009_add_sync_tab_snapshots.sql`)
 - Modify: `src/shared.ts`
 - Modify: `tests/shared.test.js`
 
@@ -162,7 +162,7 @@ Run: `npm test`
 
 - [ ] **Step 3: Implement**
 
-Migration `007_add_sync_tab_snapshots.sql`:
+Migration `009_add_sync_tab_snapshots.sql`:
 
 ```sql
 alter table public.user_settings
@@ -178,7 +178,7 @@ Run: `npm test`
 ### Task 3: Snapshot table + sync layer
 
 **Files:**
-- Modify: `supabase/migrations/` (new `008_create_device_tab_snapshots.sql`)
+- Modify: `supabase/migrations/` (new `010_create_device_tab_snapshots.sql`)
 - Modify: `src/sync.ts`
 - Modify: `tests/shared.test.js`
 
@@ -198,7 +198,7 @@ test("converts device tab snapshots to and from sync rows", () => {
 
 - [ ] **Step 3: Implement**
 
-Migration `008_create_device_tab_snapshots.sql`:
+Migration `010_create_device_tab_snapshots.sql`:
 
 ```sql
 create table if not exists public.device_tab_snapshots (

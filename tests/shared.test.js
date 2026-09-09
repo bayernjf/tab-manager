@@ -56,6 +56,11 @@ const {
   updateGroupRuleFromInput,
   buildVirtualBoardGroups,
   moveVirtualBoardAssignment,
+  moveBoardTabOptimistically,
+  planBoardTabInsertion,
+  validateWorkspaceTabsPayload,
+  deferredRemindersHidden,
+  nextDeferredOccurrence,
   detectBrowserKind,
   groupWorkspaceTabsByDomain,
   moveWorkspaceTab,
@@ -208,8 +213,9 @@ test("positions board tab close controls on the right", async () => {
 });
 
 test("shows close-tab feedback as a fixed toast centered on the group heading", async () => {
-  const [script, css] = await Promise.all([
+  const [script, dom, css] = await Promise.all([
     readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/board-dom.js", import.meta.url), "utf8"),
     readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
   ]);
   const closeFn = script.slice(script.indexOf("async function closeTab"), script.indexOf("function applyOptimisticGroupReorder"));
@@ -220,12 +226,12 @@ test("shows close-tab feedback as a fixed toast centered on the group heading", 
   assert.match(script, /row\.closest\("\.group-card"\)/);
   assert.match(script, /card\?\.querySelector\("\.card-title"\)/);
   assert.match(script, /heading \?\? close/);
-  assert.match(script, /function boardToast/);
-  assert.match(script, /anchor\.classList\.contains\("card-title"\) \|\| anchor\.closest\("\.card-title"\)/);
-  assert.match(script, /isCardHeading/);
-  assert.match(script, /rect\.left \+ rect\.width \/ 2 - toastWidth \/ 2/);
-  assert.match(script, /document\.body\.append\(toast\)/);
-  assert.match(script, /setTimeout\(\(\) => \{ toast\.remove\(\); \}, 2200\)/);
+  assert.match(dom, /function boardToast/);
+  assert.match(dom, /anchor\.classList\.contains\("card-title"\) \|\| anchor\.closest\("\.card-title"\)/);
+  assert.match(dom, /isCardHeading/);
+  assert.match(dom, /rect\.left \+ rect\.width \/ 2 - toastWidth \/ 2/);
+  assert.match(dom, /document\.body\.append\(toast\)/);
+  assert.match(dom, /setTimeout\(\(\) => \{ toast\.remove\(\); \}, 2200\)/);
   assert.match(css, /\.board-toast \{[^}]*position: fixed/);
   assert.match(css, /\.board-toast\.success/);
   assert.match(css, /\.board-toast\.error/);
@@ -1009,6 +1015,300 @@ test("builds board cards from ten-tab segments and retains an empty custom card"
     ["auto:example.com", 0, 2, 10, 2],
     ["auto:example.com", 1, 2, 1, 1],
   ]);
+});
+
+function boardCardFixture(boardKey, segmentIndex, tabIds, extra = {}) {
+  return {
+    boardKey,
+    kind: boardKey === "ungrouped" ? "ungrouped" : boardKey.startsWith("custom:") ? "custom" : "automatic",
+    title: boardKey,
+    color: "blue",
+    rank: boardKey === "ungrouped" ? 0 : 1,
+    segmentIndex,
+    segmentCount: 1,
+    heightUnits: 1,
+    tabs: tabIds.map((id) => ({ id, title: `Tab ${id}` })),
+    ...extra,
+  };
+}
+
+test("moveBoardTabOptimistically inserts before the target tab within the same card", () => {
+  const cards = [boardCardFixture("auto:a.example", 0, [1, 2, 3])];
+
+  const moved = moveBoardTabOptimistically(cards, { tabId: 3, targetBoardKey: "auto:a.example", position: "before", targetSegmentIndex: 0, targetTabId: 1 });
+
+  assert.deepEqual(moved[0].tabs.map((tab) => tab.id), [3, 1, 2]);
+});
+
+test("moveBoardTabOptimistically inserts after the target tab", () => {
+  const cards = [boardCardFixture("auto:a.example", 0, [1, 2, 3])];
+
+  const moved = moveBoardTabOptimistically(cards, { tabId: 1, targetBoardKey: "auto:a.example", position: "after", targetSegmentIndex: 0, targetTabId: 3 });
+
+  assert.deepEqual(moved[0].tabs.map((tab) => tab.id), [2, 3, 1]);
+});
+
+test("moveBoardTabOptimistically appends to the end when position is append", () => {
+  const cards = [boardCardFixture("auto:a.example", 0, [1, 2]), boardCardFixture("ungrouped", 0, [7, 8])];
+
+  const moved = moveBoardTabOptimistically(cards, { tabId: 1, targetBoardKey: "ungrouped", position: "append", targetSegmentIndex: 0 });
+
+  assert.deepEqual(moved.find((card) => card.boardKey === "ungrouped").tabs.map((tab) => tab.id), [7, 8, 1]);
+  assert.deepEqual(moved.find((card) => card.boardKey === "auto:a.example").tabs.map((tab) => tab.id), [2]);
+});
+
+test("moveBoardTabOptimistically reorders within Ungrouped so the drag survives an optimistic render", () => {
+  const cards = [boardCardFixture("ungrouped", 0, [10, 11, 12])];
+
+  const moved = moveBoardTabOptimistically(cards, { tabId: 12, targetBoardKey: "ungrouped", position: "before", targetSegmentIndex: 0, targetTabId: 10 });
+
+  assert.deepEqual(moved[0].tabs.map((tab) => tab.id), [12, 10, 11]);
+});
+
+test("moveBoardTabOptimistically falls back to appending when the target tab is gone", () => {
+  const cards = [boardCardFixture("auto:a.example", 0, [1, 2])];
+
+  const moved = moveBoardTabOptimistically(cards, { tabId: 1, targetBoardKey: "auto:a.example", position: "before", targetSegmentIndex: 0, targetTabId: 999 });
+
+  assert.deepEqual(moved[0].tabs.map((tab) => tab.id), [2, 1]);
+});
+
+test("moveBoardTabOptimistically returns the board unchanged when the dragged tab is unknown", () => {
+  const cards = [boardCardFixture("auto:a.example", 0, [1, 2])];
+
+  const moved = moveBoardTabOptimistically(cards, { tabId: 404, targetBoardKey: "auto:a.example", position: "append", targetSegmentIndex: 0 });
+
+  assert.deepEqual(moved.map((card) => card.tabs.map((tab) => tab.id)), [[1, 2]]);
+});
+
+test("moveBoardTabOptimistically does not mutate the cards it was given", () => {
+  const cards = [boardCardFixture("auto:a.example", 0, [1, 2, 3])];
+
+  moveBoardTabOptimistically(cards, { tabId: 3, targetBoardKey: "auto:a.example", position: "before", targetSegmentIndex: 0, targetTabId: 1 });
+
+  assert.deepEqual(cards[0].tabs.map((tab) => tab.id), [1, 2, 3]);
+});
+
+test("moveBoardTabOptimistically rebalances segments and heights after a cross-segment move", () => {
+  const cards = [
+    boardCardFixture("auto:a.example", 0, Array.from({ length: 10 }, (_value, index) => index + 1), { segmentCount: 2, heightUnits: 2 }),
+    boardCardFixture("auto:a.example", 1, [11], { segmentCount: 2 }),
+  ];
+
+  const moved = moveBoardTabOptimistically(cards, { tabId: 11, targetBoardKey: "auto:a.example", position: "before", targetSegmentIndex: 0, targetTabId: 1 });
+
+  assert.deepEqual(moved.map((card) => [card.segmentIndex, card.segmentCount, card.tabs.length, card.heightUnits]), [
+    [0, 2, 10, 2],
+    [1, 2, 1, 1],
+  ]);
+  assert.equal(moved[0].tabs[0].id, 11);
+});
+
+test("moveBoardTabOptimistically keeps cards ordered by rank then segment index", () => {
+  const cards = [
+    boardCardFixture("ungrouped", 0, [9]),
+    boardCardFixture("auto:a.example", 0, Array.from({ length: 10 }, (_value, index) => index + 1), { segmentCount: 2, rank: 2 }),
+    boardCardFixture("auto:a.example", 1, [11], { segmentCount: 2, rank: 2 }),
+  ];
+
+  const moved = moveBoardTabOptimistically(cards, { tabId: 9, targetBoardKey: "auto:a.example", position: "append", targetSegmentIndex: 1 });
+
+  assert.deepEqual(moved.map((card) => [card.boardKey, card.segmentIndex]), [
+    ["ungrouped", 0],
+    ["auto:a.example", 0],
+    ["auto:a.example", 1],
+  ]);
+});
+
+test("planBoardTabInsertion inserts before the target tab", () => {
+  const tabs = [{ id: 1 }, { id: 2 }, { id: 3 }];
+
+  const result = planBoardTabInsertion(tabs, { id: 9 }, { position: "before", targetTabId: 2 });
+
+  assert.equal(result.status, "ok");
+  assert.deepEqual(result.tabs.map((tab) => tab.id), [1, 9, 2, 3]);
+});
+
+test("planBoardTabInsertion inserts after the target tab", () => {
+  const result = planBoardTabInsertion([{ id: 1 }, { id: 2 }], { id: 9 }, { position: "after", targetTabId: 1 });
+
+  assert.deepEqual(result.tabs.map((tab) => tab.id), [1, 9, 2]);
+});
+
+test("planBoardTabInsertion appends when no target tab is given", () => {
+  const result = planBoardTabInsertion([{ id: 1 }, { id: 2 }], { id: 9 }, { position: "append" });
+
+  assert.deepEqual(result.tabs.map((tab) => tab.id), [1, 2, 9]);
+});
+
+test("planBoardTabInsertion reports target-missing when the target tab left the group", () => {
+  assert.deepEqual(planBoardTabInsertion([{ id: 1 }], { id: 9 }, { position: "before", targetTabId: 404 }), { status: "target-missing" });
+});
+
+test("planBoardTabInsertion excludes the moved tab before computing the target index", () => {
+  const result = planBoardTabInsertion([{ id: 1 }, { id: 2 }, { id: 3 }], { id: 1 }, { position: "after", targetTabId: 3 });
+
+  assert.deepEqual(result.tabs.map((tab) => tab.id), [2, 3, 1]);
+});
+
+test("planBoardTabInsertion orders Ungrouped tabs so the manual position can be persisted", () => {
+  const ungrouped = [{ id: 10 }, { id: 11 }, { id: 12 }];
+
+  const result = planBoardTabInsertion(ungrouped, { id: 12 }, { position: "before", targetTabId: 10 });
+
+  assert.deepEqual(result.tabs.map((tab) => tab.id), [12, 10, 11]);
+});
+
+test("planBoardTabInsertion does not mutate the group it was given", () => {
+  const tabs = [{ id: 1 }, { id: 2 }];
+
+  planBoardTabInsertion(tabs, { id: 9 }, { position: "append" });
+
+  assert.deepEqual(tabs.map((tab) => tab.id), [1, 2]);
+});
+
+test("validateWorkspaceTabsPayload rejects a non-array or empty selection", () => {
+  assert.deepEqual(validateWorkspaceTabsPayload(undefined), { status: "empty" });
+  assert.deepEqual(validateWorkspaceTabsPayload([]), { status: "empty" });
+});
+
+test("validateWorkspaceTabsPayload rejects a selection above the limit", () => {
+  const tabs = Array.from({ length: 201 }, (_value, index) => ({ title: `Tab ${index}`, url: `https://example.com/${index}` }));
+
+  assert.deepEqual(validateWorkspaceTabsPayload(tabs), { status: "too-many" });
+});
+
+test("validateWorkspaceTabsPayload normalizes valid tabs", () => {
+  const result = validateWorkspaceTabsPayload([{ title: "  Example  ", url: "https://example.com/a" }]);
+
+  assert.deepEqual(result, { status: "ok", tabs: [{ title: "Example", url: "https://example.com/a" }] });
+});
+
+test("validateWorkspaceTabsPayload reports the board index of the offending tab, not its position in the selection", () => {
+  const result = validateWorkspaceTabsPayload([
+    { title: "Third", url: "https://example.com/c", index: 2 },
+    { title: "Seventh", url: "chrome://settings", index: 6 },
+  ]);
+
+  assert.deepEqual(result, { status: "invalid", displayIndex: 6, reason: "unsupported-url" });
+});
+
+test("validateWorkspaceTabsPayload falls back to the array position when no board index was sent", () => {
+  const result = validateWorkspaceTabsPayload([
+    { title: "One", url: "https://example.com/a" },
+    { title: "Two", url: "not-a-url" },
+  ]);
+
+  assert.deepEqual(result, { status: "invalid", displayIndex: 1, reason: "invalid-url" });
+});
+
+test("validateWorkspaceTabsPayload ignores a malformed board index", () => {
+  const result = validateWorkspaceTabsPayload([{ title: "", url: "https://example.com/a", index: "3" }]);
+
+  assert.deepEqual(result, { status: "invalid", displayIndex: 0, reason: "empty-title" });
+});
+
+test("validateWorkspaceTabsPayload surfaces the first invalid tab when several are broken", () => {
+  const result = validateWorkspaceTabsPayload([
+    { title: "Fine", url: "https://example.com/a", index: 0 },
+    { title: "", url: "https://example.com/b", index: 4 },
+    { title: "Also broken", url: "ftp://example.com", index: 9 },
+  ]);
+
+  assert.deepEqual(result, { status: "invalid", displayIndex: 4, reason: "empty-title" });
+});
+
+test("deferredRemindersHidden hides the section in workspace mode even when reminders exist", () => {
+  assert.equal(deferredRemindersHidden({ workspaceMode: true, deferredCount: 3 }), true);
+  assert.equal(deferredRemindersHidden({ workspaceMode: true, deferredCount: 0 }), true);
+});
+
+test("deferredRemindersHidden shows the section on the current board only when reminders exist", () => {
+  assert.equal(deferredRemindersHidden({ workspaceMode: false, deferredCount: 3 }), false);
+  assert.equal(deferredRemindersHidden({ workspaceMode: false, deferredCount: 0 }), true);
+});
+
+test("board script decides deferred reminder visibility through a single helper", async () => {
+  const script = await readFile(new URL("../dist/board.js", import.meta.url), "utf8");
+  // 防回归：两处调用点都必须走 deferredRemindersHidden，否则切回“当前”会先显示空列表再隐藏。
+  assert.match(script, /deferredReminders\.classList\.toggle\("hidden", deferredRemindersHidden\(/);
+  assert.doesNotMatch(script, /deferredReminders\.classList\.toggle\("hidden", tabs\.length === 0\)/);
+  assert.doesNotMatch(script, /deferredReminders\.classList\.toggle\("hidden", on\)/);
+});
+
+test("nextDeferredOccurrence returns today when the time is still ahead", () => {
+  const now = new Date(2026, 8, 9, 10, 30, 15, 250);
+
+  const due = nextDeferredOccurrence("18:00", now);
+
+  assert.deepEqual([due.getFullYear(), due.getMonth(), due.getDate(), due.getHours(), due.getMinutes()], [2026, 8, 9, 18, 0]);
+});
+
+test("nextDeferredOccurrence rolls over to tomorrow when the time already passed today", () => {
+  const now = new Date(2026, 8, 9, 19, 0);
+
+  const due = nextDeferredOccurrence("09:00", now);
+
+  assert.deepEqual([due.getMonth(), due.getDate(), due.getHours(), due.getMinutes()], [8, 10, 9, 0]);
+});
+
+test("nextDeferredOccurrence rolls over rather than firing immediately when the time is exactly now", () => {
+  const now = new Date(2026, 8, 9, 14, 0, 0, 0);
+
+  const due = nextDeferredOccurrence("14:00", now);
+
+  assert.deepEqual([due.getDate(), due.getHours()], [10, 14]);
+});
+
+test("nextDeferredOccurrence crosses a month boundary", () => {
+  const now = new Date(2026, 8, 30, 23, 30);
+
+  const due = nextDeferredOccurrence("09:00", now);
+
+  assert.deepEqual([due.getFullYear(), due.getMonth(), due.getDate(), due.getHours()], [2026, 9, 1, 9]);
+});
+
+test("nextDeferredOccurrence treats a clock time as a time of day, not a delay from now", () => {
+  const now = new Date(2026, 8, 9, 10, 0);
+
+  const due = nextDeferredOccurrence("09:00", now);
+
+  // 回归防护：曾把 "09:00" 当成“9 小时后”，于是 10:00 触发会算出当天 19:00。
+  assert.notEqual(due.getHours(), 19);
+  assert.deepEqual([due.getDate(), due.getHours()], [10, 9]);
+});
+
+test("nextDeferredOccurrence zeroes seconds and milliseconds", () => {
+  const due = nextDeferredOccurrence("18:00", new Date(2026, 8, 9, 10, 30, 44, 789));
+
+  assert.deepEqual([due.getSeconds(), due.getMilliseconds()], [0, 0]);
+});
+
+test("nextDeferredOccurrence handles midnight", () => {
+  const due = nextDeferredOccurrence("00:00", new Date(2026, 8, 9, 12, 0));
+
+  assert.deepEqual([due.getDate(), due.getHours(), due.getMinutes()], [10, 0, 0]);
+});
+
+test("nextDeferredOccurrence does not mutate the reference date", () => {
+  const now = new Date(2026, 8, 9, 10, 30);
+
+  nextDeferredOccurrence("09:00", now);
+
+  assert.deepEqual([now.getDate(), now.getHours(), now.getMinutes()], [9, 10, 30]);
+});
+
+test("nextDeferredOccurrence rejects values that are not a 24-hour clock time", () => {
+  for (const invalid of ["24:00", "9:00", "18:60", "0900", "", "abc", "18:00:00"]) {
+    assert.throws(() => nextDeferredOccurrence(invalid, new Date(2026, 8, 9, 10, 0)), /无效的时刻/, `expected ${JSON.stringify(invalid)} to be rejected`);
+  }
+});
+
+test("nextDeferredOccurrence reports invalid input through the provided translator", () => {
+  assert.throws(
+    () => nextDeferredOccurrence("25:00", new Date(2026, 8, 9, 10, 0), (key, args) => `${key}:${args?.[0]}`),
+    /^Error: invalidTime:25:00$/,
+  );
 });
 
 test("moves a logical board group to a new rank without moving Ungrouped", () => {
@@ -2190,4 +2490,567 @@ test("matchesTimelineFilter always returns true when refDate is 0", async () => 
   assert.equal(matchesTimelineFilter(0, "today"), true);
   assert.equal(matchesTimelineFilter(0, "3days"), true);
   assert.equal(matchesTimelineFilter(0, "7days"), true);
+});
+
+test("board mutations authorize against the locally cached session without a network round trip", async () => {
+  const [auth, background] = await Promise.all([
+    readFile(new URL("../dist/auth.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/background.js", import.meta.url), "utf8"),
+  ]);
+  const getLocalUser = auth.slice(auth.indexOf("export async function getLocalUser"), auth.indexOf("export async function signUp"));
+
+  assert.match(getLocalUser, /await storedSession\(\)/);
+  assert.match(getLocalUser, /isRememberedSessionValid\(session\.rememberUntil\)/);
+  assert.doesNotMatch(getLocalUser, /request\(/);
+
+  const requireBoardUser = background.slice(background.indexOf("async function requireBoardUser"), background.indexOf("async function syncBoardMutation"));
+  assert.match(requireBoardUser, /await getLocalUser\(\)/);
+  assert.doesNotMatch(requireBoardUser, /getCurrentUser\(\)/);
+});
+
+test("closing a board tab relies on the tab listener refresh instead of an extra load", async () => {
+  const script = await readFile(new URL("../dist/board.js", import.meta.url), "utf8");
+  const closeFn = script.slice(script.indexOf("async function closeTab"), script.indexOf("function applyOptimisticGroupReorder"));
+
+  assert.doesNotMatch(closeFn, /await load\(\)/);
+  assert.match(script, /chrome\.tabs\.onRemoved\.addListener/);
+});
+
+test("isRequestTimeout recognizes abort and timeout rejections only", async () => {
+  const { isRequestTimeout } = await import("../dist/shared.js");
+  const timeout = new Error("timed out");
+  timeout.name = "TimeoutError";
+  const aborted = new Error("aborted");
+  aborted.name = "AbortError";
+  assert.equal(isRequestTimeout(timeout), true);
+  assert.equal(isRequestTimeout(aborted), true);
+  assert.equal(isRequestTimeout(new Error("offline")), false);
+  assert.equal(isRequestTimeout(null), false);
+  assert.equal(isRequestTimeout("TimeoutError"), false);
+});
+
+test("a timed-out request never counts as an explicit authentication failure", async () => {
+  const { isExplicitAuthenticationFailure } = await import("../dist/auth.js");
+  const timeout = new Error("连接 Supabase 超时，请检查网络");
+  timeout.name = "TimeoutError";
+  assert.equal(isExplicitAuthenticationFailure(timeout), false);
+  assert.equal(isExplicitAuthenticationFailure({ status: 401 }), true);
+});
+
+test("supabase requests abort on a timeout instead of hanging forever", async () => {
+  const [shared, auth, sync] = await Promise.all([
+    readFile(new URL("../dist/shared.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/auth.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/sync.js", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(shared, /SUPABASE_REQUEST_TIMEOUT_MS = 8000/);
+  assert.match(shared, /SUPABASE_INTERACTIVE_TIMEOUT_MS = 15000/);
+
+  const authRequest = auth.slice(auth.indexOf("async function request"), auth.indexOf("export function isExplicitAuthenticationFailure"));
+  assert.match(authRequest, /AbortSignal\.timeout\(timeoutMs\)/);
+  assert.match(authRequest, /isRequestTimeout\(error\)/);
+  assert.match(authRequest, /超时/);
+
+  const dbRequest = sync.slice(sync.indexOf("async function databaseRequest"), sync.indexOf("function settingsSyncRow"));
+  assert.match(dbRequest, /AbortSignal\.timeout\(SUPABASE_REQUEST_TIMEOUT_MS\)/);
+  assert.match(dbRequest, /isRequestTimeout\(error\)/);
+
+  assert.match(auth, /"\/token\?grant_type=password"[\s\S]{0,220}SUPABASE_INTERACTIVE_TIMEOUT_MS/);
+  assert.match(auth, /"\/signup"[\s\S]{0,220}SUPABASE_INTERACTIVE_TIMEOUT_MS/);
+});
+
+// --- storage.ts -------------------------------------------------------------
+
+/** Installs an in-memory chrome.storage.local and returns the backing object for assertions. */
+function stubStorage(values = {}) {
+  globalThis.chrome.storage = {
+    local: {
+      get: async (keys) => {
+        const requested = Array.isArray(keys) ? keys : [keys];
+        return Object.fromEntries(requested.flatMap((key) => (key in values ? [[key, values[key]]] : [])));
+      },
+      set: async (next) => Object.assign(values, next),
+      remove: async (keys) => {
+        const requested = Array.isArray(keys) ? keys : [keys];
+        for (const key of requested) delete values[key];
+      },
+    },
+  };
+  return values;
+}
+
+/** defaultDeviceName reads navigator.userAgent, which Node defines as a read-only getter. */
+async function withUserAgent(userAgent, run) {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "navigator", { value: { userAgent }, configurable: true, writable: true });
+  try {
+    await run();
+  } finally {
+    if (original) Object.defineProperty(globalThis, "navigator", original);
+    else delete globalThis.navigator;
+  }
+}
+
+const snapshotFixture = (id = "ws-1") => ({
+  id,
+  title: "Research",
+  createdAt: "2026-08-01T00:00:00.000Z",
+  tabs: [{ title: "Example", url: "https://example.com/" }],
+});
+
+const historyFixture = (workspaceId, version = 1) => ({
+  workspaceId,
+  versions: [{ version, snapshot: snapshotFixture(workspaceId), savedAt: "2026-08-01T00:00:00.000Z" }],
+});
+
+test("loadState merges partial stored settings over the defaults", async () => {
+  stubStorage({ settings: { theme: "dark" } });
+  const { loadState } = await import("../dist/storage.js");
+  const { DEFAULT_SETTINGS } = await import("../dist/shared.js");
+
+  const state = await loadState();
+
+  assert.equal(state.settings.theme, "dark");
+  assert.equal(state.settings.defaultGroupColor, DEFAULT_SETTINGS.defaultGroupColor);
+  assert.deepEqual(state.groupRules, []);
+  assert.deepEqual(state.boardAssignments, {});
+});
+
+test("saveRecentlyClosedTabs keeps only the newest MAX_RECENTLY_CLOSED_TABS entries", async () => {
+  const values = stubStorage();
+  const { saveRecentlyClosedTabs } = await import("../dist/storage.js");
+  const { MAX_RECENTLY_CLOSED_TABS } = await import("../dist/shared.js");
+  const tabs = Array.from({ length: MAX_RECENTLY_CLOSED_TABS + 10 }, (_value, index) => ({
+    id: `tab-${index}`,
+    title: `Tab ${index}`,
+    url: `https://example.com/${index}`,
+    closedAt: new Date(1_800_000_000_000 + index * 1000).toISOString(),
+  }));
+
+  await saveRecentlyClosedTabs(tabs);
+
+  assert.equal(values.recentlyClosedTabs.length, MAX_RECENTLY_CLOSED_TABS);
+  // Highest index is the most recent closedAt, so it must survive and lead the list.
+  assert.equal(values.recentlyClosedTabs[0].id, `tab-${MAX_RECENTLY_CLOSED_TABS + 9}`);
+  assert.equal(values.recentlyClosedTabs.at(-1).id, "tab-10");
+});
+
+test("loadRecentlyClosedTabs drops corrupt entries instead of surfacing them", async () => {
+  stubStorage({
+    recentlyClosedTabs: [
+      { id: "good", title: "Good", url: "https://example.com/", closedAt: "2026-08-01T00:00:00.000Z" },
+      { id: "no-date", title: "Bad", url: "https://example.com/", closedAt: "not-a-date" },
+      { id: "bad-url", title: "Bad", url: "chrome://settings", closedAt: "2026-08-01T00:00:00.000Z" },
+      null,
+    ],
+  });
+  const { loadRecentlyClosedTabs } = await import("../dist/storage.js");
+
+  assert.deepEqual((await loadRecentlyClosedTabs()).map((tab) => tab.id), ["good"]);
+});
+
+test("appendRecentlyClosedTab moves a re-closed tab to the front without duplicating it", async () => {
+  const values = stubStorage({
+    recentlyClosedTabs: [
+      { id: "a", title: "A", url: "https://a.com/", closedAt: "2026-08-02T00:00:00.000Z" },
+      { id: "b", title: "B", url: "https://b.com/", closedAt: "2026-08-01T00:00:00.000Z" },
+    ],
+  });
+  const { appendRecentlyClosedTab } = await import("../dist/storage.js");
+
+  const next = await appendRecentlyClosedTab({ id: "b", title: "B again", url: "https://b.com/", closedAt: "2026-08-03T00:00:00.000Z" });
+
+  assert.deepEqual(next.map((tab) => tab.id), ["b", "a"]);
+  assert.deepEqual(values.recentlyClosedTabs.map((tab) => tab.id), ["b", "a"]);
+  assert.equal(values.recentlyClosedTabs.filter((tab) => tab.id === "b").length, 1);
+});
+
+test("removeRecentlyClosedTab deletes only the requested entry", async () => {
+  const values = stubStorage({
+    recentlyClosedTabs: [
+      { id: "a", title: "A", url: "https://a.com/", closedAt: "2026-08-02T00:00:00.000Z" },
+      { id: "b", title: "B", url: "https://b.com/", closedAt: "2026-08-01T00:00:00.000Z" },
+    ],
+  });
+  const { removeRecentlyClosedTab } = await import("../dist/storage.js");
+
+  assert.deepEqual((await removeRecentlyClosedTab("a")).map((tab) => tab.id), ["b"]);
+  assert.deepEqual(values.recentlyClosedTabs.map((tab) => tab.id), ["b"]);
+});
+
+test("loadTabCreatedAtMap discards malformed tab ids and timestamps", async () => {
+  stubStorage({
+    tabCreatedAt: { 7: 1000, "-1": 2000, "0": 3000, "1.5": 4000, 9: "later", 10: Infinity, 11: 0, 12: 5000 },
+  });
+  const { loadTabCreatedAtMap } = await import("../dist/storage.js");
+
+  assert.deepEqual(await loadTabCreatedAtMap(), { 7: 1000, 12: 5000 });
+});
+
+test("loadTabCreatedAtMap returns an empty map when the stored value is not an object", async () => {
+  const { loadTabCreatedAtMap } = await import("../dist/storage.js");
+
+  stubStorage({ tabCreatedAt: ["nope"] });
+  assert.deepEqual(await loadTabCreatedAtMap(), {});
+  stubStorage({ tabCreatedAt: "nope" });
+  assert.deepEqual(await loadTabCreatedAtMap(), {});
+  stubStorage({});
+  assert.deepEqual(await loadTabCreatedAtMap(), {});
+});
+
+test("recordTabCreatedAt merges into the existing map rather than replacing it", async () => {
+  const values = stubStorage({ tabCreatedAt: { 1: 1000 } });
+  const { recordTabCreatedAt } = await import("../dist/storage.js");
+
+  assert.deepEqual(await recordTabCreatedAt(2, 2000), { 1: 1000, 2: 2000 });
+  assert.deepEqual(values.tabCreatedAt, { 1: 1000, 2: 2000 });
+});
+
+test("removeTabCreatedAt drops one tab and leaves storage untouched when the tab is absent", async () => {
+  const values = stubStorage({ tabCreatedAt: { 1: 1000, 2: 2000 } });
+  const { removeTabCreatedAt } = await import("../dist/storage.js");
+
+  assert.deepEqual(await removeTabCreatedAt(1), { 2: 2000 });
+  assert.deepEqual(values.tabCreatedAt, { 2: 2000 });
+
+  const untouched = stubStorage({ tabCreatedAt: { 2: 2000 } });
+  const set = globalThis.chrome.storage.local.set;
+  let writes = 0;
+  globalThis.chrome.storage.local.set = async (next) => { writes += 1; return set(next); };
+  assert.deepEqual(await removeTabCreatedAt(99), { 2: 2000 });
+  assert.equal(writes, 0);
+  assert.deepEqual(untouched.tabCreatedAt, { 2: 2000 });
+});
+
+test("getOrCreateDeviceId reuses the stored id instead of regenerating it", async () => {
+  const values = stubStorage({ deviceId: "existing-id" });
+  const { getOrCreateDeviceId } = await import("../dist/storage.js");
+
+  assert.equal(await getOrCreateDeviceId(), "existing-id");
+  assert.equal(values.deviceId, "existing-id");
+
+  const fresh = stubStorage({});
+  const created = await getOrCreateDeviceId();
+  assert.equal(typeof created, "string");
+  assert.ok(created.length > 0);
+  assert.equal(fresh.deviceId, created);
+  assert.equal(await getOrCreateDeviceId(), created);
+});
+
+test("getOrCreateDeviceName preserves a name the user chose", async () => {
+  const values = stubStorage({ deviceName: "工作机" });
+  const { getOrCreateDeviceName } = await import("../dist/storage.js");
+
+  assert.equal(await getOrCreateDeviceName(), "工作机");
+  assert.equal(values.deviceName, "工作机");
+});
+
+test("getOrCreateDeviceName regenerates a legacy platform-only name", async () => {
+  const values = stubStorage({ deviceName: "Mac 设备" });
+  const { getOrCreateDeviceName } = await import("../dist/storage.js");
+
+  await withUserAgent("Mozilla/5.0 (Macintosh) Edg/140.0", async () => {
+    assert.notEqual(await getOrCreateDeviceName(), "Mac 设备");
+  });
+  assert.match(values.deviceName, /-Edge$/);
+});
+
+test("getOrCreateDeviceName derives the platform and browser suffix", async () => {
+  const { getOrCreateDeviceName } = await import("../dist/storage.js");
+
+  const edge = stubStorage({ deviceName: "   " });
+  await withUserAgent("Mozilla/5.0 (Macintosh) Edg/140.0", async () => {
+    assert.match(await getOrCreateDeviceName(), /-Edge$/);
+  });
+  assert.match(edge.deviceName, /-Edge$/);
+
+  stubStorage({});
+  await withUserAgent("Mozilla/5.0 (Windows NT 10.0) Chrome/140.0", async () => {
+    assert.match(await getOrCreateDeviceName(), /-Chrome$/);
+  });
+});
+
+test("saveWorkspaceHistory does not clobber the histories of other workspaces", async () => {
+  const values = stubStorage({ workspaceHistories: { "ws-other": historyFixture("ws-other") } });
+  const { saveWorkspaceHistory } = await import("../dist/storage.js");
+
+  await saveWorkspaceHistory(historyFixture("ws-1", 3));
+
+  assert.deepEqual(Object.keys(values.workspaceHistories).sort(), ["ws-1", "ws-other"]);
+  assert.equal(values.workspaceHistories["ws-other"].versions[0].version, 1);
+  assert.equal(values.workspaceHistories["ws-1"].versions[0].version, 3);
+});
+
+test("loadWorkspaceHistory returns null for an unknown or invalid workspace", async () => {
+  stubStorage({ workspaceHistories: { "ws-bad": { workspaceId: "ws-bad", versions: [{ version: 0, savedAt: "nope" }] } } });
+  const { loadWorkspaceHistory } = await import("../dist/storage.js");
+
+  assert.equal(await loadWorkspaceHistory("ws-missing"), null);
+  assert.equal(await loadWorkspaceHistory("ws-bad"), null);
+});
+
+test("loadAllWorkspaceHistories skips invalid records and keeps the valid ones", async () => {
+  stubStorage({
+    workspaceHistories: {
+      "ws-good": historyFixture("ws-good"),
+      "ws-bad": { workspaceId: "ws-bad", versions: "not-an-array" },
+      "ws-dupe": { workspaceId: "ws-dupe", versions: [historyFixture("ws-dupe").versions[0], historyFixture("ws-dupe").versions[0]] },
+    },
+  });
+  const { loadAllWorkspaceHistories } = await import("../dist/storage.js");
+
+  assert.deepEqual(Object.keys(await loadAllWorkspaceHistories()), ["ws-good"]);
+});
+
+test("deleteWorkspaceHistory removes one workspace and leaves its siblings intact", async () => {
+  const values = stubStorage({
+    workspaceHistories: { "ws-1": historyFixture("ws-1"), "ws-2": historyFixture("ws-2") },
+  });
+  const { deleteWorkspaceHistory } = await import("../dist/storage.js");
+
+  await deleteWorkspaceHistory("ws-1");
+
+  assert.deepEqual(Object.keys(values.workspaceHistories), ["ws-2"]);
+});
+
+test("saveWorkspaceVersion appends a new version onto the existing history", async () => {
+  const values = stubStorage({ workspaceHistories: { "ws-1": historyFixture("ws-1", 1) } });
+  const { saveWorkspaceVersion } = await import("../dist/storage.js");
+
+  const updated = await saveWorkspaceVersion("ws-1", snapshotFixture("ws-1"), "second pass");
+
+  assert.deepEqual(updated.versions.map((version) => version.version), [1, 2]);
+  assert.equal(updated.versions[1].note, "second pass");
+  assert.deepEqual(values.workspaceHistories["ws-1"].versions.map((v) => v.version), [1, 2]);
+});
+
+// --- auth.ts ----------------------------------------------------------------
+
+const realFetch = globalThis.fetch;
+
+/**
+ * Routes auth requests to a scripted handler. dist/ is built with the real
+ * Supabase URL, so an unstubbed call would hit the live project — the default
+ * handler throws instead of letting that happen silently.
+ */
+function stubFetch(handler = (url) => { throw new Error(`unexpected network call: ${url}`); }) {
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init, body: init?.body ? JSON.parse(init.body) : undefined });
+    return handler(String(url), init, calls.length);
+  };
+  return calls;
+}
+
+function authResponse(body, status = 200) {
+  return { ok: status >= 200 && status < 300, status, json: async () => body };
+}
+
+function timeoutRejection() {
+  const error = new Error("The operation was aborted due to timeout");
+  error.name = "TimeoutError";
+  throw error;
+}
+
+const nowSeconds = () => Math.floor(Date.now() / 1000);
+const sessionFixture = (overrides = {}) => ({
+  access_token: "token-old",
+  refresh_token: "refresh-1",
+  expires_at: nowSeconds() + 3600,
+  user: { id: "user-1", email: "a@example.com" },
+  ...overrides,
+});
+
+test.afterEach(() => { globalThis.fetch = realFetch; });
+
+test("getLocalUser returns null for an expired remember-me window without any network call", async () => {
+  const values = stubStorage({ supabaseSession: sessionFixture({ rememberUntil: nowSeconds() - 1 }) });
+  stubFetch();
+  const { getLocalUser } = await import("../dist/auth.js");
+
+  assert.equal(await getLocalUser(), null);
+  // The stale session is left for getValidSession to clear; getLocalUser must stay offline.
+  assert.ok(values.supabaseSession);
+});
+
+test("getLocalUser accepts a session with no remember-me deadline", async () => {
+  stubStorage({ supabaseSession: sessionFixture() });
+  stubFetch();
+  const { getLocalUser } = await import("../dist/auth.js");
+
+  assert.deepEqual(await getLocalUser(), { id: "user-1", email: "a@example.com" });
+});
+
+test("an expired remember-me window signs the device out on the next validation", async () => {
+  const values = stubStorage({ supabaseSession: sessionFixture({ rememberUntil: nowSeconds() - 1 }) });
+  const calls = stubFetch();
+  const { getCurrentUser } = await import("../dist/auth.js");
+
+  assert.equal(await getCurrentUser(), null);
+  assert.equal(values.supabaseSession, undefined);
+  assert.deepEqual(calls, []);
+});
+
+test("a near-expiry token is refreshed and the new session preserves the remember-me deadline", async () => {
+  const rememberUntil = nowSeconds() + 86_400;
+  const values = stubStorage({ supabaseSession: sessionFixture({ expires_at: nowSeconds() + 30, rememberUntil }) });
+  const calls = stubFetch((url) => {
+    if (url.includes("grant_type=refresh_token")) {
+      return authResponse({ access_token: "token-new", refresh_token: "refresh-2", expires_in: 3600, user: { id: "user-1" } });
+    }
+    return authResponse({ id: "user-1", email: "a@example.com" });
+  });
+  const { getCurrentUser } = await import("../dist/auth.js");
+
+  assert.deepEqual(await getCurrentUser(), { id: "user-1", email: "a@example.com" });
+  assert.equal(values.supabaseSession.access_token, "token-new");
+  assert.equal(values.supabaseSession.refresh_token, "refresh-2");
+  assert.equal(values.supabaseSession.rememberUntil, rememberUntil);
+  assert.ok(values.supabaseSession.expires_at > nowSeconds() + 3000);
+  assert.equal(calls[0].body.refresh_token, "refresh-1");
+  // The refreshed token, not the stale one, must be used for the follow-up request.
+  assert.equal(calls[1].init.headers.Authorization, "Bearer token-new");
+});
+
+test("a rejected refresh token signs the user out before the profile is ever requested", async () => {
+  const values = stubStorage({ supabaseSession: sessionFixture({ expires_at: nowSeconds() + 30 }) });
+  const calls = stubFetch(() => authResponse({ msg: "Invalid Refresh Token" }, 401));
+  const { getCurrentUser } = await import("../dist/auth.js");
+
+  assert.equal(await getCurrentUser(), null);
+  assert.equal(values.supabaseSession, undefined);
+  // Bailing out here is what proves getValidSession cleared the session itself.
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /grant_type=refresh_token/);
+});
+
+test("a refresh that times out keeps the session instead of signing the user out", async () => {
+  const values = stubStorage({ supabaseSession: sessionFixture({ expires_at: nowSeconds() + 30 }) });
+  stubFetch((url) => {
+    if (url.includes("grant_type=refresh_token")) timeoutRejection();
+    return authResponse({ id: "user-1", email: "a@example.com" });
+  });
+  const { getCurrentUser } = await import("../dist/auth.js");
+
+  assert.deepEqual(await getCurrentUser(), { id: "user-1", email: "a@example.com" });
+  assert.ok(values.supabaseSession, "a flaky network must never clear the session");
+  assert.equal(values.supabaseSession.access_token, "token-old");
+});
+
+test("a server error during refresh keeps the session", async () => {
+  const values = stubStorage({ supabaseSession: sessionFixture({ expires_at: nowSeconds() + 30 }) });
+  stubFetch((url) => (url.includes("grant_type=refresh_token") ? authResponse({ message: "boom" }, 500) : authResponse({ id: "user-1" })));
+  const { getCurrentUser } = await import("../dist/auth.js");
+
+  assert.deepEqual(await getCurrentUser(), { id: "user-1" });
+  assert.ok(values.supabaseSession);
+});
+
+test("getCurrentUser falls back to the cached account when the profile request times out", async () => {
+  const values = stubStorage({ supabaseSession: sessionFixture() });
+  stubFetch(() => timeoutRejection());
+  const { getCurrentUser } = await import("../dist/auth.js");
+
+  assert.deepEqual(await getCurrentUser(), { id: "user-1", email: "a@example.com" });
+  assert.ok(values.supabaseSession);
+});
+
+test("getCurrentUser signs out when the profile request is explicitly rejected", async () => {
+  const values = stubStorage({ supabaseSession: sessionFixture() });
+  stubFetch(() => authResponse({ msg: "invalid claim" }, 403));
+  const { getCurrentUser } = await import("../dist/auth.js");
+
+  assert.equal(await getCurrentUser(), null);
+  assert.equal(values.supabaseSession, undefined);
+});
+
+test("getCurrentUser makes no request when nothing is stored", async () => {
+  stubStorage({});
+  const calls = stubFetch();
+  const { getCurrentUser } = await import("../dist/auth.js");
+
+  assert.equal(await getCurrentUser(), null);
+  assert.deepEqual(calls, []);
+});
+
+test("getAccessToken withholds an already-expired token", async () => {
+  stubStorage({ supabaseSession: sessionFixture({ expires_at: nowSeconds() - 10 }) });
+  stubFetch((url) => (url.includes("grant_type=refresh_token") ? timeoutRejection() : authResponse({})));
+  const { getAccessToken } = await import("../dist/auth.js");
+
+  // Refresh failed, so the retained session is stale and its token must not be handed out.
+  assert.equal(await getAccessToken(), null);
+});
+
+test("getAccessToken returns the token of a valid session", async () => {
+  stubStorage({ supabaseSession: sessionFixture() });
+  stubFetch();
+  const { getAccessToken } = await import("../dist/auth.js");
+
+  assert.equal(await getAccessToken(), "token-old");
+});
+
+test("signIn records a seven-day remember-me deadline only when asked", async () => {
+  const values = stubStorage({});
+  stubFetch(() => authResponse({ access_token: "t", refresh_token: "r", expires_in: 3600, user: { id: "user-1" } }));
+  const { signIn } = await import("../dist/auth.js");
+
+  await signIn("a@example.com", "pw", true);
+  const expected = nowSeconds() + 7 * 24 * 60 * 60;
+  assert.ok(Math.abs(values.supabaseSession.rememberUntil - expected) <= 5);
+
+  await signIn("a@example.com", "pw");
+  assert.equal("rememberUntil" in values.supabaseSession, false);
+});
+
+test("signUp awaiting email confirmation stores no session", async () => {
+  const values = stubStorage({});
+  stubFetch(() => authResponse({ user: { id: "user-1" } }));
+  const { signUp } = await import("../dist/auth.js");
+
+  assert.deepEqual(await signUp("a@example.com", "pw"), { user: { id: "user-1" }, requiresEmailConfirmation: true });
+  assert.equal(values.supabaseSession, undefined);
+});
+
+test("signUp that returns a session signs the user straight in", async () => {
+  const values = stubStorage({});
+  stubFetch(() => authResponse({ access_token: "t", refresh_token: "r", expires_in: 3600, user: { id: "user-1" } }));
+  const { signUp } = await import("../dist/auth.js");
+
+  const result = await signUp("a@example.com", "pw");
+
+  assert.equal(result.requiresEmailConfirmation, false);
+  assert.equal(values.supabaseSession.access_token, "t");
+});
+
+test("signOut clears the local session even when the logout request fails", async () => {
+  const values = stubStorage({ supabaseSession: sessionFixture() });
+  stubFetch(() => timeoutRejection());
+  const { signOut } = await import("../dist/auth.js");
+
+  await assert.rejects(signOut());
+  assert.equal(values.supabaseSession, undefined);
+});
+
+test("auth request failures are reported as actionable Chinese messages", async () => {
+  stubStorage({});
+  const { signIn } = await import("../dist/auth.js");
+
+  stubFetch(() => timeoutRejection());
+  await assert.rejects(signIn("a@example.com", "pw"), /连接 Supabase 超时/);
+
+  stubFetch(() => { throw new TypeError("Failed to fetch"); });
+  await assert.rejects(signIn("a@example.com", "pw"), /无法连接 Supabase/);
+});
+
+test("an HTTP auth error carries its status so it counts as an explicit failure", async () => {
+  stubStorage({});
+  stubFetch(() => authResponse({ msg: "Invalid login credentials" }, 400));
+  const { signIn, isExplicitAuthenticationFailure } = await import("../dist/auth.js");
+
+  const error = await signIn("a@example.com", "pw").then(() => null, (reason) => reason);
+  assert.equal(error.message, "Invalid login credentials");
+  assert.equal(error.status, 400);
+  assert.equal(isExplicitAuthenticationFailure(error), true);
 });

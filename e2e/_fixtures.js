@@ -4,7 +4,7 @@
  *
  * Key insight: the default Playwright `context` (non-persistent) does NOT
  * start extension service workers reliably when you just pass
- * `--load-extension=` in Chromium `headless: true`. To guarantee the MV3
+ * `--load-extension=`. To guarantee the MV3
  * service worker boots we instead build the browser context ourselves via
  * `chromium.launchPersistentContext` using a throwaway profile directory
  * inside `./test-results/e2e-profiles/`.
@@ -136,9 +136,8 @@ export const test = base.extend({
     async ({ profileDir }, use, workerInfo) => {
       const useOpts = /** @type {*} */ (workerInfo.project.use);
       const { extensionDist, headless, launchOptions = {} } = useOpts;
-      // NOTE: `headless` should be false by default for MV3 extensions because
-      // Chromium's legacy `headless=true` backend does not start extension
-      // service workers. See playwright.config.js for the default.
+      // Headless only starts extension service workers on the full Chromium
+      // build, so playwright.config.js pairs it with `channel: "chromium"`.
       const effectiveHeadless = headless === true ? true : false;
       const context = await chromium.launchPersistentContext(profileDir, {
         headless: effectiveHeadless,
