@@ -1,3 +1,13 @@
+-- =====================================================
+-- Migration 001: Create user sync tables
+-- File: 001_create_user_sync_tables.sql
+-- Date: 2026-07-19 18:11
+-- Run: Supabase SQL Editor, execute once
+-- =====================================================
+-- Note: Creates user_settings and group_rules tables plus
+--       the shared set_updated_at() trigger, with RLS
+--       policies and grants for authenticated users only.
+-- -----------------------------------------------------
 -- Tab Garden user settings and cross-device grouping rules.
 
 create or replace function public.set_updated_at()

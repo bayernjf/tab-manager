@@ -1,3 +1,16 @@
+-- =====================================================
+-- Migration 006: Add manual slot to board layouts
+-- File: 006_add_board_layout_manual_slot.sql
+-- Date: 2026-07-22 20:32
+-- Depends on: 005_add_board_layout_tables.sql
+-- Run: Supabase SQL Editor, execute once
+-- =====================================================
+-- Note: Adds manual_slot to board_layouts, backfills it
+--       from manual_order, and replaces the old
+--       auto_fill/manual_order check constraint so manual
+--       grid rows persist independently of visual card
+--       height.
+-- -----------------------------------------------------
 -- Preserve manual board grid rows independently from visual card height.
 
 alter table public.board_layouts
