@@ -1,8 +1,8 @@
 # Tab Garden 项目交接文档
 
 > 最后更新时间：2026-09-09
-> 当前分支：`feature/20260719`（已合并至 `dev` PR #26 → `main` PR #27）
-> 最新版本：`v0.1.11`
+> 当前分支：`feature/20260719`（两轮迭代均已合并：PR #26 → `dev`、PR #27 → `main`（tag `v0.1.11`，2026-07-30）；PR #28 → `dev`、PR #29 → `main`（tag `v0.1.12`，2026-08-15）。此后远端分支又领先 `main` 17 个提交；本地分支在远端之上还有本轮未 push 的提交（sync 超时修复、单测/e2e 补测、board 弹窗重构等））
+> 最新版本：`v0.1.12`（main 当前合并 PR #29，merge commit `95dd0eb`）
 > 验证状态：typecheck ✅ / 204 unit tests ✅ / 17 E2E tests ✅ (0 skipped) / diff-check ✅ / 构建通过 ✅
 
 ---
@@ -146,7 +146,7 @@ feature/20260719 分支共 30+ 个 commit，已全部 push 并通过 PR 合并�
 
 ```bash
 npm run typecheck      # tsc --noEmit           （0 错误）
-npm test               # 构建 + 120 条单元测试   （120/120 通过，约 105ms）
+npm test               # 构建 + 204 条单元测试   （204/204 通过）
 git diff --check       # 空白符检查              （0 警告）
 ```
 
@@ -292,10 +292,11 @@ SUPABASE_ANON_KEY=your-anon-or-publishable-key
 
 ## 9. Git 分支与发布状态
 
-- **所有代码已合并发布**：
-  - `feature/20260719` → PR #26 → `dev`（`b8c8a49`，tag `dev-preview`）
-  - `dev` → PR #27 → `main`（`9c439cb`，tag `v0.1.11`）
-- 当前分支 `feature/20260719` 工作区干净，与远端同步。
+- **两轮迭代均已合并发布**（2026-09-09 经 `gh` 核实）：
+  - 第一轮：`feature/20260719` → PR #26 → `dev`（`b8c8a49`）→ PR #27 → `main`（`9c439cb`，tag `v0.1.11`，2026-07-30）
+  - 第二轮（时间线过滤 / 最近关闭搜索 / 退出清理数据）：PR #28 → `dev`（`bfba921`）→ PR #29 → `main`（`95dd0eb`，tag `v0.1.12`，2026-08-15）
+- **当前未同步的工作**：远端 `feature/20260719` 领先 `main` 17 个提交（尚未开 PR）；本地分支在其之上还有本轮未 push 的提交（sync 超时修复、单测/e2e 补测、board 弹窗重构等）。
+- 本地 `main` 分支停留在 PR #14（`47831f2`），落后远端 `origin/main`，需要 `git fetch` 后更新，不能据此判断合并状态。
 - 后续新功能应基于最新 `dev` 创建 `feature/*` 分支。
 - 按 `PULL_REQUEST_WORKFLOW.md`：
   - push 前先 `git pull --rebase` 检查冲突；
