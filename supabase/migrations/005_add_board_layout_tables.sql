@@ -1,3 +1,15 @@
+-- =====================================================
+-- Migration 005: Add board layout tables
+-- File: 005_add_board_layout_tables.sql
+-- Date: 2026-07-22 18:21
+-- Depends on: 001_create_user_sync_tables.sql
+-- Run: Supabase SQL Editor, execute once
+-- =====================================================
+-- Note: Creates board_custom_groups and board_layouts
+--       tables for persisted board groups and per-device
+--       layout preferences, with updated_at triggers, RLS
+--       policies and grants for authenticated users.
+-- -----------------------------------------------------
 -- Persisted board groups and per-device layout preferences.
 
 create table if not exists public.board_custom_groups (

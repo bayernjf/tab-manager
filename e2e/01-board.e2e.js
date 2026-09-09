@@ -6,15 +6,28 @@ import { test, expect } from "./_fixtures.js";
  *
  * 断言针对 board.html 中真实 id（见 `src/board.html` grep）：
  *   顶部工具栏：board-theme-toggle / view-toggle-board / view-toggle-timeline
- *                / toggle-select-mode / recently-closed-btn / memory-usage-btn
+ *                / toggle-select-mode / recently-closed-btn / auto-fill-wrapper
  *                / open-workspaces / review-duplicates / refresh
  *   批量操作栏：batch-action-bar / batch-select-all / exit-select-mode
  *   时间线工具栏：timeline-toolbar / timeline-sort
- *   弹窗：workspace-dialog / recently-closed-dialog / memory-usage-dialog
+ *   弹窗：workspace-dialog / recently-closed-dialog
  *         / workspace-import-preview-dialog / workspace-history-dialog
  *   折叠：board-grid 中 .group-card + button with aria-label~="折叠"
  */
 test.describe("Board page local flows", () => {
+  /**
+   * The board only lists http(s) tabs, and a fresh test profile has none — just
+   * about:blank and extension pages. Requests are fulfilled locally so the
+   * precondition needs no network.
+   */
+  async function openStubTab(extContext, slug) {
+    await extContext.route("https://tab-garden.test/**", (route) =>
+      route.fulfill({ contentType: "text/html", body: `<title>Stub ${slug}</title>` }));
+    const stub = await extContext.newPage();
+    await stub.goto(`https://tab-garden.test/${slug}`, { waitUntil: "domcontentloaded" });
+    return stub;
+  }
+
   test("renders top toolbar and theme toggle flips data-theme", async ({ boardPage: page }) => {
     // Top toolbar buttons exist (not hidden)
     await expect(page.locator("#board-theme-toggle")).toBeVisible({ timeout: 15_000 });
@@ -22,7 +35,7 @@ test.describe("Board page local flows", () => {
     await expect(page.locator("#view-toggle-timeline")).toBeVisible();
     await expect(page.locator("#toggle-select-mode")).toBeVisible();
     await expect(page.locator("#recently-closed-btn")).toBeVisible();
-    await expect(page.locator("#memory-usage-btn")).toBeVisible();
+    await expect(page.locator("#auto-fill-wrapper")).toBeVisible();
     await expect(page.locator("#open-workspaces")).toBeVisible();
     await expect(page.locator("#review-duplicates")).toBeVisible();
     await expect(page.locator("#refresh")).toBeVisible();
@@ -189,5 +202,110 @@ test.describe("Board page local flows", () => {
     for (let i = 0; i < 3; i++) { await page.keyboard.press("j"); await page.waitForTimeout(60); }
     for (let i = 0; i < 2; i++) { await page.keyboard.press("k"); await page.waitForTimeout(60); }
     expect(errors, `j/k caused page errors: ${errors.join("\n")}`).toEqual([]);
+  });
+
+  test("workspace dialog puts the select-all box above the tab list", async ({ boardPage: page }) => {
+    await page.locator("#open-workspaces").click();
+    await expect(page.locator("#workspace-dialog")).toBeVisible({ timeout: 5_000 });
+    // 全选框必须排在列表之前，否则会盖住列表上方的报错提示。
+    const selectAllPrecedesList = await page.evaluate(() => {
+      const selectAll = document.querySelector(".workspace-select-all");
+      const list = document.querySelector("#workspace-tabs");
+      if (!selectAll || !list) return null;
+      return Boolean(selectAll.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+    expect(selectAllPrecedesList, "expected .workspace-select-all and #workspace-tabs to both exist").not.toBeNull();
+    expect(selectAllPrecedesList, "#workspace-tabs must come after .workspace-select-all in the DOM").toBe(true);
+    await page.locator("#close-workspace-dialog").click();
+  });
+
+  test("workspace dialog tab rows carry a 1-based index, an icon and the board index", async ({ extContext, boardPage: page }) => {
+    const boardHidden = await page.locator("#board-content").evaluate((el) => el?.classList.contains("hidden"));
+    if (boardHidden) {
+      test.skip(true, "#board-content is hidden (likely not signed in), so the workspace tab list is empty.");
+      return;
+    }
+    const stub = await openStubTab(extContext, "workspace-row");
+    // The dialog renders from the board state held in memory and never
+    // re-renders, so the new tab has to be on the board before we open it.
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.locator("#board-grid .group-card .tab-row").first()).toBeAttached({ timeout: 15_000 });
+    await page.locator("#open-workspaces").click();
+    await expect(page.locator("#workspace-dialog")).toBeVisible({ timeout: 5_000 });
+    const rows = page.locator("#workspace-tabs .workspace-tab-row");
+    // Every board tab with a url becomes a row, so a populated board must yield rows.
+    expect(await rows.count(), "workspace dialog listed no tabs despite a populated board").toBeGreaterThan(0);
+    const shape = await page.evaluate(() =>
+      Array.from(document.querySelectorAll("#workspace-tabs .workspace-tab-row")).map((row) => ({
+        index: row.querySelector(".workspace-tab-index")?.textContent,
+        hasIcon: Boolean(row.querySelector("img.tab-icon")),
+        hasTitle: Boolean(row.querySelector(".workspace-tab-title")),
+        datasetIndex: row.querySelector('input[type="checkbox"]')?.dataset.index,
+      })),
+    );
+    // 显示的序号是 1-based，而 dataset.index 是 0-based —— 报错文案依赖后者指向正确的标签。
+    shape.forEach((row, position) => {
+      expect(row.index, `row ${position} should show a 1-based index`).toBe(String(position + 1));
+      expect(row.datasetIndex, `row ${position} should carry its board index`).toBe(String(position));
+      expect(row.hasIcon, `row ${position} should render a favicon`).toBe(true);
+      expect(row.hasTitle, `row ${position} should render a title span`).toBe(true);
+    });
+    await page.locator("#close-workspace-dialog").click();
+    await stub.close();
+  });
+
+  test("returning to the current board never flashes the deferred reminders section", async ({ extContext, boardPage: page }) => {
+    const boardHidden = await page.locator("#board-content").evaluate((el) => el?.classList.contains("hidden"));
+    if (boardHidden) {
+      test.skip(true, "#board-content is hidden (likely not signed in), so scopes cannot be switched.");
+      return;
+    }
+    // 作用域导航永远只有“当前”和“从工作区加载”两个按钮，后者只是打开浮层，
+    // 所以必须先存一个工作区、再从浮层里选中它，才算真的离开了“当前”。
+    const stub = await openStubTab(extContext, "scope-switch");
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.locator("#board-grid .group-card .tab-row").first()).toBeAttached({ timeout: 15_000 });
+    const workspaceTitle = `e2e-scope-${Date.now()}`;
+    await page.locator("#open-workspaces").click();
+    await expect(page.locator("#workspace-dialog")).toBeVisible({ timeout: 5_000 });
+    await page.locator("#workspace-name").fill(workspaceTitle);
+    await page.locator("#save-workspace").click();
+    await expect(page.locator("#workspace-list")).toContainText(workspaceTitle, { timeout: 20_000 });
+    await page.locator("#close-workspace-dialog").click();
+
+    // 记录 class 变化序列：切回“当前”时不允许出现“移除 hidden”，否则就是空列表先弹出再隐藏的闪烁。
+    await page.evaluate(() => {
+      const section = document.querySelector("#deferred-reminders");
+      if (!section) return;
+      window.__deferredVisibility = [section.classList.contains("hidden")];
+      new MutationObserver(() => {
+        window.__deferredVisibility.push(section.classList.contains("hidden"));
+      }).observe(section, { attributes: true, attributeFilter: ["class"] });
+    });
+    await page.locator("#scope-nav .scope-nav-scope").nth(1).click();
+    await page.locator(".workspace-popover-item", { hasText: workspaceTitle }).click();
+    // 浮层会盖住“当前”按钮，选中后它必须已经消失。
+    await expect(page.locator(".workspace-popover")).toHaveCount(0, { timeout: 5_000 });
+    await page.waitForTimeout(600);
+    await page.locator("#scope-nav .scope-nav-scope").first().click();
+    await page.waitForTimeout(1_200);
+    const { sequence, reminderCount } = await page.evaluate(() => ({
+      sequence: window.__deferredVisibility ?? [],
+      reminderCount: document.querySelectorAll("#deferred-list > *").length,
+    }));
+
+    // 清理：工作区会同步到云端，留着会让后续运行的状态越积越多。
+    await page.locator("#open-workspaces").click();
+    await page.locator(`[aria-label="删除 ${workspaceTitle}"]`).click();
+    await expect(page.locator("#workspace-list")).not.toContainText(workspaceTitle, { timeout: 20_000 });
+    await page.locator("#close-workspace-dialog").click();
+    await stub.close();
+
+    if (reminderCount > 0) {
+      test.skip(true, "This profile has due reminders, so the section is legitimately shown and the flash cannot be distinguished.");
+      return;
+    }
+    const everShown = sequence.some((hidden) => hidden === false);
+    expect(everShown, `#deferred-reminders became visible with an empty list; class sequence (hidden=true): ${JSON.stringify(sequence)}`).toBe(false);
   });
 });

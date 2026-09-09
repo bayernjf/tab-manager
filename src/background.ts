@@ -49,6 +49,8 @@ import {
   type WorkspacePortableImportPreview,
   isDeferredTabDue,
   nextDeferredOccurrence,
+  planBoardTabInsertion,
+  validateWorkspaceTabsPayload,
   formatDeferredDateTime,
   MAX_WORKSPACE_HISTORY_VERSIONS,
 } from "./shared.js";
@@ -82,7 +84,7 @@ import {
   deleteWorkspaceHistory,
   clearUserData,
 } from "./storage.js";
-import { getCurrentUser, getStoredUser, signIn, signOut, signUp } from "./auth.js";
+import { getCurrentUser, getLocalUser, getStoredUser, signIn, signOut, signUp } from "./auth.js";
 import { pushSettings, replaceBoardSyncData, replaceOptionalSyncData, restoreBoardSyncData, restoreOptionalSyncData, syncSettings, fetchWorkspaces, upsertWorkspace, deleteWorkspaceRow, renameDeviceWorkspaces } from "./sync.js";
 
 void i18n.initFromStorage();
@@ -463,7 +465,7 @@ async function loadAllWorkspaces(userId: string, cloudSyncEnabled: boolean): Pro
 }
 
 async function requireBoardUser() {
-  const user = await getCurrentUser();
+  const user = await getLocalUser();
   if (!user) throw new Error(i18n.t("loginRequiredToModify"));
   return user;
 }
@@ -827,17 +829,11 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       if (title.status === "empty") throw new Error(i18n.t("workspaceNameEmpty"));
       if (title.status === "duplicate") throw new Error(i18n.t("workspaceNameDuplicate"));
       if (title.status !== "valid") throw new Error(i18n.t("workspaceNameTooLong"));
-      if (!Array.isArray(message.tabs) || message.tabs.length < 1) throw new Error(i18n.t("selectAtLeastOneTab"));
-      if (message.tabs.length > 200) throw new Error(i18n.t("workspaceTabsLimit"));
-      const validations = message.tabs.map(validateWorkspaceTab);
-      const firstInvalid = validations.findIndex((validation) => validation.status !== "valid");
-      if (firstInvalid >= 0) {
-        const displayIndex = typeof message.tabs[firstInvalid]?.index === "number" ? message.tabs[firstInvalid].index : firstInvalid;
-        const validation = validations[firstInvalid];
-        if (!validation || validation.status === "valid") throw new Error(i18n.t("invalidTabData"));
-        throw new Error(i18n.t("tabValidationError", [String(displayIndex + 1), workspaceTabValidationMessage(validation.status, (k) => i18n.t(k))]));
-      }
-      const tabs = validations.flatMap((validation) => validation.status === "valid" ? [validation.tab] : []);
+      const payload = validateWorkspaceTabsPayload(message.tabs);
+      if (payload.status === "empty") throw new Error(i18n.t("selectAtLeastOneTab"));
+      if (payload.status === "too-many") throw new Error(i18n.t("workspaceTabsLimit"));
+      if (payload.status === "invalid") throw new Error(i18n.t("tabValidationError", [String(payload.displayIndex + 1), workspaceTabValidationMessage(payload.reason, (k) => i18n.t(k))]));
+      const tabs = payload.tabs;
       const snapshot = validateWorkspaceSnapshot({ id: crypto.randomUUID(), title: title.title, createdAt: new Date().toISOString(), tabs, deviceId, deviceName });
       if (!snapshot) throw new Error(i18n.t("workspaceDataInvalid"));
       if (useCloud) await upsertWorkspace(user.id, snapshot).catch(() => {});
@@ -869,16 +865,11 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
     if (message.type === "restore-workspace-tabs") {
       await requireBoardUser();
       if (message.confirmed !== true) throw new Error(i18n.t("confirmRestoreTabs"));
-      if (!Array.isArray(message.tabs) || message.tabs.length < 1) throw new Error(i18n.t("selectAtLeastOneTab"));
-      if (message.tabs.length > 200) throw new Error(i18n.t("workspaceTabsLimit"));
-      const validations = message.tabs.map(validateWorkspaceTab);
-      const firstInvalid = validations.findIndex((validation) => validation.status !== "valid");
-      if (firstInvalid >= 0) {
-        const validation = validations[firstInvalid];
-        if (!validation || validation.status === "valid") throw new Error(i18n.t("invalidTabData"));
-        throw new Error(i18n.t("tabValidationError", [String(firstInvalid + 1), workspaceTabValidationMessage(validation.status, (k) => i18n.t(k))]));
-      }
-      const tabs = validations.flatMap((validation) => validation.status === "valid" ? [validation.tab] : []);
+      const payload = validateWorkspaceTabsPayload(message.tabs);
+      if (payload.status === "empty") throw new Error(i18n.t("selectAtLeastOneTab"));
+      if (payload.status === "too-many") throw new Error(i18n.t("workspaceTabsLimit"));
+      if (payload.status === "invalid") throw new Error(i18n.t("tabValidationError", [String(payload.displayIndex + 1), workspaceTabValidationMessage(payload.reason, (k) => i18n.t(k))]));
+      const tabs = payload.tabs;
       const skipSet = new Set(Array.isArray(message.skipUrls) ? message.skipUrls : []);
       const toCreate = tabs.filter((tab) => !skipSet.has(tab.url));
       for (const tab of toCreate) await chrome.tabs.create({ windowId: typeof message.windowId === "number" ? message.windowId : undefined, url: tab.url, active: false });
@@ -1090,12 +1081,10 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
         const id = drop.targetBoardKey.slice("custom:".length);
         if (!state.boardCustomGroups.some((group) => group.id === id)) throw new Error(i18n.t("workspaceNotFound"));
       }
-      const targetTabs = ((await boardLogicalGroups(state)).find((group) => group.boardKey === drop.targetBoardKey)?.tabs ?? []).filter((candidate) => candidate.id !== drop.tabId);
-      const targetIndex = drop.targetTabId === undefined ? targetTabs.length : targetTabs.findIndex((candidate) => candidate.id === drop.targetTabId);
-      if (targetIndex < 0) throw new Error(i18n.t("targetGroupChanged"));
-      const insertionIndex = drop.position === "before" ? targetIndex : drop.position === "after" ? targetIndex + 1 : targetTabs.length;
-      targetTabs.splice(insertionIndex, 0, source);
-      state.boardAssignments = targetTabs.reduce((assignments, candidate, order) => moveVirtualBoardAssignment(assignments, candidate.windowId!, candidate.id, drop.targetBoardKey, order), state.boardAssignments);
+      const groupTabs = (await boardLogicalGroups(state)).find((group) => group.boardKey === drop.targetBoardKey)?.tabs ?? [];
+      const insertion = planBoardTabInsertion(groupTabs, source, drop);
+      if (insertion.status === "target-missing") throw new Error(i18n.t("targetGroupChanged"));
+      state.boardAssignments = insertion.tabs.reduce((assignments, candidate, order) => moveVirtualBoardAssignment(assignments, candidate.windowId!, candidate.id, drop.targetBoardKey, order), state.boardAssignments);
       await saveBoardAssignments(state.boardAssignments);
       return { ok: true };
     }

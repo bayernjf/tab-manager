@@ -17,7 +17,7 @@
 **Files:**
 - Modify: `src/shared.ts`
 - Modify: `src/sync.ts`
-- Create: `supabase/migrations/005_add_new_tab_board_setting.sql`
+- Create: `supabase/migrations/007_add_new_tab_board_setting.sql`
 - Test: `tests/shared.test.js`
 
 - [ ] **Step 1: Write failing settings-contract tests**
@@ -36,7 +36,7 @@ Add `openBoardOnNewTab: boolean` with default `false` to local settings, portabl
 
 - [ ] **Step 4: Add the additive database migration**
 
-Create migration `005_add_new_tab_board_setting.sql` containing:
+Create migration `007_add_new_tab_board_setting.sql` containing:
 
 ```sql
 alter table public.user_settings

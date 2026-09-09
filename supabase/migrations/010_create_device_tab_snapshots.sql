@@ -1,3 +1,15 @@
+-- =====================================================
+-- Migration 010: Create device tab snapshots table
+-- File: 010_create_device_tab_snapshots.sql
+-- Date: 2026-07-25 14:24
+-- Depends on: 001_create_user_sync_tables.sql
+-- Run: Supabase SQL Editor, execute once
+-- =====================================================
+-- Note: Creates device_tab_snapshots for per-device /
+--       per-browser cross-device navigation, one row per
+--       extension install, opt-in only. Feature later
+--       removed; table kept idle for migration history.
+-- -----------------------------------------------------
 -- [作废 2026-07-24] 设备/浏览器跨设备导航功能已移除（被工作区导航取代），
 -- 代码不再读写本表，device_tab_snapshots 在线上闲置。保留迁移历史与线上表，
 -- 勿删、勿新增 drop 迁移（避免动线上表）。

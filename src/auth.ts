@@ -1,4 +1,5 @@
 import { SUPABASE_ANON_KEY, SUPABASE_URL, assertSupabaseConfigured } from "./supabase-config.js";
+import { SUPABASE_INTERACTIVE_TIMEOUT_MS, SUPABASE_REQUEST_TIMEOUT_MS, isRequestTimeout } from "./shared.js";
 
 export interface AuthUser { id: string; email?: string }
 interface AuthSession { access_token: string; refresh_token: string; expires_at: number; rememberUntil?: number; user: AuthUser }
@@ -13,16 +14,23 @@ function endpoint(path: string): string {
   return `${SUPABASE_URL.replace(/\/$/, "")}/auth/v1${path}`;
 }
 
-async function request<T>(path: string, init: RequestInit = {}, accessToken?: string): Promise<T> {
-  const response = await fetch(endpoint(path), {
-    ...init,
-    headers: {
-      apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${accessToken ?? SUPABASE_ANON_KEY}`,
-      "Content-Type": "application/json",
-      ...init.headers,
-    },
-  });
+async function request<T>(path: string, init: RequestInit = {}, accessToken?: string, timeoutMs = SUPABASE_REQUEST_TIMEOUT_MS): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(endpoint(path), {
+      ...init,
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${accessToken ?? SUPABASE_ANON_KEY}`,
+        "Content-Type": "application/json",
+        ...init.headers,
+      },
+    });
+  } catch (error) {
+    if (isRequestTimeout(error)) throw new Error("连接 Supabase 超时，请检查网络后重试");
+    throw new Error("无法连接 Supabase，请检查网络后重试");
+  }
   const body = await response.json().catch(() => ({})) as T & { msg?: string; message?: string; error_description?: string };
   if (!response.ok) {
     const error = new Error(body.msg || body.message || body.error_description || `认证请求失败 (${response.status})`) as AuthRequestError;
@@ -60,10 +68,18 @@ export async function getStoredUser(): Promise<AuthUser | null> {
   return (await storedSession())?.user ?? null;
 }
 
+/** Authorizes local-only actions from the cached session; writes still refresh their own token. */
+export async function getLocalUser(): Promise<AuthUser | null> {
+  const session = await storedSession();
+  if (!session) return null;
+  if (!isRememberedSessionValid(session.rememberUntil)) return null;
+  return session.user;
+}
+
 export async function signUp(email: string, password: string): Promise<{ user: AuthUser | null; requiresEmailConfirmation: boolean }> {
   const data = await request<{ access_token?: string; refresh_token?: string; expires_in?: number; user: AuthUser | null }>("/signup", {
     method: "POST", body: JSON.stringify({ email, password }),
-  });
+  }, undefined, SUPABASE_INTERACTIVE_TIMEOUT_MS);
   if (data.access_token && data.refresh_token && data.expires_in && data.user) {
     await saveSession(toSession({ ...data, access_token: data.access_token, refresh_token: data.refresh_token, expires_in: data.expires_in, user: data.user }));
   }
@@ -73,7 +89,7 @@ export async function signUp(email: string, password: string): Promise<{ user: A
 export async function signIn(email: string, password: string, rememberForSevenDays = false): Promise<AuthUser> {
   const data = await request<{ access_token: string; refresh_token: string; expires_in: number; user: AuthUser }>("/token?grant_type=password", {
     method: "POST", body: JSON.stringify({ email, password }),
-  });
+  }, undefined, SUPABASE_INTERACTIVE_TIMEOUT_MS);
   const rememberUntil = rememberForSevenDays ? Math.floor(Date.now() / 1000) + REMEMBER_DEVICE_DURATION_SECONDS : undefined;
   await saveSession(toSession(data, rememberUntil));
   return data.user;

@@ -1,10 +1,12 @@
 import { getAccessToken } from "./auth.js";
 import { SUPABASE_ANON_KEY, SUPABASE_URL, assertSupabaseConfigured } from "./supabase-config.js";
 import {
+  SUPABASE_REQUEST_TIMEOUT_MS,
   boardCustomGroupFromSyncRow,
   boardLayoutFromSyncRow,
   groupRuleFromSyncRow,
   ignoredSiteFromSyncRow,
+  isRequestTimeout,
   resolveCloudCollection,
   settingsFromSyncRow,
   validateWorkspaceSnapshot,
@@ -26,15 +28,22 @@ async function databaseRequest<T>(path: string, init: RequestInit = {}): Promise
   assertSupabaseConfigured();
   const accessToken = await getAccessToken();
   if (!accessToken) throw new Error("登录已过期，请重新登录");
-  const response = await fetch(`${SUPABASE_URL.replace(/\/$/, "")}/rest/v1${path}`, {
-    ...init,
-    headers: {
-      apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-      ...init.headers,
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${SUPABASE_URL.replace(/\/$/, "")}/rest/v1${path}`, {
+      ...init,
+      signal: AbortSignal.timeout(SUPABASE_REQUEST_TIMEOUT_MS),
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+        ...init.headers,
+      },
+    });
+  } catch (error) {
+    if (isRequestTimeout(error)) throw new Error("同步超时，请检查网络后重试");
+    throw new Error("无法连接 Supabase，同步已取消");
+  }
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as { message?: string; details?: string };
     throw new Error(body.message || body.details || `同步失败 (${response.status})`);

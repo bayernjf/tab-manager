@@ -1,9 +1,9 @@
 # Tab Garden 项目交接文档
 
-> 最后更新时间：2026-07-31
-> 当前分支：`feature/20260719`（已合并至 `dev` PR #26 → `main` PR #27）
-> 最新版本：`v0.1.11`
-> 验证状态：typecheck ✅ / 127 unit tests ✅ / 10 E2E tests ✅ (4 skipped) / diff-check ✅ / 构建通过 ✅
+> 最后更新时间：2026-09-09
+> 当前分支：`feature/20260719`（两轮迭代均已合并：PR #26 → `dev`、PR #27 → `main`（tag `v0.1.11`，2026-07-30）；PR #28 → `dev`、PR #29 → `main`（tag `v0.1.12`，2026-08-15）。此后远端分支又领先 `main` 17 个提交；本地分支在远端之上还有本轮未 push 的提交（sync 超时修复、单测/e2e 补测、board 弹窗重构等））
+> 最新版本：`v0.1.12`（main 当前合并 PR #29，merge commit `95dd0eb`）
+> 验证状态：typecheck ✅ / 204 unit tests ✅ / 17 E2E tests ✅ (0 skipped) / diff-check ✅ / 构建通过 ✅
 
 ---
 
@@ -27,9 +27,9 @@ Tab Garden 是 Chrome / Edge Manifest V3 原生标签管理扩展，使用 TypeS
 npm install          # 安装依赖
 npm run typecheck    # TypeScript 类型检查（不生成文件）
 npm run build        # 清理 dist、TS 编译、复制静态文件、注入 Supabase 配置
-npm test             # 完整构建 + Node.js 单元测试（120 条用例）
+npm test             # 完整构建 + Node.js 单元测试（204 条用例）
 git diff --check     # 空白符检查（提交前必跑）
-npm run e2e          # Playwright E2E 测试（默认 headed 模式，需先 build）
+npm run e2e          # Playwright E2E 测试（默认 headless，需先 build）
 ```
 
 ---
@@ -138,6 +138,17 @@ feature/20260719 分支共 30+ 个 commit，已全部 push 并通过 PR 合并�
 
 > 已移除的键（随「内存占用」功能移除）：`memoryUsage`, `memoryTitle`, `closeTopUsers`, `memoryKB`, `memoryMB`
 
+### 4.6 看板模块拆分（2026-09-09）
+
+版本历史弹窗已从 `board.ts` 拆出，依赖方向为 `board.ts → board-*.ts`，两个新模块不反向 import `board.ts`，无循环依赖：
+
+| 文件 | 职责 |
+|---|---|
+| `src/board-dom.ts` | 看板共享 DOM/消息原语：`$`、`send`、`boardToast` / `showStatus`、`makeButton`、`faviconFor`、`getOpenTabUrls` |
+| `src/board-history.ts` | 工作区版本历史弹窗：`openWorkspaceHistoryDialog`、版本渲染 / 恢复 / 另存；弹窗唯一自管状态是当前打开的 workspaceId；`board.ts` 只负责调用打开和启动时 `wireWorkspaceHistoryDialog()` |
+
+拆分后 `board.ts` 由 2445 行降至 2233 行。**工作区主弹窗未拆**：它读写 `workspaces` / `currentDevice` / `restoreWorkspaceId` 等与作用域浮层、看板渲染共享的可变模块状态，机械外移需要先引入共享状态层，已明确判定不属于低风险移动，保持原样。
+
 ---
 
 ## 5. 验证方式
@@ -146,7 +157,7 @@ feature/20260719 分支共 30+ 个 commit，已全部 push 并通过 PR 合并�
 
 ```bash
 npm run typecheck      # tsc --noEmit           （0 错误）
-npm test               # 构建 + 120 条单元测试   （120/120 通过，约 105ms）
+npm test               # 构建 + 204 条单元测试   （204/204 通过）
 git diff --check       # 空白符检查              （0 警告）
 ```
 
@@ -176,25 +187,31 @@ git diff --check       # 空白符检查              （0 警告）
 **运行方式：**
 
 ```bash
-npm run e2e                              # 默认 headed 模式（MV3 扩展需要）
-E2E_EMAIL=xxx E2E_PASSWORD=xxx npm run e2e  # 带登录态的完整测试
+npm run e2e                              # 默认 headless
+PLAYWRIGHT_HEADLESS=0 npm run e2e        # 开真实窗口观察
 npx playwright show-report               # 查看HTML报告
 ```
+
+登录凭证从 `.env.local` 的 `E2E_EMAIL` / `E2E_PASSWORD` 读取（真实环境变量优先）。
+缺少凭证时，需要登录态的用例会跳过而非失败。
 
 **测试文件与覆盖范围：**
 
 | 文件 | 用例数 | 覆盖范围 |
 |---|---|---|
 | `e2e/00-boot-and-auth.e2e.js` | 3 | popup 加载无报错、选项页语言/主题下拉框渲染、登录流程（需凭证） |
-| `e2e/01-board.e2e.js` | 7 | 顶部工具栏渲染、主题切换、看板/时间线视图切换、批量选择模式、分组折叠、最近关闭弹窗、工作区弹窗、j/k 键盘导航 |
-| `e2e/02-options.e2e.js` | 4 | 侧边栏默认面板、主题/语言 select 存在性、hash 跳转隐私面板、外观面板切换 |
+| `e2e/01-board.e2e.js` | 10 | 顶部工具栏渲染、主题切换、看板/时间线视图切换、批量选择模式、分组折叠、最近关闭弹窗、工作区弹窗、j/k 键盘导航、工作区标签行序号、切回“当前”不闪烁 |
+| `e2e/02-options.e2e.js` | 4 | 侧边栏默认面板、主题/语言 select 存在性、`#shortcut-times` hash 跳转偏好设置面板、外观面板切换 |
 
-**运行结果：** 10 passed / 4 skipped（跳过项为需要登录态或打开标签页的条件测试）
+**运行结果：** 17 passed / 0 skipped（配好凭证后全部执行）
 
 **关键技术点：**
 
-- **headed 模式必需**：Chromium legacy `headless=true` 无法加载 MV3 扩展 service worker，`launchPersistentContext` 不支持 `headless: "new"` 字符串，因此默认 headed（`headless: false`）。
+- **headless + `channel: "chromium"`**：Playwright 默认的 headless shell 不会注册 MV3 扩展 service worker，完整 Chromium 构建则可以（实测约 3s 起来），因此固定 channel 后即可无窗口运行。
 - **持久化上下文**：`e2e/_fixtures.js` 通过 `chromium.launchPersistentContext` + `--load-extension` 加载扩展，轮询 `context.serviceWorkers()` 发现扩展 ID。
+- **看板只统计 http(s) 标签**：`about:blank`、`data:` 和扩展页都不算，所以需要标签数据的用例会用 `extContext.route` 本地伪造一个 https 页面，不依赖外网。
+- **作用域导航只有两个按钮**：第二个按钮只负责打开工作区浮层，真正切换作用域必须先存一个工作区再从浮层里选中它。
+- **等待渲染后的登录态**：选项页侧边栏在 HTML 里是启用的，`render()` 之后才按登录态禁用，因此用 `aria-disabled`（HTML 中不存在、`setAuthenticatedUi` 必设）判断渲染是否已完成，避免采样到即将被禁用的按钮。
 - **异步断言**：主题切换通过 `expect.poll` 轮询 `data-theme` 属性，而非固定 `waitForTimeout`，适配 `sendMessage` → storage → 回调的异步链路。
 - **登录门禁兼容**：未登录时 `#board-content` 有 `.hidden` 类，内部元素的 `toBeVisible()` 会失败，测试通过 `toHaveClass` + `evaluate(el.click())` 兼容此场景。
 
@@ -286,10 +303,11 @@ SUPABASE_ANON_KEY=your-anon-or-publishable-key
 
 ## 9. Git 分支与发布状态
 
-- **所有代码已合并发布**：
-  - `feature/20260719` → PR #26 → `dev`（`b8c8a49`，tag `dev-preview`）
-  - `dev` → PR #27 → `main`（`9c439cb`，tag `v0.1.11`）
-- 当前分支 `feature/20260719` 工作区干净，与远端同步。
+- **两轮迭代均已合并发布**（2026-09-09 经 `gh` 核实）：
+  - 第一轮：`feature/20260719` → PR #26 → `dev`（`b8c8a49`）→ PR #27 → `main`（`9c439cb`，tag `v0.1.11`，2026-07-30）
+  - 第二轮（时间线过滤 / 最近关闭搜索 / 退出清理数据）：PR #28 → `dev`（`bfba921`）→ PR #29 → `main`（`95dd0eb`，tag `v0.1.12`，2026-08-15）
+- **当前未同步的工作**：远端 `feature/20260719` 领先 `main` 17 个提交（尚未开 PR）；本地分支在其之上还有本轮未 push 的提交（sync 超时修复、单测/e2e 补测、board 弹窗重构等）。
+- 本地 `main` 分支停留在 PR #14（`47831f2`），落后远端 `origin/main`，需要 `git fetch` 后更新，不能据此判断合并状态。
 - 后续新功能应基于最新 `dev` 创建 `feature/*` 分支。
 - 按 `PULL_REQUEST_WORKFLOW.md`：
   - push 前先 `git pull --rebase` 检查冲突；

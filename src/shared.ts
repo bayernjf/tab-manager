@@ -493,10 +493,13 @@ export function normalizeDeferredShortcutTimes(value: unknown): string[] | null 
 }
 
 export function nextDeferredOccurrence(hhmm: string, now: Date = new Date(), t?: (key: string, args?: string[]) => string): Date {
-  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hhmm)) throw new Error(t ? t("invalidTime", [hhmm]) : `无效的时长：${hhmm}`);
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hhmm)) throw new Error(t ? t("invalidTime", [hhmm]) : `无效的时刻：${hhmm}`);
   const [hours, minutes] = hhmm.split(":").map(Number) as [number, number];
-  const offsetMs = (hours * 60 + minutes) * 60_000;
-  return new Date(now.getTime() + offsetMs);
+  const next = new Date(now);
+  next.setHours(hours, minutes, 0, 0);
+  // 该时刻今天已过（或正好是此刻）时顺延到明天，避免设出一个立即到期的提醒。
+  if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1);
+  return next;
 }
 
 export function heightUnitsForTabCount(tabCount: number): 1 | 2 {
@@ -527,6 +530,86 @@ export function buildBoardCards(groups: readonly BoardLogicalGroup[]): BoardSegm
     }
   }
   return cards;
+}
+
+function rebalanceBoardSegments(cards: readonly BoardSegmentCard[], boardKey: BoardKey): BoardSegmentCard[] {
+  const target = cards.filter((card) => card.boardKey === boardKey);
+  const template = target[0];
+  if (!template || target.length <= 1) return [...cards];
+  const segments = segmentTabs(target.flatMap((card) => card.tabs));
+  const cardTabs = segments.length ? segments : [[]];
+  const rebuilt = cardTabs.map((tabs, segmentIndex) => ({
+    ...template,
+    tabs,
+    segmentIndex,
+    segmentCount: cardTabs.length,
+    heightUnits: heightUnitsForTabCount(tabs.length),
+  }));
+  return [...cards.filter((card) => card.boardKey !== boardKey), ...rebuilt].sort((left, right) => {
+    if (left.boardKey !== right.boardKey) return (left.rank ?? 0) - (right.rank ?? 0);
+    return left.segmentIndex - right.segmentIndex;
+  });
+}
+
+export function moveBoardTabOptimistically(
+  cards: readonly BoardSegmentCard[],
+  drop: BoardTabDrop & { targetSegmentIndex: number },
+): BoardSegmentCard[] {
+  const next = cards.map((card) => ({ ...card, tabs: [...card.tabs] }));
+  let movedTab: BoardTab | undefined;
+  for (const card of next) {
+    const index = card.tabs.findIndex((tab) => tab.id === drop.tabId);
+    if (index >= 0) {
+      [movedTab] = card.tabs.splice(index, 1);
+      break;
+    }
+  }
+  if (!movedTab) return [...cards];
+  const targetCard = next.find((card) => card.boardKey === drop.targetBoardKey && card.segmentIndex === drop.targetSegmentIndex);
+  if (targetCard) {
+    const targetIndex = drop.targetTabId === undefined ? -1 : targetCard.tabs.findIndex((tab) => tab.id === drop.targetTabId);
+    if (drop.position === "append" || targetIndex < 0) targetCard.tabs.push(movedTab);
+    else targetCard.tabs.splice(drop.position === "before" ? targetIndex : targetIndex + 1, 0, movedTab);
+  }
+  return rebalanceBoardSegments(next, drop.targetBoardKey);
+}
+
+export function planBoardTabInsertion<T extends { id: number }>(
+  groupTabs: readonly T[],
+  source: T,
+  drop: Pick<BoardTabDrop, "position" | "targetTabId">,
+): { status: "ok"; tabs: T[] } | { status: "target-missing" } {
+  const tabs = groupTabs.filter((candidate) => candidate.id !== source.id);
+  const targetIndex = drop.targetTabId === undefined ? tabs.length : tabs.findIndex((candidate) => candidate.id === drop.targetTabId);
+  if (targetIndex < 0) return { status: "target-missing" };
+  const insertionIndex = drop.position === "before" ? targetIndex : drop.position === "after" ? targetIndex + 1 : tabs.length;
+  tabs.splice(insertionIndex, 0, source);
+  return { status: "ok", tabs };
+}
+
+export type WorkspaceTabsPayloadValidation =
+  | { status: "empty" }
+  | { status: "too-many" }
+  | { status: "invalid"; displayIndex: number; reason: Exclude<WorkspaceTabValidation["status"], "valid"> }
+  | { status: "ok"; tabs: WorkspaceTab[] };
+
+export function validateWorkspaceTabsPayload(value: unknown, limit = 200): WorkspaceTabsPayloadValidation {
+  if (!Array.isArray(value) || value.length < 1) return { status: "empty" };
+  if (value.length > limit) return { status: "too-many" };
+  const validations = value.map(validateWorkspaceTab);
+  const firstInvalid = validations.findIndex((validation) => validation.status !== "valid");
+  if (firstInvalid >= 0) {
+    const candidate = value[firstInvalid];
+    // 优先用看板传来的真实序号，让报错和用户看到的列表编号一致；勾选非连续时下标会指向错误的标签。
+    const index = isPlainObject(candidate) && typeof candidate.index === "number" && Number.isInteger(candidate.index) && candidate.index >= 0 ? candidate.index : firstInvalid;
+    const validation = validations[firstInvalid];
+    return { status: "invalid", displayIndex: index, reason: validation && validation.status !== "valid" ? validation.status : "invalid-data" };
+  }
+  return { status: "ok", tabs: validations.flatMap((validation) => validation.status === "valid" ? [validation.tab] : []) };
+}
+
+export function deferredRemindersHidden(input: { workspaceMode: boolean; deferredCount: number }): boolean {
+  return input.workspaceMode || input.deferredCount === 0;
 }
 
 const BROWSER_KINDS: readonly BrowserKind[] = ["chrome", "edge"];
@@ -1311,4 +1394,13 @@ export function previewWorkspacePortableImport(value: unknown): WorkspacePortabl
   if (!data) return null;
   const totalTabs = data.workspaces.reduce((sum, ws) => sum + ws.tabs.length, 0);
   return { data, workspaceCount: data.workspaces.length, totalTabs };
+}
+
+/** Background requests fail fast so a stalled connection cannot outlive the MV3 worker. */
+export const SUPABASE_REQUEST_TIMEOUT_MS = 8000;
+/** Sign-in and sign-up get a longer budget because the user is actively waiting. */
+export const SUPABASE_INTERACTIVE_TIMEOUT_MS = 15000;
+
+export function isRequestTimeout(error: unknown): boolean {
+  return error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
 }

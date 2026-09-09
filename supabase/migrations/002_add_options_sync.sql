@@ -1,3 +1,16 @@
+-- =====================================================
+-- Migration 002: Add cloud sync options
+-- File: 002_add_options_sync.sql
+-- Date: 2026-07-22 08:23
+-- Depends on: 001_create_user_sync_tables.sql
+-- Run: Supabase SQL Editor, execute once
+-- =====================================================
+-- Note: Adds cloud-sync options (default_group_color,
+--       cloud_sync_enabled, sync_rules_enabled,
+--       sync_ignore_list_enabled) to user_settings and
+--       match_scope to group_rules, and creates the
+--       ignored_sites table with RLS.
+-- -----------------------------------------------------
 -- Add cloud-sync options and portable rule/ignore-list records.
 
 alter table public.user_settings
