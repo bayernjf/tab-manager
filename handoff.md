@@ -138,6 +138,17 @@ feature/20260719 分支共 30+ 个 commit，已全部 push 并通过 PR 合并�
 
 > 已移除的键（随「内存占用」功能移除）：`memoryUsage`, `memoryTitle`, `closeTopUsers`, `memoryKB`, `memoryMB`
 
+### 4.6 看板模块拆分（2026-09-09）
+
+版本历史弹窗已从 `board.ts` 拆出，依赖方向为 `board.ts → board-*.ts`，两个新模块不反向 import `board.ts`，无循环依赖：
+
+| 文件 | 职责 |
+|---|---|
+| `src/board-dom.ts` | 看板共享 DOM/消息原语：`$`、`send`、`boardToast` / `showStatus`、`makeButton`、`faviconFor`、`getOpenTabUrls` |
+| `src/board-history.ts` | 工作区版本历史弹窗：`openWorkspaceHistoryDialog`、版本渲染 / 恢复 / 另存；弹窗唯一自管状态是当前打开的 workspaceId；`board.ts` 只负责调用打开和启动时 `wireWorkspaceHistoryDialog()` |
+
+拆分后 `board.ts` 由 2445 行降至 2233 行。**工作区主弹窗未拆**：它读写 `workspaces` / `currentDevice` / `restoreWorkspaceId` 等与作用域浮层、看板渲染共享的可变模块状态，机械外移需要先引入共享状态层，已明确判定不属于低风险移动，保持原样。
+
 ---
 
 ## 5. 验证方式
