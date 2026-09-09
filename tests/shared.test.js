@@ -2558,3 +2558,268 @@ test("supabase requests abort on a timeout instead of hanging forever", async ()
   assert.match(auth, /"\/token\?grant_type=password"[\s\S]{0,220}SUPABASE_INTERACTIVE_TIMEOUT_MS/);
   assert.match(auth, /"\/signup"[\s\S]{0,220}SUPABASE_INTERACTIVE_TIMEOUT_MS/);
 });
+
+// --- storage.ts -------------------------------------------------------------
+
+/** Installs an in-memory chrome.storage.local and returns the backing object for assertions. */
+function stubStorage(values = {}) {
+  globalThis.chrome.storage = {
+    local: {
+      get: async (keys) => {
+        const requested = Array.isArray(keys) ? keys : [keys];
+        return Object.fromEntries(requested.flatMap((key) => (key in values ? [[key, values[key]]] : [])));
+      },
+      set: async (next) => Object.assign(values, next),
+      remove: async (keys) => {
+        const requested = Array.isArray(keys) ? keys : [keys];
+        for (const key of requested) delete values[key];
+      },
+    },
+  };
+  return values;
+}
+
+/** defaultDeviceName reads navigator.userAgent, which Node defines as a read-only getter. */
+async function withUserAgent(userAgent, run) {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "navigator", { value: { userAgent }, configurable: true, writable: true });
+  try {
+    await run();
+  } finally {
+    if (original) Object.defineProperty(globalThis, "navigator", original);
+    else delete globalThis.navigator;
+  }
+}
+
+const snapshotFixture = (id = "ws-1") => ({
+  id,
+  title: "Research",
+  createdAt: "2026-08-01T00:00:00.000Z",
+  tabs: [{ title: "Example", url: "https://example.com/" }],
+});
+
+const historyFixture = (workspaceId, version = 1) => ({
+  workspaceId,
+  versions: [{ version, snapshot: snapshotFixture(workspaceId), savedAt: "2026-08-01T00:00:00.000Z" }],
+});
+
+test("loadState merges partial stored settings over the defaults", async () => {
+  stubStorage({ settings: { theme: "dark" } });
+  const { loadState } = await import("../dist/storage.js");
+  const { DEFAULT_SETTINGS } = await import("../dist/shared.js");
+
+  const state = await loadState();
+
+  assert.equal(state.settings.theme, "dark");
+  assert.equal(state.settings.defaultGroupColor, DEFAULT_SETTINGS.defaultGroupColor);
+  assert.deepEqual(state.groupRules, []);
+  assert.deepEqual(state.boardAssignments, {});
+});
+
+test("saveRecentlyClosedTabs keeps only the newest MAX_RECENTLY_CLOSED_TABS entries", async () => {
+  const values = stubStorage();
+  const { saveRecentlyClosedTabs } = await import("../dist/storage.js");
+  const { MAX_RECENTLY_CLOSED_TABS } = await import("../dist/shared.js");
+  const tabs = Array.from({ length: MAX_RECENTLY_CLOSED_TABS + 10 }, (_value, index) => ({
+    id: `tab-${index}`,
+    title: `Tab ${index}`,
+    url: `https://example.com/${index}`,
+    closedAt: new Date(1_800_000_000_000 + index * 1000).toISOString(),
+  }));
+
+  await saveRecentlyClosedTabs(tabs);
+
+  assert.equal(values.recentlyClosedTabs.length, MAX_RECENTLY_CLOSED_TABS);
+  // Highest index is the most recent closedAt, so it must survive and lead the list.
+  assert.equal(values.recentlyClosedTabs[0].id, `tab-${MAX_RECENTLY_CLOSED_TABS + 9}`);
+  assert.equal(values.recentlyClosedTabs.at(-1).id, "tab-10");
+});
+
+test("loadRecentlyClosedTabs drops corrupt entries instead of surfacing them", async () => {
+  stubStorage({
+    recentlyClosedTabs: [
+      { id: "good", title: "Good", url: "https://example.com/", closedAt: "2026-08-01T00:00:00.000Z" },
+      { id: "no-date", title: "Bad", url: "https://example.com/", closedAt: "not-a-date" },
+      { id: "bad-url", title: "Bad", url: "chrome://settings", closedAt: "2026-08-01T00:00:00.000Z" },
+      null,
+    ],
+  });
+  const { loadRecentlyClosedTabs } = await import("../dist/storage.js");
+
+  assert.deepEqual((await loadRecentlyClosedTabs()).map((tab) => tab.id), ["good"]);
+});
+
+test("appendRecentlyClosedTab moves a re-closed tab to the front without duplicating it", async () => {
+  const values = stubStorage({
+    recentlyClosedTabs: [
+      { id: "a", title: "A", url: "https://a.com/", closedAt: "2026-08-02T00:00:00.000Z" },
+      { id: "b", title: "B", url: "https://b.com/", closedAt: "2026-08-01T00:00:00.000Z" },
+    ],
+  });
+  const { appendRecentlyClosedTab } = await import("../dist/storage.js");
+
+  const next = await appendRecentlyClosedTab({ id: "b", title: "B again", url: "https://b.com/", closedAt: "2026-08-03T00:00:00.000Z" });
+
+  assert.deepEqual(next.map((tab) => tab.id), ["b", "a"]);
+  assert.deepEqual(values.recentlyClosedTabs.map((tab) => tab.id), ["b", "a"]);
+  assert.equal(values.recentlyClosedTabs.filter((tab) => tab.id === "b").length, 1);
+});
+
+test("removeRecentlyClosedTab deletes only the requested entry", async () => {
+  const values = stubStorage({
+    recentlyClosedTabs: [
+      { id: "a", title: "A", url: "https://a.com/", closedAt: "2026-08-02T00:00:00.000Z" },
+      { id: "b", title: "B", url: "https://b.com/", closedAt: "2026-08-01T00:00:00.000Z" },
+    ],
+  });
+  const { removeRecentlyClosedTab } = await import("../dist/storage.js");
+
+  assert.deepEqual((await removeRecentlyClosedTab("a")).map((tab) => tab.id), ["b"]);
+  assert.deepEqual(values.recentlyClosedTabs.map((tab) => tab.id), ["b"]);
+});
+
+test("loadTabCreatedAtMap discards malformed tab ids and timestamps", async () => {
+  stubStorage({
+    tabCreatedAt: { 7: 1000, "-1": 2000, "0": 3000, "1.5": 4000, 9: "later", 10: Infinity, 11: 0, 12: 5000 },
+  });
+  const { loadTabCreatedAtMap } = await import("../dist/storage.js");
+
+  assert.deepEqual(await loadTabCreatedAtMap(), { 7: 1000, 12: 5000 });
+});
+
+test("loadTabCreatedAtMap returns an empty map when the stored value is not an object", async () => {
+  const { loadTabCreatedAtMap } = await import("../dist/storage.js");
+
+  stubStorage({ tabCreatedAt: ["nope"] });
+  assert.deepEqual(await loadTabCreatedAtMap(), {});
+  stubStorage({ tabCreatedAt: "nope" });
+  assert.deepEqual(await loadTabCreatedAtMap(), {});
+  stubStorage({});
+  assert.deepEqual(await loadTabCreatedAtMap(), {});
+});
+
+test("recordTabCreatedAt merges into the existing map rather than replacing it", async () => {
+  const values = stubStorage({ tabCreatedAt: { 1: 1000 } });
+  const { recordTabCreatedAt } = await import("../dist/storage.js");
+
+  assert.deepEqual(await recordTabCreatedAt(2, 2000), { 1: 1000, 2: 2000 });
+  assert.deepEqual(values.tabCreatedAt, { 1: 1000, 2: 2000 });
+});
+
+test("removeTabCreatedAt drops one tab and leaves storage untouched when the tab is absent", async () => {
+  const values = stubStorage({ tabCreatedAt: { 1: 1000, 2: 2000 } });
+  const { removeTabCreatedAt } = await import("../dist/storage.js");
+
+  assert.deepEqual(await removeTabCreatedAt(1), { 2: 2000 });
+  assert.deepEqual(values.tabCreatedAt, { 2: 2000 });
+
+  const untouched = stubStorage({ tabCreatedAt: { 2: 2000 } });
+  const set = globalThis.chrome.storage.local.set;
+  let writes = 0;
+  globalThis.chrome.storage.local.set = async (next) => { writes += 1; return set(next); };
+  assert.deepEqual(await removeTabCreatedAt(99), { 2: 2000 });
+  assert.equal(writes, 0);
+  assert.deepEqual(untouched.tabCreatedAt, { 2: 2000 });
+});
+
+test("getOrCreateDeviceId reuses the stored id instead of regenerating it", async () => {
+  const values = stubStorage({ deviceId: "existing-id" });
+  const { getOrCreateDeviceId } = await import("../dist/storage.js");
+
+  assert.equal(await getOrCreateDeviceId(), "existing-id");
+  assert.equal(values.deviceId, "existing-id");
+
+  const fresh = stubStorage({});
+  const created = await getOrCreateDeviceId();
+  assert.equal(typeof created, "string");
+  assert.ok(created.length > 0);
+  assert.equal(fresh.deviceId, created);
+  assert.equal(await getOrCreateDeviceId(), created);
+});
+
+test("getOrCreateDeviceName preserves a name the user chose", async () => {
+  const values = stubStorage({ deviceName: "工作机" });
+  const { getOrCreateDeviceName } = await import("../dist/storage.js");
+
+  assert.equal(await getOrCreateDeviceName(), "工作机");
+  assert.equal(values.deviceName, "工作机");
+});
+
+test("getOrCreateDeviceName regenerates a legacy platform-only name", async () => {
+  const values = stubStorage({ deviceName: "Mac 设备" });
+  const { getOrCreateDeviceName } = await import("../dist/storage.js");
+
+  await withUserAgent("Mozilla/5.0 (Macintosh) Edg/140.0", async () => {
+    assert.notEqual(await getOrCreateDeviceName(), "Mac 设备");
+  });
+  assert.match(values.deviceName, /-Edge$/);
+});
+
+test("getOrCreateDeviceName derives the platform and browser suffix", async () => {
+  const { getOrCreateDeviceName } = await import("../dist/storage.js");
+
+  const edge = stubStorage({ deviceName: "   " });
+  await withUserAgent("Mozilla/5.0 (Macintosh) Edg/140.0", async () => {
+    assert.match(await getOrCreateDeviceName(), /-Edge$/);
+  });
+  assert.match(edge.deviceName, /-Edge$/);
+
+  stubStorage({});
+  await withUserAgent("Mozilla/5.0 (Windows NT 10.0) Chrome/140.0", async () => {
+    assert.match(await getOrCreateDeviceName(), /-Chrome$/);
+  });
+});
+
+test("saveWorkspaceHistory does not clobber the histories of other workspaces", async () => {
+  const values = stubStorage({ workspaceHistories: { "ws-other": historyFixture("ws-other") } });
+  const { saveWorkspaceHistory } = await import("../dist/storage.js");
+
+  await saveWorkspaceHistory(historyFixture("ws-1", 3));
+
+  assert.deepEqual(Object.keys(values.workspaceHistories).sort(), ["ws-1", "ws-other"]);
+  assert.equal(values.workspaceHistories["ws-other"].versions[0].version, 1);
+  assert.equal(values.workspaceHistories["ws-1"].versions[0].version, 3);
+});
+
+test("loadWorkspaceHistory returns null for an unknown or invalid workspace", async () => {
+  stubStorage({ workspaceHistories: { "ws-bad": { workspaceId: "ws-bad", versions: [{ version: 0, savedAt: "nope" }] } } });
+  const { loadWorkspaceHistory } = await import("../dist/storage.js");
+
+  assert.equal(await loadWorkspaceHistory("ws-missing"), null);
+  assert.equal(await loadWorkspaceHistory("ws-bad"), null);
+});
+
+test("loadAllWorkspaceHistories skips invalid records and keeps the valid ones", async () => {
+  stubStorage({
+    workspaceHistories: {
+      "ws-good": historyFixture("ws-good"),
+      "ws-bad": { workspaceId: "ws-bad", versions: "not-an-array" },
+      "ws-dupe": { workspaceId: "ws-dupe", versions: [historyFixture("ws-dupe").versions[0], historyFixture("ws-dupe").versions[0]] },
+    },
+  });
+  const { loadAllWorkspaceHistories } = await import("../dist/storage.js");
+
+  assert.deepEqual(Object.keys(await loadAllWorkspaceHistories()), ["ws-good"]);
+});
+
+test("deleteWorkspaceHistory removes one workspace and leaves its siblings intact", async () => {
+  const values = stubStorage({
+    workspaceHistories: { "ws-1": historyFixture("ws-1"), "ws-2": historyFixture("ws-2") },
+  });
+  const { deleteWorkspaceHistory } = await import("../dist/storage.js");
+
+  await deleteWorkspaceHistory("ws-1");
+
+  assert.deepEqual(Object.keys(values.workspaceHistories), ["ws-2"]);
+});
+
+test("saveWorkspaceVersion appends a new version onto the existing history", async () => {
+  const values = stubStorage({ workspaceHistories: { "ws-1": historyFixture("ws-1", 1) } });
+  const { saveWorkspaceVersion } = await import("../dist/storage.js");
+
+  const updated = await saveWorkspaceVersion("ws-1", snapshotFixture("ws-1"), "second pass");
+
+  assert.deepEqual(updated.versions.map((version) => version.version), [1, 2]);
+  assert.equal(updated.versions[1].note, "second pass");
+  assert.deepEqual(values.workspaceHistories["ws-1"].versions.map((v) => v.version), [1, 2]);
+});
