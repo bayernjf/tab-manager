@@ -8,6 +8,19 @@ import os from "node:os";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.resolve(__dirname, "dist");
 
+// The credential-gated tests read process.env, but the project keeps its secrets
+// in the git-ignored .env.local, so load them here. Real env vars win, which is
+// what lets CI supply the same values without a file.
+for (const rawLine of fs.readFileSync(path.resolve(__dirname, ".env.local"), "utf8").split(/\r?\n/)) {
+  const line = rawLine.trim();
+  if (!line || line.startsWith("#")) continue;
+  const separator = line.indexOf("=");
+  if (separator < 1) continue;
+  const key = line.slice(0, separator).trim();
+  if (process.env[key] !== undefined) continue;
+  process.env[key] = line.slice(separator + 1).trim().replace(/^(['"])(.*)\1$/, "$2");
+}
+
 /**
  * Playwright config for Tab Garden Chrome extension E2E tests.
  *
@@ -19,7 +32,7 @@ const distDir = path.resolve(__dirname, "dist");
  * persistent user-data-dir per worker (inside `./test-results/e2e-profiles/`),
  * then discovers the extension ID by polling `context.serviceWorkers()`.
  *
- * Env vars (optional):
+ * Env vars (read from the environment, falling back to .env.local — optional):
  *   E2E_EMAIL / E2E_PASSWORD : Supabase email/password for login tests.
  *   PLAYWRIGHT_HEADLESS       : set to "0" to watch the run in a real window.
  *   CI                        : enables retries + retains trace/video on failure.
