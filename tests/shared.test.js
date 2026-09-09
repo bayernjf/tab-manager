@@ -60,6 +60,7 @@ const {
   planBoardTabInsertion,
   validateWorkspaceTabsPayload,
   deferredRemindersHidden,
+  nextDeferredOccurrence,
   detectBrowserKind,
   groupWorkspaceTabsByDomain,
   moveWorkspaceTab,
@@ -1232,6 +1233,81 @@ test("board script decides deferred reminder visibility through a single helper"
   assert.match(script, /deferredReminders\.classList\.toggle\("hidden", deferredRemindersHidden\(/);
   assert.doesNotMatch(script, /deferredReminders\.classList\.toggle\("hidden", tabs\.length === 0\)/);
   assert.doesNotMatch(script, /deferredReminders\.classList\.toggle\("hidden", on\)/);
+});
+
+test("nextDeferredOccurrence returns today when the time is still ahead", () => {
+  const now = new Date(2026, 8, 9, 10, 30, 15, 250);
+
+  const due = nextDeferredOccurrence("18:00", now);
+
+  assert.deepEqual([due.getFullYear(), due.getMonth(), due.getDate(), due.getHours(), due.getMinutes()], [2026, 8, 9, 18, 0]);
+});
+
+test("nextDeferredOccurrence rolls over to tomorrow when the time already passed today", () => {
+  const now = new Date(2026, 8, 9, 19, 0);
+
+  const due = nextDeferredOccurrence("09:00", now);
+
+  assert.deepEqual([due.getMonth(), due.getDate(), due.getHours(), due.getMinutes()], [8, 10, 9, 0]);
+});
+
+test("nextDeferredOccurrence rolls over rather than firing immediately when the time is exactly now", () => {
+  const now = new Date(2026, 8, 9, 14, 0, 0, 0);
+
+  const due = nextDeferredOccurrence("14:00", now);
+
+  assert.deepEqual([due.getDate(), due.getHours()], [10, 14]);
+});
+
+test("nextDeferredOccurrence crosses a month boundary", () => {
+  const now = new Date(2026, 8, 30, 23, 30);
+
+  const due = nextDeferredOccurrence("09:00", now);
+
+  assert.deepEqual([due.getFullYear(), due.getMonth(), due.getDate(), due.getHours()], [2026, 9, 1, 9]);
+});
+
+test("nextDeferredOccurrence treats a clock time as a time of day, not a delay from now", () => {
+  const now = new Date(2026, 8, 9, 10, 0);
+
+  const due = nextDeferredOccurrence("09:00", now);
+
+  // 回归防护：曾把 "09:00" 当成“9 小时后”，于是 10:00 触发会算出当天 19:00。
+  assert.notEqual(due.getHours(), 19);
+  assert.deepEqual([due.getDate(), due.getHours()], [10, 9]);
+});
+
+test("nextDeferredOccurrence zeroes seconds and milliseconds", () => {
+  const due = nextDeferredOccurrence("18:00", new Date(2026, 8, 9, 10, 30, 44, 789));
+
+  assert.deepEqual([due.getSeconds(), due.getMilliseconds()], [0, 0]);
+});
+
+test("nextDeferredOccurrence handles midnight", () => {
+  const due = nextDeferredOccurrence("00:00", new Date(2026, 8, 9, 12, 0));
+
+  assert.deepEqual([due.getDate(), due.getHours(), due.getMinutes()], [10, 0, 0]);
+});
+
+test("nextDeferredOccurrence does not mutate the reference date", () => {
+  const now = new Date(2026, 8, 9, 10, 30);
+
+  nextDeferredOccurrence("09:00", now);
+
+  assert.deepEqual([now.getDate(), now.getHours(), now.getMinutes()], [9, 10, 30]);
+});
+
+test("nextDeferredOccurrence rejects values that are not a 24-hour clock time", () => {
+  for (const invalid of ["24:00", "9:00", "18:60", "0900", "", "abc", "18:00:00"]) {
+    assert.throws(() => nextDeferredOccurrence(invalid, new Date(2026, 8, 9, 10, 0)), /无效的时刻/, `expected ${JSON.stringify(invalid)} to be rejected`);
+  }
+});
+
+test("nextDeferredOccurrence reports invalid input through the provided translator", () => {
+  assert.throws(
+    () => nextDeferredOccurrence("25:00", new Date(2026, 8, 9, 10, 0), (key, args) => `${key}:${args?.[0]}`),
+    /^Error: invalidTime:25:00$/,
+  );
 });
 
 test("moves a logical board group to a new rank without moving Ungrouped", () => {
