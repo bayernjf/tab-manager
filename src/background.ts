@@ -7,6 +7,7 @@ import {
   canConfirmOptionsImport,
   createGroupRuleFromInput,
   createIgnoredSiteFromInput,
+  countSettled,
   getSiteKey,
   isBrowserNewTabUrl,
   previewPortableImport,
@@ -1016,9 +1017,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
         await saveDeferredTabs([...existingDeferred, ...deferredTabs]);
         for (const dt of deferredTabs) void scheduleDeferredDueAlarm(dt.id, dt.dueAt);
         void ensureDeferredCheckAlarm();
-        for (const tabId of toClose) {
-          try { await chrome.tabs.remove(tabId); } catch { /* ignore */ }
-        }
+        await Promise.allSettled(toClose.map((tabId) => chrome.tabs.remove(tabId)));
       }
       return { deferred: deferredTabs.length };
     }
@@ -1057,16 +1056,8 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       if (!Array.isArray(message.tabIds)) throw new Error(i18n.t("invalidTabData"));
       const validTabIds = message.tabIds.filter(safePositiveInteger);
       const uniqueTabIds = [...new Set(validTabIds)];
-      let closed = 0;
-      let skipped = 0;
-      for (const tabId of uniqueTabIds) {
-        try {
-          await chrome.tabs.remove(tabId);
-          closed += 1;
-        } catch {
-          skipped += 1;
-        }
-      }
+      const results = await Promise.allSettled(uniqueTabIds.map((tabId) => chrome.tabs.remove(tabId)));
+      const { fulfilled: closed, rejected: skipped } = countSettled(results);
       return { closed, skipped };
     }
     if (message.type === "move-board-tab") {
