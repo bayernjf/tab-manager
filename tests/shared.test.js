@@ -67,6 +67,7 @@ const {
   updateWorkspaceTab,
   removeWorkspaceTab,
   appendWorkspaceTab,
+  countSettled,
   DEFAULT_SETTINGS,
 } = await import("../dist/shared.js");
 const { getCurrentUser, getStoredUser, isExplicitAuthenticationFailure, isRememberedSessionValid } = await import("../dist/auth.js");
@@ -2514,6 +2515,18 @@ test("closing a board tab relies on the tab listener refresh instead of an extra
 
   assert.doesNotMatch(closeFn, /await load\(\)/);
   assert.match(script, /chrome\.tabs\.onRemoved\.addListener/);
+});
+
+test("countSettled tallies fulfilled and rejected results", () => {
+  assert.deepEqual(
+    countSettled([
+      { status: "fulfilled", value: 1 },
+      { status: "rejected", reason: new Error("boom") },
+      { status: "fulfilled", value: 2 },
+    ]),
+    { fulfilled: 2, rejected: 1 },
+  );
+  assert.deepEqual(countSettled([]), { fulfilled: 0, rejected: 0 });
 });
 
 test("isRequestTimeout recognizes abort and timeout rejections only", async () => {

@@ -1404,3 +1404,12 @@ export const SUPABASE_INTERACTIVE_TIMEOUT_MS = 15000;
 export function isRequestTimeout(error: unknown): boolean {
   return error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
 }
+
+/** Tally the outcome of a Promise.allSettled batch so callers can report counts. */
+export function countSettled<T>(results: readonly PromiseSettledResult<T>[]): { fulfilled: number; rejected: number } {
+  let fulfilled = 0;
+  for (const result of results) {
+    if (result.status === "fulfilled") fulfilled += 1;
+  }
+  return { fulfilled, rejected: results.length - fulfilled };
+}
