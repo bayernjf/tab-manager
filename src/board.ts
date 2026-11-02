@@ -2026,10 +2026,10 @@ async function saveAutoFill(enabled: boolean): Promise<void> {
 }
 
 async function saveBoardTheme(theme: Theme): Promise<void> {
-  const current = { ...DEFAULT_SETTINGS };
-  if (currentState?.settings) {
-    Object.assign(current, currentState.settings);
-  }
+  // 与 popup 同一约束：保存必须以当前设置为基数。currentState 尚未加载时
+  // 先拉取，绝不能用 DEFAULT_SETTINGS 当基数——那会把云同步等字段静默重置。
+  if (!currentState?.settings) await load();
+  const current = { ...(currentState?.settings ?? DEFAULT_SETTINGS) };
   current.theme = theme;
   await send({ type: "update-settings", settings: current });
   applyTheme(theme);

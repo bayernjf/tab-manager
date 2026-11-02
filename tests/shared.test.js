@@ -3098,3 +3098,21 @@ test("workspace board never feeds pseudo tab ids to keyboard or batch tab operat
   assert.match(fn, /scopeMode === "workspace"\)\s*return \[\]/);
 });
 
+// --- P1-3 回归：popup 保存设置不得基于 DEFAULT_SETTINGS 重置其它字段 ---------
+
+test("popup settings save spreads the current settings, not the defaults", async () => {
+  const popup = await readFile(new URL("../dist/popup.js", import.meta.url), "utf8");
+  const start = popup.indexOf("async function saveSettings");
+  const save = popup.slice(start, popup.indexOf("autoToggle.addEventListener", start));
+  assert.match(save, /\.\.\.currentSettings/);
+  assert.doesNotMatch(save, /\.\.\.DEFAULT_SETTINGS/);
+});
+
+test("board theme save loads current settings before writing (no defaults reset)", async () => {
+  // board.ts 的 saveBoardTheme 曾以 DEFAULT_SETTINGS 为基数（同类 P1-3 缺陷）。
+  const board = await readFile(new URL("../dist/board.js", import.meta.url), "utf8");
+  const start = board.indexOf("async function saveBoardTheme");
+  const save = board.slice(start, board.indexOf("async function refresh", start));
+  assert.match(save, /if \(!currentState\?\.settings\)\s*await load\(\)/);
+});
+

@@ -30,6 +30,10 @@ const rememberDevice = $<HTMLInputElement>("#remember-device");
 const authStatus = $("#auth-status");
 const authSubmit = $<HTMLButtonElement>("#auth-submit");
 let authMode: "login" | "signup" = "login";
+// 最近一次从后台读到的完整设置；保存时必须以它为基数，而不是
+// DEFAULT_SETTINGS——否则每次保存都会把云同步等未展示在 popup 的
+// 设置静默重置为默认值。
+let currentSettings: Settings = { ...DEFAULT_SETTINGS };
 
 function applyTheme(theme: Theme): void {
   document.documentElement.setAttribute("data-theme", theme);
@@ -169,6 +173,7 @@ function renderGroups(groups: PopupGroup[]): void {
 
 async function load(): Promise<void> {
   const state = await send<PopupState>({ type: "get-popup-state" });
+  currentSettings = state.settings;
   autoToggle.checked = state.settings.autoGroupEnabled;
   minimumTabs.value = String(state.settings.minimumTabs);
   themeToggle.setAttribute("aria-pressed", String(state.settings.theme === "dark"));
@@ -190,7 +195,7 @@ async function restoreSessionInBackground(): Promise<void> {
 
 async function saveSettings(): Promise<void> {
   const theme = themeToggle.getAttribute("aria-pressed") === "true" ? "dark" as Theme : "light" as Theme;
-  const settings = { ...DEFAULT_SETTINGS, autoGroupEnabled: autoToggle.checked, minimumTabs: Number(minimumTabs.value), theme };
+  const settings = { ...currentSettings, autoGroupEnabled: autoToggle.checked, minimumTabs: Number(minimumTabs.value), theme };
   await send({ type: "update-settings", settings });
   applyTheme(settings.theme);
   showStatus(i18n.t("settingsSaved"));
