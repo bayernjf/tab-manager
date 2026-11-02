@@ -3088,3 +3088,13 @@ test("workspace title validation still trims and rejects empty input", () => {
   assert.deepEqual(validateWorkspaceTitle(42, []), { status: "invalid" });
 });
 
+// --- P1-2 回归：工作区视图的伪 tabId 不得进入键盘/批量操作面 ------------------
+
+test("workspace board never feeds pseudo tab ids to keyboard or batch tab operations", async () => {
+  // board.ts 无单元线束（side-effect 入口模块），此处按仓库既有惯例做产物契约断言。
+  const board = await readFile(new URL("../dist/board.js", import.meta.url), "utf8");
+  const start = board.indexOf("function getVisibleTabIds");
+  const fn = board.slice(start, board.indexOf("function toggleTabSelection", start));
+  assert.match(fn, /scopeMode === "workspace"\)\s*return \[\]/);
+});
+

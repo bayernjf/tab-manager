@@ -169,7 +169,12 @@ function syncBatchActionBar(): void {
 }
 
 function getVisibleTabIds(): number[] {
-  const cards = scopeMode === "workspace" ? workspaceCards : (currentState?.groups ?? []);
+  // 工作区视图里卡片上的 tab id 是数组下标伪 id（shared.ts
+  // groupWorkspaceTabsByDomain），并非真实浏览器标签 id；键盘（d/m/Enter）
+  // 与批量操作一律只允许作用于真实标签，否则会把伪 id 当成真 id 关闭/激活
+  // 不相关的真实标签页。
+  if (scopeMode === "workspace") return [];
+  const cards = currentState?.groups ?? [];
   const query = boardSearch.value;
   const windowId = windowFilter.value;
   return cards.flatMap((card) => card.tabs)
