@@ -83,6 +83,17 @@ export async function saveWorkspaceTombstones(tombstones: readonly WorkspaceTomb
 export async function loadDeferredTabs(): Promise<DeferredTab[]> { const data = await chrome.storage.local.get("deferredTabs"); return (data.deferredTabs as DeferredTab[] | undefined) ?? []; }
 export async function saveDeferredTabs(deferredTabs: readonly DeferredTab[]): Promise<void> { await chrome.storage.local.set({ deferredTabs }); }
 
+// 已弹过到期提醒的待办 id。必须持久化：service worker 空闲约 30s 即被回收，
+// 仅放内存会导致所有已到期提醒在下一轮 1 分钟轮询时重复弹窗。
+export async function loadNotifiedDeferredIds(): Promise<Set<string>> {
+  const data = await chrome.storage.local.get("notifiedDeferredIds");
+  const raw = data.notifiedDeferredIds;
+  return new Set(Array.isArray(raw) ? raw.filter((id): id is string => typeof id === "string") : []);
+}
+export async function saveNotifiedDeferredIds(ids: ReadonlySet<string>): Promise<void> {
+  await chrome.storage.local.set({ notifiedDeferredIds: [...ids] });
+}
+
 export async function saveOptionsData(settings: Settings, groupRules: GroupRule[], ignoredSites: IgnoredSite[]): Promise<void> {
   await chrome.storage.local.set({ settings, groupRules, ignoredSites });
 }
@@ -253,6 +264,7 @@ export async function clearAllWorkspaceHistories(): Promise<void> {
 /** Keys that hold per-user data and must be wiped on sign-out or account switch. */
 const USER_DATA_KEYS: string[] = [
   "deferredTabs",
+  "notifiedDeferredIds",
   "recentlyClosedTabs",
   "workspaceSnapshots",
   "workspaceTombstones",

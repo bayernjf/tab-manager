@@ -3174,3 +3174,39 @@ test("a transient refresh failure keeps the stale session for all concurrent cal
   assert.equal(second, null);
 });
 
+// --- P1-5 回归：提醒去重状态持久化 ---------------------------------------------
+
+test("notified deferred ids round-trip through chrome.storage.local", async () => {
+  const values = stubStorage();
+  const { loadNotifiedDeferredIds, saveNotifiedDeferredIds } = await import("../dist/storage.js");
+
+  assert.equal((await loadNotifiedDeferredIds()).size, 0);
+  await saveNotifiedDeferredIds(new Set(["a", "b"]));
+  assert.deepEqual([...values.notifiedDeferredIds].sort(), ["a", "b"]);
+  // 模拟 service worker 回收后重新加载（内存副本丢失）
+  const reloaded = await loadNotifiedDeferredIds();
+  assert.ok(reloaded.has("a") && reloaded.has("b") && reloaded.size === 2);
+});
+
+test("notified deferred ids drop non-string entries from corrupt storage", async () => {
+  stubStorage({ notifiedDeferredIds: ["ok", 1, null, undefined] });
+  const { loadNotifiedDeferredIds } = await import("../dist/storage.js");
+  assert.deepEqual([...(await loadNotifiedDeferredIds())], ["ok"]);
+});
+
+test("sign-out wipes notified deferred ids along with the rest of the per-user data", async () => {
+  const values = stubStorage({ notifiedDeferredIds: ["a"], deferredTabs: [] });
+  const { clearUserData } = await import("../dist/storage.js");
+
+  await clearUserData();
+
+  assert.equal("notifiedDeferredIds" in values, false);
+});
+
+test("dismissing a deferred notification must not reset its dedupe mark", async () => {
+  // 通知被划掉（onClosed）时删掉去重标记曾导致同一提醒每分钟重弹。
+  // background.ts 无单元线束，按仓库惯例对产物做契约断言。
+  const background = await readFile(new URL("../dist/background.js", import.meta.url), "utf8");
+  assert.doesNotMatch(background, /notifications\.onClosed\.addListener/);
+  assert.match(background, /saveNotifiedDeferredIds/);
+});

@@ -88,6 +88,8 @@ import {
   saveWorkspaceHistory,
   saveWorkspaceVersion,
   deleteWorkspaceHistory,
+  loadNotifiedDeferredIds,
+  saveNotifiedDeferredIds,
   clearUserData,
 } from "./storage.js";
 import { getCurrentUser, getLocalUser, getStoredUser, signIn, signOut, signUp } from "./auth.js";
@@ -508,7 +510,24 @@ async function syncBoardMutation(state: Awaited<ReturnType<typeof loadState>>, i
 const DEFERRED_CHECK_ALARM = "deferred-tab-check";
 const DEFERRED_DUE_ALARM_PREFIX = "deferred-due:";
 const NOTIFICATION_DEFERRED_PREFIX = "deferred:";
-let notifiedDeferredIds = new Set<string>();
+// 已通知 id 持久化在 chrome.storage.local（storage.ts），模块内只缓存一份
+// 内存副本；service worker 被回收后从存储恢复，不会重复弹同一提醒。
+let notifiedDeferredIds: Set<string> | null = null;
+
+async function notifiedIds(): Promise<Set<string>> {
+  if (!notifiedDeferredIds) notifiedDeferredIds = await loadNotifiedDeferredIds();
+  return notifiedDeferredIds;
+}
+
+async function persistNotifiedIds(ids: ReadonlySet<string>): Promise<void> {
+  notifiedDeferredIds = new Set(ids);
+  await saveNotifiedDeferredIds(notifiedDeferredIds);
+}
+
+async function forgetNotifiedId(id: string): Promise<void> {
+  const notified = await notifiedIds();
+  if (notified.delete(id)) await persistNotifiedIds(notified);
+}
 
 function deferredDueAlarmName(id: string): string {
   return `${DEFERRED_DUE_ALARM_PREFIX}${id}`;
@@ -544,7 +563,15 @@ async function sendToast(message: string): Promise<void> {
 async function checkDueDeferredTabs(): Promise<void> {
   const tabs = await loadDeferredTabs();
   const now = Date.now();
-  const dueTabs = tabs.filter((tab) => isDeferredTabDue(tab, now) && !notifiedDeferredIds.has(tab.id));
+  const notified = await notifiedIds();
+  const dueTabs = tabs.filter((tab) => isDeferredTabDue(tab, now) && !notified.has(tab.id));
+  // 顺带回收：提醒已打开/删除后其 id 会留在集合里，这里按现存待办清理
+  const liveIds = new Set(tabs.map((tab) => tab.id));
+  const stale = [...notified].filter((id) => !liveIds.has(id));
+  if (stale.length > 0) {
+    for (const id of stale) notified.delete(id);
+    await persistNotifiedIds(notified);
+  }
   if (dueTabs.length === 0) return;
 
   for (const tab of dueTabs) {
@@ -563,7 +590,8 @@ async function checkDueDeferredTabs(): Promise<void> {
         priority: 2,
         requireInteraction: false,
       } as chrome.notifications.NotificationCreateOptions);
-      notifiedDeferredIds.add(tab.id);
+      notified.add(tab.id);
+      await persistNotifiedIds(notified);
     } catch (error) {
       console.error("[Tab Garden] Failed to create deferred notification:", error);
     }
@@ -593,17 +621,14 @@ chrome.notifications.onClicked.addListener(async (notificationId) => {
   await chrome.tabs.create({ windowId, url: tab.url, active: true });
   await saveDeferredTabs(tabs.filter((item) => item.id !== deferredId));
   void clearDeferredDueAlarm(deferredId);
-  notifiedDeferredIds.delete(deferredId);
+  await forgetNotifiedId(deferredId);
   if (currentWindow?.id != null) {
     await chrome.windows.update(currentWindow.id, { focused: true }).catch(() => {});
   }
 });
 
-chrome.notifications.onClosed.addListener((notificationId) => {
-  if (!notificationId.startsWith(NOTIFICATION_DEFERRED_PREFIX)) return;
-  const deferredId = notificationId.slice(NOTIFICATION_DEFERRED_PREFIX.length);
-  notifiedDeferredIds.delete(deferredId);
-});
+// 注意：不要在 notifications.onClosed 里删除去重标记——用户只是划掉通知
+// （未点击打开）时提醒语义仍然成立；误删会导致下一轮轮询重复弹窗。
 
 async function ensureDeferredCheckAlarm(): Promise<void> {
   const existing = await chrome.alarms.get(DEFERRED_CHECK_ALARM).catch(() => undefined);
