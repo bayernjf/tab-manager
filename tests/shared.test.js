@@ -486,7 +486,7 @@ test("normalizes unique workspace names and rejects empty or duplicate names", (
   assert.deepEqual(validateWorkspaceTitle(" research ", ["Research"]), { status: "duplicate" });
   assert.deepEqual(validateWorkspaceTitle("Research", [null, "Research"]), { status: "duplicate" });
   assert.deepEqual(validateWorkspaceTitle("Work", ["work"]), { status: "duplicate" });
-  assert.deepEqual(validateWorkspaceTitle("x".repeat(161), []), { status: "valid", title: "x".repeat(160) });
+  assert.deepEqual(validateWorkspaceTitle("x".repeat(161), []), { status: "valid", title: "x".repeat(80) });
 });
 
 test("validates deferred web tabs and computes due state", () => {
@@ -3067,3 +3067,24 @@ test("an HTTP auth error carries its status so it counts as an explicit failure"
   assert.equal(error.status, 400);
   assert.equal(isExplicitAuthenticationFailure(error), true);
 });
+
+// --- P1-1 回归：工作区标题上限与 DB CHECK（≤80）一致 --------------------------
+
+test("workspace titles are capped at the database limit of 80 characters", () => {
+  const result = validateWorkspaceTitle("x".repeat(120), []);
+  assert.equal(result.status, "valid");
+  assert.equal(result.title.length, 80);
+});
+
+test("an 81-160 char title no longer passes validation as an unsyncable value", () => {
+  // 此前会原样通过（≤160），本地可存但云端 CHECK 必然 400 且错误被吞。
+  const result = validateWorkspaceTitle("中".repeat(100), []);
+  assert.equal(result.status, "valid");
+  assert.equal(result.title.length, 80);
+});
+
+test("workspace title validation still trims and rejects empty input", () => {
+  assert.deepEqual(validateWorkspaceTitle("   ", []), { status: "empty" });
+  assert.deepEqual(validateWorkspaceTitle(42, []), { status: "invalid" });
+});
+

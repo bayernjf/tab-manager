@@ -440,7 +440,9 @@ export function validateWorkspaceTitle(value: unknown, existingTitles: readonly 
   if (typeof value !== "string") return { status: "invalid" };
   const rawTitle = value.trim();
   if (!rawTitle) return { status: "empty" };
-  const title = rawTitle.length > 160 ? rawTitle.slice(0, 160) : rawTitle;
+  // 上限必须与 workspace_snapshots 表的 CHECK（≤80，见迁移 011）及
+  // board.html 的 maxlength="80" 一致——超出时本地能存但云端永远 400 被吞。
+  const title = rawTitle.length > 80 ? rawTitle.slice(0, 80) : rawTitle;
   const key = title.toLowerCase();
   return existingTitles.some((existingTitle) => typeof existingTitle === "string" && existingTitle.trim().toLowerCase() === key)
     ? { status: "duplicate" }

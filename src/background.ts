@@ -460,6 +460,11 @@ async function boardState(currentWindowId?: number) {
   return { user: { id: user.id, email: user.email }, loginRequired: false, groups: buildBoardCards(groups), layouts: state.boardLayouts, settings: state.settings };
 }
 
+/** 云端写失败降级为日志而不阻断本地操作；但绝不能静默（P1-1：CHECK 违例曾因此完全不可见）。 */
+function logCloudWriteFailure(action: string): (error: unknown) => void {
+  return (error) => console.warn(`[Tab Garden] cloud ${action} failed:`, error);
+}
+
 async function loadAllWorkspaces(userId: string, cloudSyncEnabled: boolean): Promise<WorkspaceSnapshot[]> {
   if (cloudSyncEnabled) {
     const cloud = await fetchWorkspaces(userId).catch(() => null);
@@ -472,9 +477,9 @@ async function loadAllWorkspaces(userId: string, cloudSyncEnabled: boolean): Pro
       const result = mergeWorkspaceSnapshots(local, cloud, localTombstones, cloudTombstones);
       await saveWorkspaceSnapshots(result.merged).catch(() => {});
       await saveWorkspaceTombstones(result.tombstones).catch(() => {});
-      for (const workspace of result.upload) await upsertWorkspace(userId, workspace).catch(() => {});
-      for (const tombstone of result.uploadTombstones) await upsertWorkspaceTombstone(userId, tombstone).catch(() => {});
-      for (const id of result.deleteFromCloud) await deleteWorkspaceRow(userId, id).catch(() => {});
+      for (const workspace of result.upload) await upsertWorkspace(userId, workspace).catch(logCloudWriteFailure("workspace upsert"));
+      for (const tombstone of result.uploadTombstones) await upsertWorkspaceTombstone(userId, tombstone).catch(logCloudWriteFailure("tombstone upsert"));
+      for (const id of result.deleteFromCloud) await deleteWorkspaceRow(userId, id).catch(logCloudWriteFailure("workspace delete"));
       return result.merged;
     }
   }
@@ -739,7 +744,7 @@ chrome.commands.onCommand.addListener((command) => {
         const now = new Date().toISOString();
         const snapshot = validateWorkspaceSnapshot({ id: crypto.randomUUID(), title: titleObj.title, createdAt: now, updatedAt: now, tabs: validTabs, deviceId, deviceName });
         if (!snapshot) { await sendToast(i18n.t("saveWorkspaceSnapshotInvalid")); return; }
-        if (useCloud) await upsertWorkspace(user.id, snapshot).catch(() => {});
+        if (useCloud) await upsertWorkspace(user.id, snapshot).catch(logCloudWriteFailure("workspace upsert"));
         await saveWorkspaceSnapshots([...existing, snapshot]).catch(() => {});
         await sendToast(i18n.t("saveWorkspaceSaved", [snapshot.title, String(validTabs.length)]));
       } catch (error) {
@@ -855,7 +860,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const now = new Date().toISOString();
       const snapshot = validateWorkspaceSnapshot({ id: crypto.randomUUID(), title: title.title, createdAt: now, updatedAt: now, tabs, deviceId, deviceName });
       if (!snapshot) throw new Error(i18n.t("workspaceDataInvalid"));
-      if (useCloud) await upsertWorkspace(user.id, snapshot).catch(() => {});
+      if (useCloud) await upsertWorkspace(user.id, snapshot).catch(logCloudWriteFailure("workspace upsert"));
       await saveWorkspaceSnapshots([...existing, snapshot]).catch(() => {});
       return { workspace: snapshot };
     }
@@ -900,8 +905,8 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const state = await loadState();
       const tombstone: WorkspaceTombstone = { id: message.id, deletedAt: new Date().toISOString() };
       if (state.settings.cloudSyncEnabled === true) {
-        await deleteWorkspaceRow(user.id, message.id).catch(() => {});
-        await upsertWorkspaceTombstone(user.id, tombstone).catch(() => {});
+        await deleteWorkspaceRow(user.id, message.id).catch(logCloudWriteFailure("workspace delete"));
+        await upsertWorkspaceTombstone(user.id, tombstone).catch(logCloudWriteFailure("tombstone upsert"));
       }
       await saveWorkspaceTombstones(mergeWorkspaceTombstones(await loadWorkspaceTombstones(), [tombstone])).catch(() => {});
       const workspaces = (await loadWorkspaceSnapshots()).filter((item) => item.id !== message.id);
@@ -917,7 +922,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
         const state = await loadState();
         const deviceId = await getOrCreateDeviceId();
         await Promise.all([
-          state.settings.cloudSyncEnabled === true ? renameDeviceWorkspaces(user.id, deviceId, name).catch(() => {}) : Promise.resolve(),
+          state.settings.cloudSyncEnabled === true ? renameDeviceWorkspaces(user.id, deviceId, name).catch(logCloudWriteFailure("device rename")) : Promise.resolve(),
         ]);
       }
       return { name };
@@ -934,7 +939,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const workspace = all.find((item) => item.id === message.id);
       if (!workspace) throw new Error(i18n.t("workspaceNotFound"));
       const updated: WorkspaceSnapshot = { ...workspace, tabs: [...workspace.tabs, tab], updatedAt: new Date().toISOString() };
-      if (useCloud) await upsertWorkspace(user.id, updated).catch(() => {});
+      if (useCloud) await upsertWorkspace(user.id, updated).catch(logCloudWriteFailure("workspace upsert"));
       await saveWorkspaceSnapshots(all.map((item) => (item.id === updated.id ? updated : item))).catch(() => {});
       return { ok: true };
     }
@@ -962,7 +967,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const tabs = updateWorkspaceTab(workspace.tabs, message.index, message.title, message.url);
       if (!tabs) throw new Error(i18n.t("unsupportedUrl"));
       const updated: WorkspaceSnapshot = { ...workspace, tabs, updatedAt: new Date().toISOString() };
-      if (useCloud) await upsertWorkspace(user.id, updated).catch(() => {});
+      if (useCloud) await upsertWorkspace(user.id, updated).catch(logCloudWriteFailure("workspace upsert"));
       await saveWorkspaceSnapshots(all.map((item) => (item.id === updated.id ? updated : item))).catch(() => {});
       return { ok: true };
     }
@@ -978,7 +983,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const tabs = removeWorkspaceTab(workspace.tabs, message.index);
       if (!tabs) throw new Error(i18n.t("tabNotFound"));
       const updated: WorkspaceSnapshot = { ...workspace, tabs, updatedAt: new Date().toISOString() };
-      if (useCloud) await upsertWorkspace(user.id, updated).catch(() => {});
+      if (useCloud) await upsertWorkspace(user.id, updated).catch(logCloudWriteFailure("workspace upsert"));
       await saveWorkspaceSnapshots(all.map((item) => (item.id === updated.id ? updated : item))).catch(() => {});
       return { ok: true };
     }
@@ -994,7 +999,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const tabs = moveWorkspaceTab(workspace.tabs, message.fromIndex, message.toIndex);
       if (!tabs) throw new Error(i18n.t("cantMoveToPosition"));
       const updated: WorkspaceSnapshot = { ...workspace, tabs, updatedAt: new Date().toISOString() };
-      if (useCloud) await upsertWorkspace(user.id, updated).catch(() => {});
+      if (useCloud) await upsertWorkspace(user.id, updated).catch(logCloudWriteFailure("workspace upsert"));
       await saveWorkspaceSnapshots(all.map((item) => (item.id === updated.id ? updated : item))).catch(() => {});
       return { ok: true };
     }
@@ -1054,11 +1059,11 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       await chrome.tabs.create({ windowId: message.windowId, url: tab.url });
       await saveDeferredTabs(deferredTabs.filter((item) => item.id !== message.id));
       void clearDeferredDueAlarm(message.id);
-      notifiedDeferredIds.delete(message.id);
+      await forgetNotifiedId(message.id);
       return { ok: true };
     }
-    if (message.type === "reschedule-deferred-tab") { await requireBoardUser(); const dueAt = message.dueAt; if (!safeRecordId(message.id) || typeof dueAt !== "string" || Date.parse(dueAt) <= Date.now()) throw new Error(i18n.t("reminderTimeInvalid")); const tabs = (await loadDeferredTabs()).map((tab) => tab.id === message.id ? { ...tab, dueAt } : tab); await saveDeferredTabs(tabs); void clearDeferredDueAlarm(message.id); void scheduleDeferredDueAlarm(message.id, dueAt); notifiedDeferredIds.delete(message.id); return { ok: true }; }
-    if (message.type === "delete-deferred-tab") { await requireBoardUser(); if (!safeRecordId(message.id)) throw new Error(i18n.t("reminderNotFound")); await saveDeferredTabs((await loadDeferredTabs()).filter((tab) => tab.id !== message.id)); void clearDeferredDueAlarm(message.id); notifiedDeferredIds.delete(message.id); return { ok: true }; }
+    if (message.type === "reschedule-deferred-tab") { await requireBoardUser(); const dueAt = message.dueAt; if (!safeRecordId(message.id) || typeof dueAt !== "string" || Date.parse(dueAt) <= Date.now()) throw new Error(i18n.t("reminderTimeInvalid")); const tabs = (await loadDeferredTabs()).map((tab) => tab.id === message.id ? { ...tab, dueAt } : tab); await saveDeferredTabs(tabs); void clearDeferredDueAlarm(message.id); void scheduleDeferredDueAlarm(message.id, dueAt); await forgetNotifiedId(message.id); return { ok: true }; }
+    if (message.type === "delete-deferred-tab") { await requireBoardUser(); if (!safeRecordId(message.id)) throw new Error(i18n.t("reminderNotFound")); await saveDeferredTabs((await loadDeferredTabs()).filter((tab) => tab.id !== message.id)); void clearDeferredDueAlarm(message.id); await forgetNotifiedId(message.id); return { ok: true }; }
     if (message.type === "activate-board-tab") {
       await requireBoardUser();
       if (typeof message.tabId !== "number" || !Number.isInteger(message.tabId) || message.tabId <= 0) throw new Error(i18n.t("invalidTabData"));
@@ -1444,7 +1449,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
         if (existingIndex === -1) {
           const newWs = { ...ws, id: crypto.randomUUID(), updatedAt: new Date().toISOString() };
           merged.push(newWs);
-          if (useCloud) await upsertWorkspace(currentUser.id, newWs).catch(() => {});
+          if (useCloud) await upsertWorkspace(currentUser.id, newWs).catch(logCloudWriteFailure("workspace upsert"));
           continue;
         }
         const existingWs = merged[existingIndex]!;
@@ -1458,7 +1463,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
         }
         const updatedWs: WorkspaceSnapshot = { ...existingWs, tabs: mergedTabs, updatedAt: new Date().toISOString() };
         merged[existingIndex] = updatedWs;
-        if (useCloud) await upsertWorkspace(currentUser.id, updatedWs).catch(() => {});
+        if (useCloud) await upsertWorkspace(currentUser.id, updatedWs).catch(logCloudWriteFailure("workspace upsert"));
       }
       pendingWorkspaceImport = null;
       await saveWorkspaceSnapshots(merged).catch(() => {});
