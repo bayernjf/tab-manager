@@ -3116,3 +3116,61 @@ test("board theme save loads current settings before writing (no defaults reset)
   assert.match(save, /if \(!currentState\?\.settings\)\s*await load\(\)/);
 });
 
+// --- P1-4 回归：并发刷新共享同一个 in-flight 请求 -----------------------------
+
+test("concurrent token refreshes share a single in-flight request", async () => {
+  const values = stubStorage({ supabaseSession: sessionFixture({ expires_at: nowSeconds() - 10 }) });
+  let refreshCalls = 0;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  stubFetch((url) => {
+    if (url.includes("grant_type=refresh_token")) {
+      refreshCalls += 1;
+      return gate.then(() => authResponse({ access_token: "token-new", refresh_token: "refresh-2", expires_in: 3600, user: { id: "user-1", email: "a@example.com" } }));
+    }
+    if (url.includes("/user")) return authResponse({ id: "user-1", email: "a@example.com" });
+    throw new Error(`unexpected network call: ${url}`);
+  });
+  const { getCurrentUser, getAccessToken } = await import("../dist/auth.js");
+
+  const first = getCurrentUser();
+  const second = getAccessToken();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  release();
+  const [user, token] = await Promise.all([first, second]);
+
+  assert.equal(refreshCalls, 1);
+  assert.equal(user?.id, "user-1");
+  assert.equal(token, "token-new");
+  assert.equal(values.supabaseSession.refresh_token, "refresh-2");
+});
+
+test("a rejected refresh clears the session exactly once for all concurrent callers", async () => {
+  const values = stubStorage({ supabaseSession: sessionFixture({ expires_at: nowSeconds() - 10 }) });
+  let refreshCalls = 0;
+  stubFetch(() => { refreshCalls += 1; return authResponse({ msg: "Invalid Refresh Token" }, 400); });
+  const { getCurrentUser, getAccessToken } = await import("../dist/auth.js");
+
+  const [user, token] = await Promise.all([getCurrentUser(), getAccessToken()]);
+
+  assert.equal(refreshCalls, 1);
+  assert.equal(user, null);
+  assert.equal(token, null);
+  assert.equal(values.supabaseSession, undefined);
+});
+
+test("a transient refresh failure keeps the stale session for all concurrent callers", async () => {
+  const values = stubStorage({ supabaseSession: sessionFixture({ expires_at: nowSeconds() - 10 }) });
+  let refreshCalls = 0;
+  stubFetch(() => { refreshCalls += 1; throw new TypeError("Failed to fetch"); });
+  const { getAccessToken } = await import("../dist/auth.js");
+
+  const [first, second] = await Promise.all([getAccessToken(), getAccessToken()]);
+
+  assert.equal(refreshCalls, 1);
+  // 网络故障不算会话失效：保留会话，但过期 token 不再被当作可用凭据返回。
+  assert.ok(values.supabaseSession);
+  assert.equal(first, null);
+  assert.equal(second, null);
+});
+
