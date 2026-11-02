@@ -21,6 +21,8 @@ import {
   type BoardLayout,
   type BoardLayoutSyncRow,
   type WorkspaceSnapshot,
+  type WorkspaceTombstone,
+  validateWorkspaceTombstone,
 } from "./shared.js";
 import { loadState, saveSettings } from "./storage.js";
 
@@ -192,10 +194,10 @@ export async function replaceBoardLayouts(userId: string, layouts: readonly Boar
 
 export async function fetchWorkspaces(userId: string): Promise<WorkspaceSnapshot[]> {
   const rows = await databaseRequest<Array<Record<string, unknown>>>(
-    `/workspace_snapshots?user_id=eq.${encodeURIComponent(userId)}&select=id,device_id,device_name,title,tabs,created_at&order=created_at.desc`,
+    `/workspace_snapshots?user_id=eq.${encodeURIComponent(userId)}&select=id,device_id,device_name,title,tabs,created_at,updated_at&order=created_at.desc`,
   );
   const workspaces = rows.map((row) => validateWorkspaceSnapshot({
-    id: row.id, title: row.title, createdAt: row.created_at, tabs: row.tabs, deviceId: row.device_id, deviceName: row.device_name,
+    id: row.id, title: row.title, createdAt: row.created_at, updatedAt: row.updated_at, tabs: row.tabs, deviceId: row.device_id, deviceName: row.device_name,
   }));
   if (workspaces.some((workspace) => !workspace)) throw new Error("Supabase 返回了无效的工作区数据");
   return workspaces as WorkspaceSnapshot[];
@@ -215,7 +217,27 @@ export async function upsertWorkspace(userId: string, workspace: WorkspaceSnapsh
       title: validated.title,
       tabs: validated.tabs,
       created_at: validated.createdAt,
+      updated_at: validated.updatedAt ?? validated.createdAt,
     }),
+  });
+}
+
+export async function fetchWorkspaceTombstones(userId: string): Promise<WorkspaceTombstone[]> {
+  const rows = await databaseRequest<Array<Record<string, unknown>>>(
+    `/workspace_tombstones?user_id=eq.${encodeURIComponent(userId)}&select=id,deleted_at`,
+  );
+  const tombstones = rows.map((row) => validateWorkspaceTombstone({ id: row.id, deletedAt: row.deleted_at }));
+  if (tombstones.some((tombstone) => !tombstone)) throw new Error("Supabase 返回了无效的工作区墓碑数据");
+  return tombstones as WorkspaceTombstone[];
+}
+
+export async function upsertWorkspaceTombstone(userId: string, tombstone: WorkspaceTombstone): Promise<void> {
+  const validated = validateWorkspaceTombstone(tombstone);
+  if (!validated) throw new Error("工作区墓碑包含无效数据");
+  await databaseRequest<unknown>("/workspace_tombstones?on_conflict=user_id,id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify({ user_id: userId, id: validated.id, deleted_at: validated.deletedAt }),
   });
 }
 

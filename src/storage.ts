@@ -6,6 +6,7 @@ import {
   appendWorkspaceVersion,
   validateRecentlyClosedTab,
   validateWorkspaceHistory,
+  validateWorkspaceTombstone,
   type BoardCustomGroup,
   type BoardLayout,
   type VirtualBoardAssignment,
@@ -14,6 +15,7 @@ import {
   type Settings,
   type StoredState,
   type WorkspaceSnapshot,
+  type WorkspaceTombstone,
   type DeferredTab,
   type RecentlyClosedTab,
   type WorkspaceHistory,
@@ -65,6 +67,17 @@ export async function loadWorkspaceSnapshots(): Promise<WorkspaceSnapshot[]> {
 
 export async function saveWorkspaceSnapshots(workspaceSnapshots: readonly WorkspaceSnapshot[]): Promise<void> {
   await chrome.storage.local.set({ workspaceSnapshots });
+}
+
+export async function loadWorkspaceTombstones(): Promise<WorkspaceTombstone[]> {
+  const data = await chrome.storage.local.get("workspaceTombstones");
+  const raw = (data.workspaceTombstones as unknown[] | undefined) ?? [];
+  if (!Array.isArray(raw)) return [];
+  return raw.map(validateWorkspaceTombstone).filter((tombstone): tombstone is WorkspaceTombstone => tombstone !== null);
+}
+
+export async function saveWorkspaceTombstones(tombstones: readonly WorkspaceTombstone[]): Promise<void> {
+  await chrome.storage.local.set({ workspaceTombstones: [...tombstones] });
 }
 
 export async function loadDeferredTabs(): Promise<DeferredTab[]> { const data = await chrome.storage.local.get("deferredTabs"); return (data.deferredTabs as DeferredTab[] | undefined) ?? []; }
@@ -242,6 +255,7 @@ const USER_DATA_KEYS: string[] = [
   "deferredTabs",
   "recentlyClosedTabs",
   "workspaceSnapshots",
+  "workspaceTombstones",
   "workspaceHistories",
   "boardAssignments",
   "tabCreatedAt",

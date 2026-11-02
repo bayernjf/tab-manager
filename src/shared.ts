@@ -86,9 +86,16 @@ export interface WorkspaceSnapshot {
   id: string;
   title: string;
   createdAt: string;
+  /** Last local modification time (ISO). Optional for snapshots saved before sync merge existed. */
+  updatedAt?: string;
   tabs: WorkspaceTab[];
   deviceId?: string;
   deviceName?: string;
+}
+
+export interface WorkspaceTombstone {
+  id: string;
+  deletedAt: string;
 }
 
 export interface WorkspaceRestorePreview {
@@ -448,7 +455,103 @@ export function validateWorkspaceSnapshot(value: unknown): WorkspaceSnapshot | n
   if (!tabs.every((tab): tab is WorkspaceTab => tab !== null)) return null;
   const deviceId = typeof value.deviceId === "string" && value.deviceId ? value.deviceId : undefined;
   const deviceName = typeof value.deviceName === "string" && value.deviceName.trim() && value.deviceName.length <= 60 ? value.deviceName.trim() : undefined;
-  return { id: value.id, title: title.title, createdAt: value.createdAt, tabs, ...(deviceId ? { deviceId } : {}), ...(deviceName ? { deviceName } : {}) };
+  const updatedAt = typeof value.updatedAt === "string" && Number.isFinite(Date.parse(value.updatedAt)) ? value.updatedAt : undefined;
+  return { id: value.id, title: title.title, createdAt: value.createdAt, ...(updatedAt ? { updatedAt } : {}), tabs, ...(deviceId ? { deviceId } : {}), ...(deviceName ? { deviceName } : {}) };
+}
+
+export function validateWorkspaceTombstone(value: unknown): WorkspaceTombstone | null {
+  if (!isPlainObject(value) || !isRecordId(value.id) || typeof value.deletedAt !== "string" || !Number.isFinite(Date.parse(value.deletedAt))) return null;
+  return { id: value.id, deletedAt: value.deletedAt };
+}
+
+/** Last-write-wins timestamp for a snapshot: prefer updatedAt, fall back to createdAt. */
+function workspaceModifiedAt(snapshot: WorkspaceSnapshot): number {
+  const stamp = Date.parse(snapshot.updatedAt ?? snapshot.createdAt);
+  return Number.isFinite(stamp) ? stamp : 0;
+}
+
+/** Merge tombstone sets by id, keeping the latest deletedAt per id. */
+export function mergeWorkspaceTombstones(...sources: readonly (readonly WorkspaceTombstone[])[]): WorkspaceTombstone[] {
+  const byId = new Map<string, WorkspaceTombstone>();
+  for (const source of sources) {
+    for (const tombstone of source) {
+      const existing = byId.get(tombstone.id);
+      if (!existing || Date.parse(tombstone.deletedAt) > Date.parse(existing.deletedAt)) byId.set(tombstone.id, tombstone);
+    }
+  }
+  return [...byId.values()];
+}
+
+export interface WorkspaceMergeResult {
+  /** Snapshots the device should hold after the merge. */
+  merged: WorkspaceSnapshot[];
+  /** Local snapshots that are newer than (or missing from) the cloud and must be uploaded. */
+  upload: WorkspaceSnapshot[];
+  /** Union of local and cloud tombstones (latest deletedAt per id). */
+  tombstones: WorkspaceTombstone[];
+  /** Local tombstones that are newer than (or missing from) the cloud and must be uploaded. */
+  uploadTombstones: WorkspaceTombstone[];
+  /** Cloud row ids superseded by a tombstone; callers should retry deleting them remotely. */
+  deleteFromCloud: string[];
+}
+
+/**
+ * Last-write-wins merge of local and cloud workspace snapshots.
+ * Local-only snapshots (created offline) survive; deletions propagate via
+ * tombstones instead of wholesale replacement. A tombstone wins over a
+ * snapshot unless the snapshot was modified strictly after the deletion.
+ */
+export function mergeWorkspaceSnapshots(
+  local: readonly WorkspaceSnapshot[],
+  cloud: readonly WorkspaceSnapshot[],
+  localTombstones: readonly WorkspaceTombstone[] = [],
+  cloudTombstones: readonly WorkspaceTombstone[] = [],
+): WorkspaceMergeResult {
+  const tombstones = mergeWorkspaceTombstones(localTombstones, cloudTombstones);
+  const tombstoneMap = new Map(tombstones.map((tombstone) => [tombstone.id, Date.parse(tombstone.deletedAt)]));
+  const cloudTombstoneMap = new Map(cloudTombstones.map((tombstone) => [tombstone.id, Date.parse(tombstone.deletedAt)]));
+  const cloudMap = new Map(cloud.map((item) => [item.id, item]));
+  const merged = new Map<string, WorkspaceSnapshot>();
+  const upload: WorkspaceSnapshot[] = [];
+  const deleteFromCloud: string[] = [];
+
+  for (const item of local) {
+    const deletedAt = tombstoneMap.get(item.id);
+    if (deletedAt !== undefined && deletedAt >= workspaceModifiedAt(item)) continue;
+    const remote = cloudMap.get(item.id);
+    if (!remote) {
+      merged.set(item.id, item);
+      upload.push(item);
+      continue;
+    }
+    if (workspaceModifiedAt(item) > workspaceModifiedAt(remote)) {
+      merged.set(item.id, item);
+      upload.push(item);
+    } else {
+      merged.set(item.id, remote);
+    }
+  }
+  for (const item of cloud) {
+    const deletedAt = tombstoneMap.get(item.id);
+    if (deletedAt !== undefined && deletedAt >= workspaceModifiedAt(item)) {
+      if (!merged.has(item.id)) deleteFromCloud.push(item.id);
+      continue;
+    }
+    if (!merged.has(item.id)) merged.set(item.id, item);
+  }
+
+  const uploadTombstones = localTombstones.filter((tombstone) => {
+    const remote = cloudTombstoneMap.get(tombstone.id);
+    return remote === undefined || Date.parse(tombstone.deletedAt) > remote;
+  });
+
+  return {
+    merged: [...merged.values()].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)),
+    upload,
+    tombstones,
+    uploadTombstones,
+    deleteFromCloud,
+  };
 }
 
 export function workspaceRestorePreview(snapshot: WorkspaceSnapshot): WorkspaceRestorePreview {
