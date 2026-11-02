@@ -44,6 +44,9 @@ import {
   type PortableImportPreview,
   type Settings,
   type WorkspaceSnapshot,
+  type WorkspaceTombstone,
+  mergeWorkspaceSnapshots,
+  mergeWorkspaceTombstones,
   type DeferredTab,
   type RecentlyClosedTab,
   type WorkspaceHistory,
@@ -67,6 +70,8 @@ import {
   saveOptionsData,
   saveSettings,
   saveWorkspaceSnapshots,
+  loadWorkspaceTombstones,
+  saveWorkspaceTombstones,
   getOrCreateDeviceId,
   getOrCreateDeviceName,
   loadRecentlyClosedTabs,
@@ -86,7 +91,7 @@ import {
   clearUserData,
 } from "./storage.js";
 import { getCurrentUser, getLocalUser, getStoredUser, signIn, signOut, signUp } from "./auth.js";
-import { pushSettings, replaceBoardSyncData, replaceOptionalSyncData, restoreBoardSyncData, restoreOptionalSyncData, syncSettings, fetchWorkspaces, upsertWorkspace, deleteWorkspaceRow, renameDeviceWorkspaces } from "./sync.js";
+import { pushSettings, replaceBoardSyncData, replaceOptionalSyncData, restoreBoardSyncData, restoreOptionalSyncData, syncSettings, fetchWorkspaces, fetchWorkspaceTombstones, upsertWorkspace, upsertWorkspaceTombstone, deleteWorkspaceRow, renameDeviceWorkspaces } from "./sync.js";
 
 void i18n.initFromStorage();
 void seedTabCreatedAtForExistingTabs();
@@ -170,6 +175,7 @@ type PopupMessage =
   | { type: "restore-workspace-history-version"; id: unknown; version: unknown; windowId: unknown; confirmed?: boolean; skipUrls?: string[] }
   | { type: "export-workspaces-json" }
   | { type: "import-workspaces-json"; data?: unknown; confirmed?: boolean; cancelled?: boolean }
+  | { type: "overwrite-workspaces-from-cloud"; confirmed?: boolean }
   | { type: "batch-close-tabs"; tabIds: unknown[] }
   | { type: "batch-defer-tabs"; tabIds: unknown[]; dueAt: unknown }
   | { type: "batch-move-tabs-to-group"; tabIds: unknown[]; targetBoardKey: unknown };
@@ -458,8 +464,18 @@ async function loadAllWorkspaces(userId: string, cloudSyncEnabled: boolean): Pro
   if (cloudSyncEnabled) {
     const cloud = await fetchWorkspaces(userId).catch(() => null);
     if (cloud) {
-      await saveWorkspaceSnapshots(cloud).catch(() => {});
-      return cloud;
+      const [local, localTombstones, cloudTombstones] = await Promise.all([
+        loadWorkspaceSnapshots(),
+        loadWorkspaceTombstones(),
+        fetchWorkspaceTombstones(userId).catch(() => [] as WorkspaceTombstone[]),
+      ]);
+      const result = mergeWorkspaceSnapshots(local, cloud, localTombstones, cloudTombstones);
+      await saveWorkspaceSnapshots(result.merged).catch(() => {});
+      await saveWorkspaceTombstones(result.tombstones).catch(() => {});
+      for (const workspace of result.upload) await upsertWorkspace(userId, workspace).catch(() => {});
+      for (const tombstone of result.uploadTombstones) await upsertWorkspaceTombstone(userId, tombstone).catch(() => {});
+      for (const id of result.deleteFromCloud) await deleteWorkspaceRow(userId, id).catch(() => {});
+      return result.merged;
     }
   }
   return loadWorkspaceSnapshots();
@@ -720,7 +736,8 @@ chrome.commands.onCommand.addListener((command) => {
         const validations = eligible.map((tab) => validateWorkspaceTab({ title: tab.title || "未命名标签页", url: tab.url }));
         const validTabs = validations.flatMap((v) => v.status === "valid" ? [v.tab] : []);
         if (validTabs.length === 0) { await sendToast(i18n.t("saveWorkspaceNoValidTabs")); return; }
-        const snapshot = validateWorkspaceSnapshot({ id: crypto.randomUUID(), title: titleObj.title, createdAt: new Date().toISOString(), tabs: validTabs, deviceId, deviceName });
+        const now = new Date().toISOString();
+        const snapshot = validateWorkspaceSnapshot({ id: crypto.randomUUID(), title: titleObj.title, createdAt: now, updatedAt: now, tabs: validTabs, deviceId, deviceName });
         if (!snapshot) { await sendToast(i18n.t("saveWorkspaceSnapshotInvalid")); return; }
         if (useCloud) await upsertWorkspace(user.id, snapshot).catch(() => {});
         await saveWorkspaceSnapshots([...existing, snapshot]).catch(() => {});
@@ -835,7 +852,8 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       if (payload.status === "too-many") throw new Error(i18n.t("workspaceTabsLimit"));
       if (payload.status === "invalid") throw new Error(i18n.t("tabValidationError", [String(payload.displayIndex + 1), workspaceTabValidationMessage(payload.reason, (k) => i18n.t(k))]));
       const tabs = payload.tabs;
-      const snapshot = validateWorkspaceSnapshot({ id: crypto.randomUUID(), title: title.title, createdAt: new Date().toISOString(), tabs, deviceId, deviceName });
+      const now = new Date().toISOString();
+      const snapshot = validateWorkspaceSnapshot({ id: crypto.randomUUID(), title: title.title, createdAt: now, updatedAt: now, tabs, deviceId, deviceName });
       if (!snapshot) throw new Error(i18n.t("workspaceDataInvalid"));
       if (useCloud) await upsertWorkspace(user.id, snapshot).catch(() => {});
       await saveWorkspaceSnapshots([...existing, snapshot]).catch(() => {});
@@ -880,7 +898,12 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const user = await requireBoardUser();
       if (!safeRecordId(message.id)) throw new Error(i18n.t("workspaceNotFound"));
       const state = await loadState();
-      if (state.settings.cloudSyncEnabled === true) await deleteWorkspaceRow(user.id, message.id).catch(() => {});
+      const tombstone: WorkspaceTombstone = { id: message.id, deletedAt: new Date().toISOString() };
+      if (state.settings.cloudSyncEnabled === true) {
+        await deleteWorkspaceRow(user.id, message.id).catch(() => {});
+        await upsertWorkspaceTombstone(user.id, tombstone).catch(() => {});
+      }
+      await saveWorkspaceTombstones(mergeWorkspaceTombstones(await loadWorkspaceTombstones(), [tombstone])).catch(() => {});
       const workspaces = (await loadWorkspaceSnapshots()).filter((item) => item.id !== message.id);
       await saveWorkspaceSnapshots(workspaces).catch(() => {});
       return { ok: true };
@@ -910,7 +933,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const all = await loadAllWorkspaces(user.id, useCloud);
       const workspace = all.find((item) => item.id === message.id);
       if (!workspace) throw new Error(i18n.t("workspaceNotFound"));
-      const updated: WorkspaceSnapshot = { ...workspace, tabs: [...workspace.tabs, tab] };
+      const updated: WorkspaceSnapshot = { ...workspace, tabs: [...workspace.tabs, tab], updatedAt: new Date().toISOString() };
       if (useCloud) await upsertWorkspace(user.id, updated).catch(() => {});
       await saveWorkspaceSnapshots(all.map((item) => (item.id === updated.id ? updated : item))).catch(() => {});
       return { ok: true };
@@ -938,7 +961,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       if (!workspace) throw new Error(i18n.t("workspaceNotFound"));
       const tabs = updateWorkspaceTab(workspace.tabs, message.index, message.title, message.url);
       if (!tabs) throw new Error(i18n.t("unsupportedUrl"));
-      const updated: WorkspaceSnapshot = { ...workspace, tabs };
+      const updated: WorkspaceSnapshot = { ...workspace, tabs, updatedAt: new Date().toISOString() };
       if (useCloud) await upsertWorkspace(user.id, updated).catch(() => {});
       await saveWorkspaceSnapshots(all.map((item) => (item.id === updated.id ? updated : item))).catch(() => {});
       return { ok: true };
@@ -954,7 +977,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       if (!workspace) throw new Error(i18n.t("workspaceNotFound"));
       const tabs = removeWorkspaceTab(workspace.tabs, message.index);
       if (!tabs) throw new Error(i18n.t("tabNotFound"));
-      const updated: WorkspaceSnapshot = { ...workspace, tabs };
+      const updated: WorkspaceSnapshot = { ...workspace, tabs, updatedAt: new Date().toISOString() };
       if (useCloud) await upsertWorkspace(user.id, updated).catch(() => {});
       await saveWorkspaceSnapshots(all.map((item) => (item.id === updated.id ? updated : item))).catch(() => {});
       return { ok: true };
@@ -970,7 +993,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       if (!workspace) throw new Error(i18n.t("workspaceNotFound"));
       const tabs = moveWorkspaceTab(workspace.tabs, message.fromIndex, message.toIndex);
       if (!tabs) throw new Error(i18n.t("cantMoveToPosition"));
-      const updated: WorkspaceSnapshot = { ...workspace, tabs };
+      const updated: WorkspaceSnapshot = { ...workspace, tabs, updatedAt: new Date().toISOString() };
       if (useCloud) await upsertWorkspace(user.id, updated).catch(() => {});
       await saveWorkspaceSnapshots(all.map((item) => (item.id === updated.id ? updated : item))).catch(() => {});
       return { ok: true };
@@ -1419,7 +1442,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       for (const ws of imported) {
         const existingIndex = merged.findIndex((m) => m.title === ws.title);
         if (existingIndex === -1) {
-          const newWs = { ...ws, id: crypto.randomUUID() };
+          const newWs = { ...ws, id: crypto.randomUUID(), updatedAt: new Date().toISOString() };
           merged.push(newWs);
           if (useCloud) await upsertWorkspace(currentUser.id, newWs).catch(() => {});
           continue;
@@ -1433,7 +1456,7 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
         for (const tab of ws.tabs) {
           if (!existingUrls.has(tab.url)) mergedTabs.push(tab);
         }
-        const updatedWs: WorkspaceSnapshot = { ...existingWs, tabs: mergedTabs };
+        const updatedWs: WorkspaceSnapshot = { ...existingWs, tabs: mergedTabs, updatedAt: new Date().toISOString() };
         merged[existingIndex] = updatedWs;
         if (useCloud) await upsertWorkspace(currentUser.id, updatedWs).catch(() => {});
       }
@@ -1441,6 +1464,21 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       await saveWorkspaceSnapshots(merged).catch(() => {});
       const synced = useCloud;
       return { ok: true, synced, importedCount: imported.length, totalCount: merged.length };
+    }
+    if (message.type === "overwrite-workspaces-from-cloud") {
+      const user = await requireBoardUser();
+      const state = await loadState();
+      if (state.settings.cloudSyncEnabled !== true) throw new Error(i18n.t("overwriteRequiresCloudSync"));
+      const cloud = await fetchWorkspaces(user.id);
+      if (message.confirmed !== true) {
+        const cloudIds = new Set(cloud.map((workspace) => workspace.id));
+        const localOnlyCount = (await loadWorkspaceSnapshots()).filter((workspace) => !cloudIds.has(workspace.id)).length;
+        return { ok: true, preview: { cloudCount: cloud.length, localOnlyCount } };
+      }
+      const cloudTombstones = await fetchWorkspaceTombstones(user.id).catch(() => [] as WorkspaceTombstone[]);
+      await saveWorkspaceSnapshots(cloud).catch(() => {});
+      await saveWorkspaceTombstones(cloudTombstones).catch(() => {});
+      return { ok: true, count: cloud.length };
     }
     return { ok: false };
   })().then(sendResponse, (error: unknown) => sendResponse({ error: error instanceof Error ? error.message : String(error) }));
