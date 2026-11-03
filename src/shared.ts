@@ -1287,7 +1287,7 @@ function parseGroupRules(value: unknown): GroupRule[] | null {
   const rules: GroupRule[] = [];
   const ids = new Set<string>();
   for (const item of value) {
-    if (!isPlainObject(item) || !hasOnlyKeys(item, ["id", "title", "color", "domains", "matchScope", "enabled", "sortOrder"]) || !isRecordId(item.id) || ids.has(item.id) || typeof item.title !== "string" || !item.title.trim() || item.title.length > 100 || !isGroupColor(item.color) || !Array.isArray(item.domains) || item.domains.length === 0 || item.domains.length > 50 || !isMatchScope(item.matchScope) || typeof item.enabled !== "boolean" || !isSortOrder(item.sortOrder)) return null;
+    if (!isPlainObject(item) || !hasOnlyKeys(item, ["id", "title", "color", "domains", "matchScope", "enabled", "sortOrder"]) || !isRecordId(item.id) || ids.has(item.id) || typeof item.title !== "string" || !item.title.trim() || item.title.length > 40 || !isGroupColor(item.color) || !Array.isArray(item.domains) || item.domains.length === 0 || item.domains.length > 50 || !isMatchScope(item.matchScope) || typeof item.enabled !== "boolean" || !isSortOrder(item.sortOrder)) return null;
     const domains = item.domains.map((domain) => typeof domain === "string" ? normalizeDomainInput(domain) : null);
     if (domains.some((domain) => !domain) || new Set(domains).size !== domains.length) return null;
     ids.add(item.id);
@@ -1313,7 +1313,8 @@ function parseIgnoredSites(value: unknown): IgnoredSite[] | null {
 }
 
 function isMinimumTabs(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 2 && value <= 100;
+  // 与 user_settings.minimum_tabs 的 DB 约束 (between 2 and 20) 对齐；导入 JSON 带入越界值会在推送时失败。
+  return typeof value === "number" && Number.isInteger(value) && value >= 2 && value <= 20;
 }
 
 function isSyncTimestamp(value: unknown): value is string | null {
