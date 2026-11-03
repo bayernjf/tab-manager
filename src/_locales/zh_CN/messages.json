@@ -203,6 +203,7 @@
   "importingRules": { "message": "将导入 $rules$ 条分组规则和 $sites$ 个忽略网站。", "description": "导入预览", "placeholders": { "rules": { "content": "$1", "example": "5" }, "sites": { "content": "$2", "example": "3" } } },
   "confirmImportPrompt": { "message": "确认导入并覆盖当前设置、分组规则和忽略网站吗？", "description": "确认导入提示" },
   "importCompleted": { "message": "导入完成。", "description": "导入完成提示" },
+  "importCompletedSyncFailed": { "message": "导入完成，但有 $count$ 个工作区上传云端失败。数据已保存在本地，可在选项页使用「立即同步」重试。", "description": "导入完成但部分云端上传失败提示", "placeholders": { "count": { "content": "$1", "example": "2" } } },
   "importCancelled": { "message": "已取消导入。", "description": "导入已取消提示" },
   "cloudOverwriteTitle": { "message": "用云端覆盖本地工作区", "description": "云端覆盖卡片标题" },
   "cloudOverwriteHint": { "message": "以云端为准整表替换本地工作区；本地独有的工作区将被删除，此操作不可撤销。", "description": "云端覆盖说明" },

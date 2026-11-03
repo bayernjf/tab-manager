@@ -857,9 +857,13 @@ async function handleImportFileSelect(event: Event): Promise<void> {
 async function confirmWorkspaceImport(): Promise<void> {
   try {
     confirmWorkspaceImportPreview.disabled = true;
-    const result = await send<{ ok: boolean; importedCount: number; totalCount: number }>({ type: "import-workspaces-json", confirmed: true });
+    const result = await send<{ ok: boolean; synced: boolean; failedUploads: number; importedCount: number; totalCount: number }>({ type: "import-workspaces-json", confirmed: true });
     workspaceImportPreviewDialog.close();
-    showStatus(i18n.t("importCompleted"));
+    if (!result.synced && result.failedUploads > 0) {
+      showStatus(i18n.t("importCompletedSyncFailed", [String(result.failedUploads)]), true);
+    } else {
+      showStatus(i18n.t("importCompleted"));
+    }
     await loadWorkspaces();
   } catch (error) {
     showStatus(error instanceof Error ? error.message : String(error), true);

@@ -203,6 +203,7 @@
   "importingRules": { "message": "Importing $rules$ rules and $sites$ ignored sites.", "description": "Import preview", "placeholders": { "rules": { "content": "$1", "example": "5" }, "sites": { "content": "$2", "example": "3" } } },
   "confirmImportPrompt": { "message": "Confirm import and overwrite current settings, rules, and ignored sites?", "description": "Confirm import prompt" },
   "importCompleted": { "message": "Import completed.", "description": "Import completed message" },
+  "importCompletedSyncFailed": { "message": "Import completed, but $count$ workspace upload(s) to the cloud failed. The data is saved locally; use Sync Now in Options to retry.", "description": "Import completed but some cloud uploads failed", "placeholders": { "count": { "content": "$1", "example": "2" } } },
   "importCancelled": { "message": "Import cancelled.", "description": "Import cancelled message" },
   "cloudOverwriteTitle": { "message": "Overwrite Local Workspaces from Cloud", "description": "Cloud overwrite card title" },
   "cloudOverwriteHint": { "message": "Replaces all local workspaces with the cloud copy. Workspaces that exist only locally will be deleted. This cannot be undone.", "description": "Cloud overwrite hint" },

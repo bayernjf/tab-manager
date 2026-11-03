@@ -1469,12 +1469,14 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
       const existing = await loadAllWorkspaces(currentUser.id, useCloud);
       const imported = pendingWorkspaceImport.preview.data.workspaces;
       const merged: WorkspaceSnapshot[] = [...existing];
+      let cloudFailures = 0;
+      const track = (action: string) => (error: unknown) => { cloudFailures += 1; logCloudWriteFailure(action)(error); };
       for (const ws of imported) {
         const existingIndex = merged.findIndex((m) => m.title === ws.title);
         if (existingIndex === -1) {
           const newWs = { ...ws, id: crypto.randomUUID(), updatedAt: new Date().toISOString() };
           merged.push(newWs);
-          if (useCloud) await upsertWorkspace(currentUser.id, newWs).catch(logCloudWriteFailure("workspace upsert"));
+          if (useCloud) await upsertWorkspace(currentUser.id, newWs).catch(track("workspace upsert"));
           continue;
         }
         const existingWs = merged[existingIndex]!;
@@ -1488,12 +1490,13 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
         }
         const updatedWs: WorkspaceSnapshot = { ...existingWs, tabs: mergedTabs, updatedAt: new Date().toISOString() };
         merged[existingIndex] = updatedWs;
-        if (useCloud) await upsertWorkspace(currentUser.id, updatedWs).catch(logCloudWriteFailure("workspace upsert"));
+        if (useCloud) await upsertWorkspace(currentUser.id, updatedWs).catch(track("workspace upsert"));
       }
       pendingWorkspaceImport = null;
       await saveWorkspaceSnapshots(merged).catch(() => {});
-      const synced = useCloud;
-      return { ok: true, synced, importedCount: imported.length, totalCount: merged.length };
+      // 如实上报：云端 upsert 全部成功才算 synced；失败数随响应返回，调用方可提示重试。
+      const synced = useCloud && cloudFailures === 0;
+      return { ok: true, synced, failedUploads: cloudFailures, importedCount: imported.length, totalCount: merged.length };
     }
     if (message.type === "overwrite-workspaces-from-cloud") {
       const user = await requireBoardUser();
