@@ -43,7 +43,7 @@ npm run e2e          # Playwright E2E 测试（默认 headless，需先 build）
 | 1 | Chrome 系统级到期通知（到期 tab 自动弹系统通知，点击打开标签） | ✅ 已完成 | `chrome.alarms` 1 分钟轮询 + `chrome.notifications`，已通知 tab id 去重 |
 | 2 | 重复标签列表弹窗 + 一键去重关闭 | ✅ 已完成 | 按 URL 分组、每组保留 1 条、其他批量关闭；跳过最近活跃 tab |
 | 3 | 批量操作：checkbox 多选 + 批量关闭 / 稍后提醒 / 移动分组 | ✅ 已完成 | 顶部固定工具栏；移动弹层选目标分组；可退出选择模式 |
-| 4 | 最近关闭标签视图（sessions API） | ✅ 已完成 | 50 条上限；`chrome.tabs.onRemoved` 自动捕获普通网页 tab；优先 sessions.restore，失败回退 URL 重开 |
+| 4 | 最近关闭标签视图（sessions API） | 🟡 部分完成（自动捕获链路为死代码） | 视图本身走 `chrome.sessions.getRecentlyClosed` 可用（`board-recently-closed.ts:18`）；但 `chrome.tabs.onRemoved` 自动捕获链路不生效：回调触发时 tab 已删除，`chrome.tabs.get(tabId)` 必然 reject，且 `TabRemoveInfo` 只有 `isWindowClosing` / `windowId`、没有 `sessionId` 字段；对应存储型 RPC（get/restore/remove/clear-recently-closed）也无前台调用 |
 | 5 | 快捷键命令（Alt+B / Alt+D / Alt+S） | ✅ 已完成 | Alt+B 打开看板；Alt+D 活动 tab 稍后处理并关闭；Alt+S 快速保存当前窗口为工作区（自动编号） |
 | 6 | 工作区本地 10 个历史版本 | ✅ 已完成 | 追加写入自动截断；支持列出、保存指定快照、恢复到窗口 |
 | 7 | 设置 / 工作区 JSON 导入导出 | ✅ 已完成 | 导入两步走（preview → confirmed 合并）；重名自动加后缀；选项页和工作区分开两组 RPC |
