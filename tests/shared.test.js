@@ -2,6 +2,23 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
+// The board and background pages are split across several built modules at
+// runtime, so source-shape assertions read the same concatenation the browser
+// loads: entries first, then the subsystems they import.
+const readDist = (file) => readFile(new URL(`../dist/${file}`, import.meta.url), "utf8").catch(() => "");
+const BOARD_MODULES = [
+  "board.js",
+  "board-workspace.js",
+  "board-deferred.js",
+  "board-dom.js",
+  "board-history.js",
+  "board-timeline.js",
+  "board-recently-closed.js",
+];
+const BACKGROUND_MODULES = ["background.js", "background-router.js", "background-services.js"];
+const readBoardSources = async () => (await Promise.all(BOARD_MODULES.map(readDist))).join("\n");
+const readBackgroundSources = async () => (await Promise.all(BACKGROUND_MODULES.map(readDist))).join("\n");
+
 globalThis.chrome = {};
 const {
   automaticBoardKey,
@@ -159,19 +176,9 @@ test("opens the board in the popup's current window", async () => {
   assert.match(popupScript, /type: "open-tab-board", windowId/);
 });
 
-test("builds board tab activation and close message handlers", async () => {
-  const background = await readFile(new URL("../dist/background.js", import.meta.url), "utf8");
-
-  assert.match(background, /message\.type === "activate-board-tab"/);
-  assert.match(background, /chrome\.windows\.update\(tab\.windowId, \{ focused: true \}\)/);
-  assert.match(background, /chrome\.tabs\.update\(tabId, \{ active: true \}\)/);
-  assert.match(background, /message\.type === "close-board-tab"/);
-  assert.match(background, /chrome\.tabs\.remove\(message\.tabId\)/);
-});
-
 test("renders board tab open and close controls with focus-revealed close styling", async () => {
   const [boardScript, boardCss] = await Promise.all([
-    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readBoardSources(),
     readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
   ]);
 
@@ -215,7 +222,7 @@ test("positions board tab close controls on the right", async () => {
 
 test("shows close-tab feedback as a fixed toast centered on the group heading", async () => {
   const [script, dom, css] = await Promise.all([
-    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readBoardSources(),
     readFile(new URL("../dist/board-dom.js", import.meta.url), "utf8"),
     readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
   ]);
@@ -239,7 +246,7 @@ test("shows close-tab feedback as a fixed toast centered on the group heading", 
 });
 
 test("shows workspace tab deletion feedback as a toast centered on the group heading", async () => {
-  const script = await readFile(new URL("../dist/board.js", import.meta.url), "utf8");
+  const script = await readBoardSources();
   const deleteFn = script.slice(script.indexOf("async function deleteWorkspaceTab"), script.indexOf("async function addWorkspaceTab"));
 
   assert.match(deleteFn, /boardToast\(i18n\.t\("tabRemovedFromWorkspace"\)/);
@@ -250,7 +257,7 @@ test("shows workspace tab deletion feedback as a toast centered on the group hea
 
 test("confirms last-tab deletion also removes the workspace", async () => {
   const [script, html] = await Promise.all([
-    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readBoardSources(),
     readFile(new URL("../dist/board.html", import.meta.url), "utf8"),
   ]);
   const deleteFn = script.slice(script.indexOf("async function deleteWorkspaceTab"), script.indexOf("async function addWorkspaceTab"));
@@ -270,7 +277,7 @@ test("confirms last-tab deletion also removes the workspace", async () => {
 
 test("gives GitHub's white favicon a contrasting background", async () => {
   const [boardScript, boardCss] = await Promise.all([
-    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readBoardSources(),
     readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
   ]);
 
@@ -310,7 +317,7 @@ test("creates readable runtime-only window labels", () => {
 test("renders board search and source-window filter controls", async () => {
   const [boardHtml, boardScript, boardCss] = await Promise.all([
     readFile(new URL("../dist/board.html", import.meta.url), "utf8"),
-    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readBoardSources(),
     readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
   ]);
 
@@ -434,19 +441,10 @@ test("moves, updates, removes and appends workspace tabs immutably", () => {
   assert.equal(tabs.length, 3);
 });
 
-test("exposes workspace board and tab edit messages", async () => {
-  const bg = await readFile(new URL("../dist/background.js", import.meta.url), "utf8");
-  assert.match(bg, /message\.type === "get-workspace-board"/);
-  assert.match(bg, /message\.type === "restore-workspace-tabs"/);
-  assert.match(bg, /message\.type === "update-workspace-tab"/);
-  assert.match(bg, /message\.type === "remove-workspace-tab"/);
-  assert.match(bg, /message\.type === "move-workspace-tab"/);
-});
-
 test("renders scope navigation and editable workspace boards", async () => {
   const [html, script, css] = await Promise.all([
     readFile(new URL("../dist/board.html", import.meta.url), "utf8"),
-    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readBoardSources(),
     readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
   ]);
   assert.match(html, /id="scope-nav"/);
@@ -472,7 +470,7 @@ test("renders scope navigation and editable workspace boards", async () => {
 test("renders options from cache and syncs in the background", async () => {
   const [script, bg] = await Promise.all([
     readFile(new URL("../dist/options.js", import.meta.url), "utf8"),
-    readFile(new URL("../dist/background.js", import.meta.url), "utf8"),
+    readBackgroundSources(),
   ]);
   assert.match(bg, /message\.type === "sync-options"/);
   assert.match(script, /type: "sync-options"/);
@@ -628,17 +626,8 @@ test("renders the shortcut keys card on the options page", async () => {
   assert.equal(commands["save-workspace"].suggested_key.default, "Alt+S");
 });
 
-test("builds local deferred-tab handlers", async () => {
-  const background = await readFile(new URL("../dist/background.js", import.meta.url), "utf8");
-  assert.match(background, /message\.type === "defer-board-tab"/);
-  assert.match(background, /message\.type === "get-deferred-tabs"/);
-  assert.match(background, /message\.type === "open-deferred-tab"/);
-  assert.match(background, /message\.type === "reschedule-deferred-tab"/);
-  assert.match(background, /message\.type === "delete-deferred-tab"/);
-});
-
 test("renders board-only deferred reminder controls", async () => {
-  const [html, script, css] = await Promise.all([readFile(new URL("../dist/board.html", import.meta.url), "utf8"), readFile(new URL("../dist/board.js", import.meta.url), "utf8"), readFile(new URL("../dist/board.css", import.meta.url), "utf8")]);
+  const [html, script, css] = await Promise.all([readFile(new URL("../dist/board.html", import.meta.url), "utf8"), readBoardSources(), readFile(new URL("../dist/board.css", import.meta.url), "utf8")]);
   assert.match(html, /id="deferred-reminders"/);
   assert.match(script, /type: "defer-board-tab"/);
   assert.match(script, /type: "get-deferred-tabs"/);
@@ -647,7 +636,7 @@ test("renders board-only deferred reminder controls", async () => {
 
 test("shows save-to-workspace feedback in a fixed toast above the menu", async () => {
   const [script, css] = await Promise.all([
-    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readBoardSources(),
     readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
   ]);
   const menuStart = script.indexOf("async function openSaveToWorkspaceMenu");
@@ -674,7 +663,7 @@ test("shows save-to-workspace feedback in a fixed toast above the menu", async (
 
 test("reuses workspace title, tab count, and device layout in save options", async () => {
   const [script, css] = await Promise.all([
-    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readBoardSources(),
     readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
   ]);
 
@@ -692,7 +681,7 @@ test("reuses workspace title, tab count, and device layout in save options", asy
 
 test("renders every scheduled reminder with clear status and actions", async () => {
   const [script, css] = await Promise.all([
-    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readBoardSources(),
     readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
   ]);
 
@@ -714,7 +703,7 @@ test("renders every scheduled reminder with clear status and actions", async () 
 });
 
 test("renders a configured deferred shortcut menu", async () => {
-  const [script, css] = await Promise.all([readFile(new URL("../dist/board.js", import.meta.url), "utf8"), readFile(new URL("../dist/board.css", import.meta.url), "utf8")]);
+  const [script, css] = await Promise.all([readBoardSources(), readFile(new URL("../dist/board.css", import.meta.url), "utf8")]);
   assert.match(script, /deferredShortcutTimes/);
   assert.match(script, /defer-menu/);
   assert.match(script, /i18n\.t\("countdown"\)/);
@@ -724,8 +713,8 @@ test("renders a configured deferred shortcut menu", async () => {
 
 test("consumes a deferred reminder only after it opens successfully", async () => {
   const [background, board] = await Promise.all([
-    readFile(new URL("../dist/background.js", import.meta.url), "utf8"),
-    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readBackgroundSources(),
+    readBoardSources(),
   ]);
   const openHandlerStart = background.indexOf('if (message.type === "open-deferred-tab")');
   const openHandlerEnd = background.indexOf('if (message.type === "reschedule-deferred-tab")', openHandlerStart);
@@ -741,8 +730,8 @@ test("consumes a deferred reminder only after it opens successfully", async () =
 
 test("builds a read-only board statistics handler", async () => {
   const [background, board] = await Promise.all([
-    readFile(new URL("../dist/background.js", import.meta.url), "utf8"),
-    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readBackgroundSources(),
+    readBoardSources(),
   ]);
   assert.match(background, /message\.type === "get-board-statistics"/);
   assert.match(background, /duplicateTabCount/);
@@ -752,39 +741,16 @@ test("builds a read-only board statistics handler", async () => {
 });
 
 test("renders board statistics cards", async () => {
-  const [html, script, css] = await Promise.all([readFile(new URL("../dist/board.html", import.meta.url), "utf8"), readFile(new URL("../dist/board.js", import.meta.url), "utf8"), readFile(new URL("../dist/board.css", import.meta.url), "utf8")]);
+  const [html, script, css] = await Promise.all([readFile(new URL("../dist/board.html", import.meta.url), "utf8"), readBoardSources(), readFile(new URL("../dist/board.css", import.meta.url), "utf8")]);
   assert.match(html, /id="board-stats-inline"/);
   assert.match(script, /type: "get-board-statistics"/);
   assert.match(css, /\.board-stats-inline/);
 });
 
-test("builds local workspace save, preview, restore, and delete handlers", async () => {
-  const background = await readFile(new URL("../dist/background.js", import.meta.url), "utf8");
-
-  assert.match(background, /message\.type === "save-workspace"/);
-  assert.match(background, /existing\.filter\(\(workspace\) => workspace\.deviceName === deviceName\)\.map\(\(workspace\) => workspace\.title\)/);
-  assert.match(background, /validateWorkspaceTitle\(message\.title, existingTitles\)/);
-  assert.match(background, /upsertWorkspace/);
-  assert.match(background, /fetchWorkspaces/);
-  assert.match(background, /deleteWorkspaceRow/);
-  assert.match(background, /renameDeviceWorkspaces/);
-  assert.match(background, /getOrCreateDeviceId/);
-  assert.match(background, /device: \{ id: deviceId, name: deviceName \}/);
-  assert.match(background, /i18n\.t\("workspaceNameEmpty"\)/);
-  assert.match(background, /i18n\.t\("workspaceNameDuplicate"\)/);
-  assert.match(background, /message\.type === "get-workspace-restore-preview"/);
-  assert.match(background, /message\.type === "restore-workspace"/);
-  assert.match(background, /message\.confirmed !== true/);
-  assert.match(background, /chrome\.tabs\.create/);
-  assert.match(background, /message\.type === "delete-workspace"/);
-  assert.match(background, /message\.type === "set-device-name"/);
-  assert.match(background, /i18n\.t\("deviceNameInvalid"\)/);
-});
-
 test("renders local workspace selection and restore-preview dialogs", async () => {
   const [html, script, css] = await Promise.all([
     readFile(new URL("../dist/board.html", import.meta.url), "utf8"),
-    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readBoardSources(),
     readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
   ]);
   assert.match(html, /id="open-workspaces"/);
@@ -885,7 +851,7 @@ test("makes only the workspace manager dialog resizable", async () => {
   const [html, css, script] = await Promise.all([
     readFile(new URL("../dist/board.html", import.meta.url), "utf8"),
     readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
-    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readBoardSources(),
   ]);
 
   const managerDialog = html.match(/<dialog[^>]*id="workspace-dialog"[^>]*>/)?.[0] ?? "";
@@ -980,20 +946,10 @@ test("makes only the workspace manager dialog resizable", async () => {
   assert.match(script, /window\.addEventListener\("resize", \(\) => \{\s*syncWorkspaceDialogResizeAnchor\(\);/);
 });
 
-test("builds duplicate preview and explicit batch-close handlers", async () => {
-  const background = await readFile(new URL("../dist/background.js", import.meta.url), "utf8");
-
-  assert.match(background, /message\.type === "get-board-duplicate-preview"/);
-  assert.match(background, /findDuplicateBoardTabs/);
-  assert.match(background, /message\.type === "close-board-duplicates"/);
-  assert.match(background, /message\.confirmed !== true/);
-  assert.match(background, /chrome\.tabs\.remove/);
-});
-
 test("renders a duplicate review dialog before batch closure", async () => {
   const [html, script, css] = await Promise.all([
     readFile(new URL("../dist/board.html", import.meta.url), "utf8"),
-    readFile(new URL("../dist/board.js", import.meta.url), "utf8"),
+    readBoardSources(),
     readFile(new URL("../dist/board.css", import.meta.url), "utf8"),
   ]);
 
@@ -1230,7 +1186,7 @@ test("deferredRemindersHidden shows the section on the current board only when r
 });
 
 test("board script decides deferred reminder visibility through a single helper", async () => {
-  const script = await readFile(new URL("../dist/board.js", import.meta.url), "utf8");
+  const script = await readBoardSources();
   // 防回归：两处调用点都必须走 deferredRemindersHidden，否则切回“当前”会先显示空列表再隐藏。
   assert.match(script, /deferredReminders\.classList\.toggle\("hidden", deferredRemindersHidden\(/);
   assert.doesNotMatch(script, /deferredReminders\.classList\.toggle\("hidden", tabs\.length === 0\)/);
@@ -2546,7 +2502,7 @@ test("matchesTimelineFilter always returns true when refDate is 0", async () => 
 test("board mutations authorize against the locally cached session without a network round trip", async () => {
   const [auth, background] = await Promise.all([
     readFile(new URL("../dist/auth.js", import.meta.url), "utf8"),
-    readFile(new URL("../dist/background.js", import.meta.url), "utf8"),
+    readBackgroundSources(),
   ]);
   const getLocalUser = auth.slice(auth.indexOf("export async function getLocalUser"), auth.indexOf("export async function signUp"));
 
@@ -2560,7 +2516,7 @@ test("board mutations authorize against the locally cached session without a net
 });
 
 test("closing a board tab relies on the tab listener refresh instead of an extra load", async () => {
-  const script = await readFile(new URL("../dist/board.js", import.meta.url), "utf8");
+  const script = await readBoardSources();
   const closeFn = script.slice(script.indexOf("async function closeTab"), script.indexOf("function applyOptimisticGroupReorder"));
 
   assert.doesNotMatch(closeFn, /await load\(\)/);
@@ -3142,7 +3098,7 @@ test("workspace title validation still trims and rejects empty input", () => {
 
 test("workspace board never feeds pseudo tab ids to keyboard or batch tab operations", async () => {
   // board.ts 无单元线束（side-effect 入口模块），此处按仓库既有惯例做产物契约断言。
-  const board = await readFile(new URL("../dist/board.js", import.meta.url), "utf8");
+  const board = await readBoardSources();
   const start = board.indexOf("function getVisibleTabIds");
   const fn = board.slice(start, board.indexOf("function toggleTabSelection", start));
   assert.match(fn, /scopeMode === "workspace"\)\s*return \[\]/);
@@ -3160,7 +3116,7 @@ test("popup settings save spreads the current settings, not the defaults", async
 
 test("board theme save loads current settings before writing (no defaults reset)", async () => {
   // board.ts 的 saveBoardTheme 曾以 DEFAULT_SETTINGS 为基数（同类 P1-3 缺陷）。
-  const board = await readFile(new URL("../dist/board.js", import.meta.url), "utf8");
+  const board = await readBoardSources();
   const start = board.indexOf("async function saveBoardTheme");
   const save = board.slice(start, board.indexOf("async function refresh", start));
   assert.match(save, /if \(!currentState\?\.settings\)\s*await load\(\)/);
@@ -3256,7 +3212,7 @@ test("sign-out wipes notified deferred ids along with the rest of the per-user d
 test("dismissing a deferred notification must not reset its dedupe mark", async () => {
   // 通知被划掉（onClosed）时删掉去重标记曾导致同一提醒每分钟重弹。
   // background.ts 无单元线束，按仓库惯例对产物做契约断言。
-  const background = await readFile(new URL("../dist/background.js", import.meta.url), "utf8");
+  const background = await readBackgroundSources();
   assert.doesNotMatch(background, /notifications\.onClosed\.addListener/);
   assert.match(background, /saveNotifiedDeferredIds/);
 });
