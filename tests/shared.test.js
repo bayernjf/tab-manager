@@ -2145,6 +2145,56 @@ test("parses only valid portable data and rejects sensitive unknown keys", () =>
   assert.equal(parsePortableData({ ...valid, groupRules: [{ ...valid.groupRules[0], domains: ["example.com", "example.com"] }] }), null);
 });
 
+test("aligns the minimumTabs validation ceiling with the database limit of 20", () => {
+  const valid = {
+    version: 1,
+    settings: {
+      autoGroupEnabled: true,
+      minimumTabs: 2,
+      defaultGroupColor: "blue",
+      cloudSyncEnabled: true,
+      syncRulesEnabled: true,
+      syncIgnoreListEnabled: true,
+      lastSuccessfulSyncAt: null,
+    },
+    groupRules: [],
+    ignoredSites: [],
+  };
+
+  assert.ok(parsePortableData({ ...valid, settings: { ...valid.settings, minimumTabs: 20 } }));
+  assert.equal(parsePortableData({ ...valid, settings: { ...valid.settings, minimumTabs: 21 } }), null);
+  assert.ok(settingsFromSyncRow({ user_id: "user-1", auto_group_enabled: true, minimum_tabs: 20 }));
+  assert.equal(settingsFromSyncRow({ user_id: "user-1", auto_group_enabled: true, minimum_tabs: 21 }), null);
+});
+
+test("rejects portable rules whose title exceeds the 40-character sync limit", () => {
+  const valid = {
+    version: 1,
+    settings: {
+      autoGroupEnabled: true,
+      minimumTabs: 2,
+      defaultGroupColor: "blue",
+      cloudSyncEnabled: true,
+      syncRulesEnabled: true,
+      syncIgnoreListEnabled: true,
+      lastSuccessfulSyncAt: null,
+    },
+    groupRules: [{
+      id: "rule-1",
+      title: "Example",
+      color: "blue",
+      domains: ["example.com"],
+      matchScope: "domain-and-subdomains",
+      enabled: true,
+      sortOrder: 0,
+    }],
+    ignoredSites: [],
+  };
+
+  assert.ok(parsePortableData({ ...valid, groupRules: [{ ...valid.groupRules[0], title: "x".repeat(40) }] }));
+  assert.equal(parsePortableData({ ...valid, groupRules: [{ ...valid.groupRules[0], title: "x".repeat(41) }] }), null);
+});
+
 test("preserves and defaults the new-tab board setting and theme in portable data", () => {
   const current = {
     version: 1,
