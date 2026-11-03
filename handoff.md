@@ -138,16 +138,29 @@ feature/20260719 分支共 30+ 个 commit，已全部 push 并通过 PR 合并�
 
 > 已移除的键（随「内存占用」功能移除）：`memoryUsage`, `memoryTitle`, `closeTopUsers`, `memoryKB`, `memoryMB`
 
-### 4.6 看板模块拆分（2026-09-09）
+### 4.6 模块拆分与依赖方向（2026-11-03 更新）
 
-版本历史弹窗已从 `board.ts` 拆出，依赖方向为 `board.ts → board-*.ts`，两个新模块不反向 import `board.ts`，无循环依赖：
+后台与看板都按「入口 + 子模块」拆分，依赖方向单向，无循环：
+
+**后台：`background.ts → background-router.ts → background-services.ts`**
+
+- `src/background.ts`（168 行）：只负责 chrome 监听器注册与生命周期；import `background-router.ts` 的 `handleBackgroundMessage` 和 `background-services.ts` 的 helper。
+- `src/background-router.ts`（900 行）：消息分发与各 RPC 分支；import `background-services.ts`。
+- `src/background-services.ts`（564 行）：可复用的后台 helper（提醒检查、命令处理、鉴权门禁等）；不 import router，也不 import `background.ts`。
+
+**看板：`board.ts → board-*.ts`**
 
 | 文件 | 职责 |
 |---|---|
+| `src/board.ts` | 页面壳：页面级状态、标签/分组渲染、批量选择、重复标签复核、主题、键盘导航、生命周期接线 |
 | `src/board-dom.ts` | 看板共享 DOM/消息原语：`$`、`send`、`boardToast` / `showStatus`、`makeButton`、`faviconFor`、`getOpenTabUrls` |
-| `src/board-history.ts` | 工作区版本历史弹窗：`openWorkspaceHistoryDialog`、版本渲染 / 恢复 / 另存；弹窗唯一自管状态是当前打开的 workspaceId；`board.ts` 只负责调用打开和启动时 `wireWorkspaceHistoryDialog()` |
+| `src/board-workspace.ts` | 工作区主弹窗、作用域导航与工作区看板渲染（`openSaveToWorkspaceMenu`、`renderWorkspaceBoard`、`scopeMode` 等） |
+| `src/board-deferred.ts` | 稍后提醒：`deferTab`、`openDeferMenu`、`renderDeferredTabs`、`renderBoardStatistics` |
+| `src/board-timeline.ts` | 时间线视图：`renderTimelineView` |
+| `src/board-recently-closed.ts` | 最近关闭弹窗：`openRecentlyClosed`、`renderRecentlyClosedList` |
+| `src/board-history.ts` | 工作区版本历史弹窗：`openWorkspaceHistoryDialog`、版本渲染 / 恢复 / 另存 |
 
-拆分后 `board.ts` 由 2445 行降至 2233 行。**工作区主弹窗未拆**：它读写 `workspaces` / `currentDevice` / `restoreWorkspaceId` 等与作用域浮层、看板渲染共享的可变模块状态，机械外移需要先引入共享状态层，已明确判定不属于低风险移动，保持原样。
+子模块只依赖 `board-dom.ts` / `shared.ts` / `i18n.ts`；`board-workspace.ts` 额外依赖 `board-history.ts`。**没有任何 `board-*.ts` 反向 import `board.ts`**。拆分后 `board.ts` 为 1001 行（拆分前 2233 行），工作区主弹窗已迁至 `board-workspace.ts`。
 
 ---
 
