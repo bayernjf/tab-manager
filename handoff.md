@@ -83,7 +83,7 @@ feature/20260719 分支共 30+ 个 commit，已全部 push 并通过 PR 合并�
 
 | 类型 / 函数 | 用途 |
 |---|---|
-| `RecentlyClosedTab` / `validateRecentlyClosedTab()` | 最近关闭 tab 记录结构；含 sessionId 便于 sessions.restore 精准恢复 |
+| `RecentlyClosedTab` / `validateRecentlyClosedTab()` | 类型与校验已实现（`shared.ts:1400-1436`）；`sessionId` 只是可选字段，生产写入路径从未赋值（`TabRemoveInfo` 无该字段），恢复时实际总走 URL 重开 |
 | `WorkspaceVersion` / `WorkspaceHistory` / `appendWorkspaceVersion()` | 工作区单版快照 + 集合；10 版上限自动截断 |
 | `WorkspacePortableData` / `toWorkspacePortableData()` / `previewWorkspacePortableImport()` | 工作区便携 JSON 格式 + 导出 + 导入预览（支持字符串/对象入参，自动过滤运行时字段） |
 
@@ -91,27 +91,29 @@ feature/20260719 分支共 30+ 个 commit，已全部 push 并通过 PR 合并�
 
 | 存储键 | 函数族 | 说明 |
 |---|---|---|
-| `recentlyClosedTabs` | `loadRecentlyClosedTabs / saveRecentlyClosedTabs / appendRecentlyClosedTab / removeRecentlyClosedTab / clearRecentlyClosedTabs` | 50 条上限，最近关闭 tab 列表 |
+| `recentlyClosedTabs` | `loadRecentlyClosedTabs / saveRecentlyClosedTabs / appendRecentlyClosedTab / removeRecentlyClosedTab / clearRecentlyClosedTabs` | 函数已实现（`storage.ts:150-178`，50 条上限），但唯一写入方是失效的 `onRemoved` 路径，且无前台读取调用，列表实际恒为空 |
 | `workspaceHistory` + workspaceId 子键 | `loadWorkspaceHistory / loadAllWorkspaceHistories / saveWorkspaceHistory / saveWorkspaceVersion / deleteWorkspaceHistory / clearAllWorkspaceHistories` | 每个 workspaceId 对应 10 个版本的数组 |
 
-### 4.3 后台消息 RPC（新增 ~15 个）— `src/background.ts`
+### 4.3 后台消息 RPC（12 个）— `src/background-router.ts`
 
 > 全部走原有 `PopupMessage` 联合类型与 `chrome.runtime.onMessage` 分发：
 
 | 类型 | 用途 | 返回 |
 |---|---|---|
-| `get-recently-closed` | 获取最近关闭列表 | `RecentlyClosedTab[]` |
-| `restore-recently-closed` | 恢复指定记录（优先 sessionId） | 新 tab 基础信息 |
-| `remove-recently-closed` | 从列表移除单条 | `{ ok: true }` |
-| `clear-recently-closed` | 清空最近关闭列表 | `{ ok: true }` |
-| `get-workspace-history` | 取指定 workspace 历史（默认 10 版） | `WorkspaceVersion[]` |
-| `save-workspace-history-version` | 显式保存当前快照为一版（可选 note） | `{ version: number }` |
-| `restore-workspace-history-version` | 恢复指定版到窗口 | `{ restoredTabs: number }` |
-| `export-workspaces-json` | 导出所有工作区为便携 JSON | `{ data: WorkspacePortableData, json: string }` |
-| `import-workspaces-json`（两步） | 先 `preview:true` 预览 → 再 `confirmed:true` 合并 | 预览条目 / 导入结果统计 |
+| `get-recently-closed` | 读取存储型列表；handler 在 `background-router.ts:620`，但无前台调用且无有效写入方 → 死代码 | `{ tabs: RecentlyClosedTab[] }` |
+| `restore-recently-closed` | handler 在 `background-router.ts:624`；`sessionId` 分支永不命中，只能按 URL 重开；无前台调用 → 死代码 | `{ ok: true }` |
+| `remove-recently-closed` | handler 在 `background-router.ts:644`，无前台调用 → 死代码 | `{ ok: true }` |
+| `clear-recently-closed` | handler 在 `background-router.ts:650`，无前台调用 → 死代码 | `{ ok: true }` |
+| `get-workspace-history` | 取指定 workspace 历史（默认 10 版） | `{ history: WorkspaceHistory \| null, maxVersions: number }` |
+| `save-workspace-history-version` | 显式保存当前快照为一版（可选 note） | `{ ok: true, history: WorkspaceHistory }` |
+| `restore-workspace-history-version` | 恢复指定版到窗口 | `{ ok: true, created: number, unavailableCount: number }` |
+| `export-workspaces-json` | 导出所有工作区为便携 JSON | `{ data: WorkspacePortableData }` |
+| `import-workspaces-json`（两步） | 先 `preview:true` 预览 → 再 `confirmed:true` 合并；`cancelled` 单独返回 | 预览 `{ workspaceCount, totalTabs }` / 合并统计 `{ synced, failedUploads, importedCount, totalCount }` |
 | `batch-close-tabs` | 批量关闭 | `{ closed: number, skipped: number }` |
 | `batch-defer-tabs` | 批量稍后提醒（按默认时间） | `{ deferred: number }` |
 | `batch-move-tabs-to-group` | 批量移动到指定 groupKey | `{ moved: number, notFound: number }` |
+
+> 前 4 个「最近关闭」RPC 都有 handler（`background-router.ts:620-653`），但全仓没有任何 `type: "..."` 调用方；看板 UI 直接使用 `chrome.sessions.getRecentlyClosed`（`board-recently-closed.ts:18`）与 `chrome.sessions.restore`（`:69`）。其余 8 个 RPC 均有真实调用方：`board.ts:182/198/236`、`board-workspace.ts:388/413/429/446`、`board-history.ts:31/113/137`。
 
 ### 4.4 看板交互 —— `src/board.ts` 状态
 
