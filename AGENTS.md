@@ -207,6 +207,14 @@ git diff --check
 
 纯函数优先添加到 `shared.ts` 并在 `tests/` 中补充 Node.js 单元测试。依赖真实 Chrome 或 Supabase 的逻辑应尽量拆出可测试的转换函数。
 
+### 为什么保留产物契约断言
+
+`tests/shared.test.js` 中仍有一部分用例读取构建产物后做正则断言，而不是调用函数。这是有意保留的，不要把它们当成可直接删除的空转测试：
+
+- Node 单测环境没有 DOM。`popup` 和 `board` 是带副作用的入口模块，HTML 结构、CSS 接线和 `addEventListener` / `dialog.showModal()` 这类 DOM 行为无法在 Node 里真实执行；这部分由 Playwright E2E 覆盖，单测只做「产物仍包含这条接线」的守卫。
+- 拆分后源文件不再是单文件。看板和后台都已拆成入口 + 子模块（见 `handoff.md` §4.6），所以断言读取的不是单个 `board.js` / `background.js`，而是按浏览器实际加载顺序拼接的「入口 + 各拆分模块」。`tests/shared.test.js` 顶部的 `BOARD_MODULES` / `BACKGROUND_MODULES` 就是这份拼接清单；新增子模块时要同步加入，否则断言会漏读。
+- 契约断言只证明字符串存在，不证明行为。能抽成纯函数的逻辑仍应抽到 `shared.ts` 并写真单测（见上一段）；新增契约断言时请沿用拼接源，不要把清单改回只读入口文件，否则拆分后必然误报。
+
 ## Commit Message 规范
 
 提交规则以 `.trae/rules/git-commit-message.md` 为准。

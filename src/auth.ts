@@ -117,21 +117,35 @@ async function getValidSession(): Promise<AuthSession | null> {
     return null;
   }
   if (session.expires_at <= Math.floor(Date.now() / 1000) + 60) {
-    try {
-      const data = await request<{ access_token: string; refresh_token: string; expires_in: number; user: AuthUser }>("/token?grant_type=refresh_token", {
-        method: "POST", body: JSON.stringify({ refresh_token: session.refresh_token }),
-      });
-      session = toSession(data, session.rememberUntil);
-      await saveSession(session);
-    } catch (error) {
-      if (isExplicitAuthenticationFailure(error)) {
-        await saveSession(null);
-        return null;
-      }
-      return session;
-    }
+    // 并发调用（如 sync.ts 的 Promise.all 同时触发）必须复用同一个进行中的
+    // 刷新请求：Supabase 默认轮换 refresh token，两个并发刷新会用同一份
+    // 旧 refresh token 各发一次，后到者收到 400 并被误判为会话失效而强制登出。
+    refreshInFlight ??= refreshSession(session).finally(() => { refreshInFlight = null; });
+    const refreshed = await refreshInFlight;
+    if (!refreshed) return null;
+    session = refreshed;
   }
   return session;
+}
+
+/** 模块级单飞：同一时刻至多一个刷新请求，全部并发调用方共享其结果。 */
+let refreshInFlight: Promise<AuthSession | null> | null = null;
+
+async function refreshSession(session: AuthSession): Promise<AuthSession | null> {
+  try {
+    const data = await request<{ access_token: string; refresh_token: string; expires_in: number; user: AuthUser }>("/token?grant_type=refresh_token", {
+      method: "POST", body: JSON.stringify({ refresh_token: session.refresh_token }),
+    });
+    const refreshed = toSession(data, session.rememberUntil);
+    await saveSession(refreshed);
+    return refreshed;
+  } catch (error) {
+    if (isExplicitAuthenticationFailure(error)) {
+      await saveSession(null);
+      return null;
+    }
+    return session;
+  }
 }
 
 export async function getAccessToken(): Promise<string | null> {

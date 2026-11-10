@@ -30,6 +30,7 @@
             <p id="login-instruction" class="muted" hidden data-i18n="loginInstruction">如果未打开弹窗，请点击浏览器工具栏中的 Tab Garden 图标，然后在弹窗中登录。</p>
           </div>
           <form id="sync-form"><section class="card"><h2 data-i18n="syncScope">同步范围</h2><label class="switch"><input id="cloud-sync" type="checkbox"> <span data-i18n="cloudSync">启用云端同步</span></label><label class="switch"><input id="rules-sync" type="checkbox"> <span data-i18n="syncRules">同步分组规则</span></label><label class="switch"><input id="ignore-sync" type="checkbox"> <span data-i18n="syncIgnore">同步忽略网站</span></label></section><button type="submit" data-i18n="saveSyncSettings">保存同步设置</button></form>
+          <section class="card"><h2 data-i18n="cloudOverwriteTitle">用云端覆盖本地工作区</h2><p class="muted" data-i18n="cloudOverwriteHint">以云端为准整表替换本地工作区；本地独有的工作区将被删除，此操作不可撤销。</p><button id="overwrite-from-cloud" type="button" data-i18n="overwriteFromCloud">从云端覆盖…</button><p id="overwrite-preview" class="muted" aria-live="polite"></p><button id="confirm-overwrite" type="button" disabled data-i18n="confirmOverwrite">确认覆盖</button><button id="cancel-overwrite" class="secondary" type="button" disabled data-i18n="cancel">取消</button></section>
         </section>
         <section id="rules" class="panel" tabindex="-1" hidden>
           <h1 data-i18n="domainRules">域名分组规则</h1><p class="muted" data-i18n="domainRulesHint">命中的网站会按规则创建自动分组。</p>

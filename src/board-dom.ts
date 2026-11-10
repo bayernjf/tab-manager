@@ -72,6 +72,35 @@ export function faviconFor(url?: string): string {
   }
 }
 
+export function deviceClass(): "desktop" | "tablet" | "mobile" {
+  if (window.innerWidth <= 640) return "mobile";
+  if (window.innerWidth <= 980) return "tablet";
+  return "desktop";
+}
+
+export function laneCount(): number {
+  return deviceClass() === "desktop" ? 3 : deviceClass() === "tablet" ? 2 : 1;
+}
+
+export function groupColor(color: keyof typeof GROUP_COLOR_VALUES): string {
+  return GROUP_COLOR_VALUES[color];
+}
+
+const GROUP_COLOR_VALUES = {
+  grey: "#909994", blue: "#6d8fc4", red: "#cf5d5d", yellow: "#d2ad3f", green: "#5c9b70",
+  pink: "#d77ca4", purple: "#8b70ba", cyan: "#4fa4ac", orange: "#d68b4a",
+} as const;
+
+export function dragData(event: DragEvent, type: "board-tab" | "board-group" | "workspace-tab", value: string): void {
+  if (!event.dataTransfer) return;
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData(type, value);
+}
+
+export function clearDropTarget(event: DragEvent): void {
+  event.currentTarget instanceof HTMLElement && event.currentTarget.classList.remove("drop-target");
+}
+
 export async function getOpenTabUrls(): Promise<Set<string>> {
   try {
     const tabs = await chrome.tabs.query({});

@@ -43,7 +43,7 @@ npm run e2e          # Playwright E2E 测试（默认 headless，需先 build）
 | 1 | Chrome 系统级到期通知（到期 tab 自动弹系统通知，点击打开标签） | ✅ 已完成 | `chrome.alarms` 1 分钟轮询 + `chrome.notifications`，已通知 tab id 去重 |
 | 2 | 重复标签列表弹窗 + 一键去重关闭 | ✅ 已完成 | 按 URL 分组、每组保留 1 条、其他批量关闭；跳过最近活跃 tab |
 | 3 | 批量操作：checkbox 多选 + 批量关闭 / 稍后提醒 / 移动分组 | ✅ 已完成 | 顶部固定工具栏；移动弹层选目标分组；可退出选择模式 |
-| 4 | 最近关闭标签视图（sessions API） | ✅ 已完成 | 50 条上限；`chrome.tabs.onRemoved` 自动捕获普通网页 tab；优先 sessions.restore，失败回退 URL 重开 |
+| 4 | 最近关闭标签视图（sessions API） | 🟡 部分完成（自动捕获链路为死代码） | 视图本身走 `chrome.sessions.getRecentlyClosed` 可用（`board-recently-closed.ts:18`）；但 `chrome.tabs.onRemoved` 自动捕获链路不生效：回调触发时 tab 已删除，`chrome.tabs.get(tabId)` 必然 reject，且 `TabRemoveInfo` 只有 `isWindowClosing` / `windowId`、没有 `sessionId` 字段；对应存储型 RPC（get/restore/remove/clear-recently-closed）也无前台调用 |
 | 5 | 快捷键命令（Alt+B / Alt+D / Alt+S） | ✅ 已完成 | Alt+B 打开看板；Alt+D 活动 tab 稍后处理并关闭；Alt+S 快速保存当前窗口为工作区（自动编号） |
 | 6 | 工作区本地 10 个历史版本 | ✅ 已完成 | 追加写入自动截断；支持列出、保存指定快照、恢复到窗口 |
 | 7 | 设置 / 工作区 JSON 导入导出 | ✅ 已完成 | 导入两步走（preview → confirmed 合并）；重名自动加后缀；选项页和工作区分开两组 RPC |
@@ -83,7 +83,7 @@ feature/20260719 分支共 30+ 个 commit，已全部 push 并通过 PR 合并�
 
 | 类型 / 函数 | 用途 |
 |---|---|
-| `RecentlyClosedTab` / `validateRecentlyClosedTab()` | 最近关闭 tab 记录结构；含 sessionId 便于 sessions.restore 精准恢复 |
+| `RecentlyClosedTab` / `validateRecentlyClosedTab()` | 类型与校验已实现（`shared.ts:1400-1436`）；`sessionId` 只是可选字段，生产写入路径从未赋值（`TabRemoveInfo` 无该字段），恢复时实际总走 URL 重开 |
 | `WorkspaceVersion` / `WorkspaceHistory` / `appendWorkspaceVersion()` | 工作区单版快照 + 集合；10 版上限自动截断 |
 | `WorkspacePortableData` / `toWorkspacePortableData()` / `previewWorkspacePortableImport()` | 工作区便携 JSON 格式 + 导出 + 导入预览（支持字符串/对象入参，自动过滤运行时字段） |
 
@@ -91,27 +91,29 @@ feature/20260719 分支共 30+ 个 commit，已全部 push 并通过 PR 合并�
 
 | 存储键 | 函数族 | 说明 |
 |---|---|---|
-| `recentlyClosedTabs` | `loadRecentlyClosedTabs / saveRecentlyClosedTabs / appendRecentlyClosedTab / removeRecentlyClosedTab / clearRecentlyClosedTabs` | 50 条上限，最近关闭 tab 列表 |
+| `recentlyClosedTabs` | `loadRecentlyClosedTabs / saveRecentlyClosedTabs / appendRecentlyClosedTab / removeRecentlyClosedTab / clearRecentlyClosedTabs` | 函数已实现（`storage.ts:150-178`，50 条上限），但唯一写入方是失效的 `onRemoved` 路径，且无前台读取调用，列表实际恒为空 |
 | `workspaceHistory` + workspaceId 子键 | `loadWorkspaceHistory / loadAllWorkspaceHistories / saveWorkspaceHistory / saveWorkspaceVersion / deleteWorkspaceHistory / clearAllWorkspaceHistories` | 每个 workspaceId 对应 10 个版本的数组 |
 
-### 4.3 后台消息 RPC（新增 ~15 个）— `src/background.ts`
+### 4.3 后台消息 RPC（12 个）— `src/background-router.ts`
 
 > 全部走原有 `PopupMessage` 联合类型与 `chrome.runtime.onMessage` 分发：
 
 | 类型 | 用途 | 返回 |
 |---|---|---|
-| `get-recently-closed` | 获取最近关闭列表 | `RecentlyClosedTab[]` |
-| `restore-recently-closed` | 恢复指定记录（优先 sessionId） | 新 tab 基础信息 |
-| `remove-recently-closed` | 从列表移除单条 | `{ ok: true }` |
-| `clear-recently-closed` | 清空最近关闭列表 | `{ ok: true }` |
-| `get-workspace-history` | 取指定 workspace 历史（默认 10 版） | `WorkspaceVersion[]` |
-| `save-workspace-history-version` | 显式保存当前快照为一版（可选 note） | `{ version: number }` |
-| `restore-workspace-history-version` | 恢复指定版到窗口 | `{ restoredTabs: number }` |
-| `export-workspaces-json` | 导出所有工作区为便携 JSON | `{ data: WorkspacePortableData, json: string }` |
-| `import-workspaces-json`（两步） | 先 `preview:true` 预览 → 再 `confirmed:true` 合并 | 预览条目 / 导入结果统计 |
+| `get-recently-closed` | 读取存储型列表；handler 在 `background-router.ts:620`，但无前台调用且无有效写入方 → 死代码 | `{ tabs: RecentlyClosedTab[] }` |
+| `restore-recently-closed` | handler 在 `background-router.ts:624`；`sessionId` 分支永不命中，只能按 URL 重开；无前台调用 → 死代码 | `{ ok: true }` |
+| `remove-recently-closed` | handler 在 `background-router.ts:644`，无前台调用 → 死代码 | `{ ok: true }` |
+| `clear-recently-closed` | handler 在 `background-router.ts:650`，无前台调用 → 死代码 | `{ ok: true }` |
+| `get-workspace-history` | 取指定 workspace 历史（默认 10 版） | `{ history: WorkspaceHistory \| null, maxVersions: number }` |
+| `save-workspace-history-version` | 显式保存当前快照为一版（可选 note） | `{ ok: true, history: WorkspaceHistory }` |
+| `restore-workspace-history-version` | 恢复指定版到窗口 | `{ ok: true, created: number, unavailableCount: number }` |
+| `export-workspaces-json` | 导出所有工作区为便携 JSON | `{ data: WorkspacePortableData }` |
+| `import-workspaces-json`（两步） | 先 `preview:true` 预览 → 再 `confirmed:true` 合并；`cancelled` 单独返回 | 预览 `{ workspaceCount, totalTabs }` / 合并统计 `{ synced, failedUploads, importedCount, totalCount }` |
 | `batch-close-tabs` | 批量关闭 | `{ closed: number, skipped: number }` |
 | `batch-defer-tabs` | 批量稍后提醒（按默认时间） | `{ deferred: number }` |
 | `batch-move-tabs-to-group` | 批量移动到指定 groupKey | `{ moved: number, notFound: number }` |
+
+> 前 4 个「最近关闭」RPC 都有 handler（`background-router.ts:620-653`），但全仓没有任何 `type: "..."` 调用方；看板 UI 直接使用 `chrome.sessions.getRecentlyClosed`（`board-recently-closed.ts:18`）与 `chrome.sessions.restore`（`:69`）。其余 8 个 RPC 均有真实调用方：`board.ts:182/198/236`、`board-workspace.ts:388/413/429/446`、`board-history.ts:31/113/137`。
 
 ### 4.4 看板交互 —— `src/board.ts` 状态
 
@@ -138,16 +140,29 @@ feature/20260719 分支共 30+ 个 commit，已全部 push 并通过 PR 合并�
 
 > 已移除的键（随「内存占用」功能移除）：`memoryUsage`, `memoryTitle`, `closeTopUsers`, `memoryKB`, `memoryMB`
 
-### 4.6 看板模块拆分（2026-09-09）
+### 4.6 模块拆分与依赖方向（2026-11-03 更新）
 
-版本历史弹窗已从 `board.ts` 拆出，依赖方向为 `board.ts → board-*.ts`，两个新模块不反向 import `board.ts`，无循环依赖：
+后台与看板都按「入口 + 子模块」拆分，依赖方向单向，无循环：
+
+**后台：`background.ts → background-router.ts → background-services.ts`**
+
+- `src/background.ts`（168 行）：只负责 chrome 监听器注册与生命周期；import `background-router.ts` 的 `handleBackgroundMessage` 和 `background-services.ts` 的 helper。
+- `src/background-router.ts`（900 行）：消息分发与各 RPC 分支；import `background-services.ts`。
+- `src/background-services.ts`（564 行）：可复用的后台 helper（提醒检查、命令处理、鉴权门禁等）；不 import router，也不 import `background.ts`。
+
+**看板：`board.ts → board-*.ts`**
 
 | 文件 | 职责 |
 |---|---|
+| `src/board.ts` | 页面壳：页面级状态、标签/分组渲染、批量选择、重复标签复核、主题、键盘导航、生命周期接线 |
 | `src/board-dom.ts` | 看板共享 DOM/消息原语：`$`、`send`、`boardToast` / `showStatus`、`makeButton`、`faviconFor`、`getOpenTabUrls` |
-| `src/board-history.ts` | 工作区版本历史弹窗：`openWorkspaceHistoryDialog`、版本渲染 / 恢复 / 另存；弹窗唯一自管状态是当前打开的 workspaceId；`board.ts` 只负责调用打开和启动时 `wireWorkspaceHistoryDialog()` |
+| `src/board-workspace.ts` | 工作区主弹窗、作用域导航与工作区看板渲染（`openSaveToWorkspaceMenu`、`renderWorkspaceBoard`、`scopeMode` 等） |
+| `src/board-deferred.ts` | 稍后提醒：`deferTab`、`openDeferMenu`、`renderDeferredTabs`、`renderBoardStatistics` |
+| `src/board-timeline.ts` | 时间线视图：`renderTimelineView` |
+| `src/board-recently-closed.ts` | 最近关闭弹窗：`openRecentlyClosed`、`renderRecentlyClosedList` |
+| `src/board-history.ts` | 工作区版本历史弹窗：`openWorkspaceHistoryDialog`、版本渲染 / 恢复 / 另存 |
 
-拆分后 `board.ts` 由 2445 行降至 2233 行。**工作区主弹窗未拆**：它读写 `workspaces` / `currentDevice` / `restoreWorkspaceId` 等与作用域浮层、看板渲染共享的可变模块状态，机械外移需要先引入共享状态层，已明确判定不属于低风险移动，保持原样。
+子模块只依赖 `board-dom.ts` / `shared.ts` / `i18n.ts`；`board-workspace.ts` 额外依赖 `board-history.ts`。**没有任何 `board-*.ts` 反向 import `board.ts`**。拆分后 `board.ts` 为 1001 行（拆分前 2233 行），工作区主弹窗已迁至 `board-workspace.ts`。
 
 ---
 

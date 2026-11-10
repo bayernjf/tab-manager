@@ -21,6 +21,8 @@ import {
   type BoardLayout,
   type BoardLayoutSyncRow,
   type WorkspaceSnapshot,
+  type WorkspaceTombstone,
+  validateWorkspaceTombstone,
 } from "./shared.js";
 import { loadState, saveSettings } from "./storage.js";
 
@@ -124,14 +126,22 @@ export async function replaceGroupRules(userId: string, rules: readonly GroupRul
     id: rule.id, user_id: userId, title: rule.title, color: rule.color, domains: [...rule.domains], match_scope: rule.matchScope, enabled: rule.enabled, sort_order: rule.sortOrder,
   }));
   if (rows.some((row) => !groupRuleFromSyncRow(row))) throw new Error("分组规则包含无效数据");
-  await databaseRequest<unknown>(`/group_rules?user_id=eq.${encodeURIComponent(userId)}`, { method: "DELETE" });
+  await replaceRowsById(userId, "group_rules", "user_id,id", rows, (row) => row.id);
+}
+
+/** Upsert the new set first, then delete the stale remainder: a mid-flight failure now leaves the
+ *  cloud with extra rows instead of an empty table that other devices would pull down. */
+async function replaceRowsById<TRow>(userId: string, table: string, onConflict: string, rows: readonly TRow[], keyOf: (row: TRow) => string, keyColumn = "id"): Promise<void> {
   if (rows.length) {
-    await databaseRequest<unknown>("/group_rules", {
+    await databaseRequest<unknown>(`/${table}?on_conflict=${onConflict}`, {
       method: "POST",
-      headers: { Prefer: "return=minimal" },
+      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
       body: JSON.stringify(rows),
     });
   }
+  const keep = rows.map(keyOf);
+  const filter = keep.length ? `&${keyColumn}=not.in.(${keep.map((id) => encodeURIComponent(id)).join(",")})` : "";
+  await databaseRequest<unknown>(`/${table}?user_id=eq.${encodeURIComponent(userId)}${filter}`, { method: "DELETE" });
 }
 
 export async function fetchIgnoredSites(userId: string): Promise<IgnoredSite[]> {
@@ -148,14 +158,7 @@ export async function replaceIgnoredSites(userId: string, sites: readonly Ignore
     id: site.id, user_id: userId, domain: site.domain, match_scope: site.matchScope, sort_order: site.sortOrder,
   }));
   if (rows.some((row) => !ignoredSiteFromSyncRow(row))) throw new Error("忽略站点包含无效数据");
-  await databaseRequest<unknown>(`/ignored_sites?user_id=eq.${encodeURIComponent(userId)}`, { method: "DELETE" });
-  if (rows.length) {
-    await databaseRequest<unknown>("/ignored_sites", {
-      method: "POST",
-      headers: { Prefer: "return=minimal" },
-      body: JSON.stringify(rows),
-    });
-  }
+  await replaceRowsById(userId, "ignored_sites", "user_id,id", rows, (row) => row.id);
 }
 
 export async function fetchBoardCustomGroups(userId: string): Promise<BoardCustomGroup[]> {
@@ -170,8 +173,7 @@ export async function fetchBoardCustomGroups(userId: string): Promise<BoardCusto
 export async function replaceBoardCustomGroups(userId: string, groups: readonly BoardCustomGroup[]): Promise<void> {
   const rows = groups.map((group): BoardCustomGroupSyncRow => ({ id: group.id, user_id: userId, title: group.title, color: group.color, sort_order: group.sortOrder }));
   if (rows.some((row) => !boardCustomGroupFromSyncRow(row, userId))) throw new Error("看板分组包含无效数据");
-  await databaseRequest<unknown>(`/board_custom_groups?user_id=eq.${encodeURIComponent(userId)}`, { method: "DELETE" });
-  if (rows.length) await databaseRequest<unknown>("/board_custom_groups", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(rows) });
+  await replaceRowsById(userId, "board_custom_groups", "user_id,id", rows, (row) => row.id);
 }
 
 export async function fetchBoardLayouts(userId: string): Promise<BoardLayout[]> {
@@ -186,16 +188,31 @@ export async function fetchBoardLayouts(userId: string): Promise<BoardLayout[]> 
 export async function replaceBoardLayouts(userId: string, layouts: readonly BoardLayout[]): Promise<void> {
   const rows = layouts.map((layout): BoardLayoutSyncRow => ({ user_id: userId, board_key: layout.boardKey, device_class: layout.deviceClass, rank: layout.rank, auto_fill: layout.autoFill, manual_lane: layout.manualLane ?? null, manual_slot: layout.manualSlot ?? null, manual_order: null }));
   if (rows.some((row) => !boardLayoutFromSyncRow(row, userId))) throw new Error("看板布局包含无效数据");
-  await databaseRequest<unknown>(`/board_layouts?user_id=eq.${encodeURIComponent(userId)}`, { method: "DELETE" });
-  if (rows.length) await databaseRequest<unknown>("/board_layouts", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(rows) });
+  // 复合主键 (user_id, board_key, device_class)：先 upsert 新集合，再删掉不在集合内的旧行。
+  if (rows.length) {
+    await databaseRequest<unknown>("/board_layouts?on_conflict=user_id,board_key,device_class", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify(rows),
+    });
+  }
+  const keep = new Set(rows.map((row) => `${row.board_key}${row.device_class}`));
+  const existing = await databaseRequest<Array<{ board_key: string; device_class: string }>>(
+    `/board_layouts?user_id=eq.${encodeURIComponent(userId)}&select=board_key,device_class`,
+  );
+  const stale = existing.filter((row) => !keep.has(`${row.board_key}${row.device_class}`));
+  if (stale.length) {
+    const or = stale.map((row) => `and(board_key.eq.${encodeURIComponent(row.board_key)},device_class.eq.${encodeURIComponent(row.device_class)})`).join(",");
+    await databaseRequest<unknown>(`/board_layouts?user_id=eq.${encodeURIComponent(userId)}&or=(${or})`, { method: "DELETE" });
+  }
 }
 
 export async function fetchWorkspaces(userId: string): Promise<WorkspaceSnapshot[]> {
   const rows = await databaseRequest<Array<Record<string, unknown>>>(
-    `/workspace_snapshots?user_id=eq.${encodeURIComponent(userId)}&select=id,device_id,device_name,title,tabs,created_at&order=created_at.desc`,
+    `/workspace_snapshots?user_id=eq.${encodeURIComponent(userId)}&select=id,device_id,device_name,title,tabs,created_at,updated_at&order=created_at.desc`,
   );
   const workspaces = rows.map((row) => validateWorkspaceSnapshot({
-    id: row.id, title: row.title, createdAt: row.created_at, tabs: row.tabs, deviceId: row.device_id, deviceName: row.device_name,
+    id: row.id, title: row.title, createdAt: row.created_at, updatedAt: row.updated_at, tabs: row.tabs, deviceId: row.device_id, deviceName: row.device_name,
   }));
   if (workspaces.some((workspace) => !workspace)) throw new Error("Supabase 返回了无效的工作区数据");
   return workspaces as WorkspaceSnapshot[];
@@ -215,7 +232,27 @@ export async function upsertWorkspace(userId: string, workspace: WorkspaceSnapsh
       title: validated.title,
       tabs: validated.tabs,
       created_at: validated.createdAt,
+      updated_at: validated.updatedAt ?? validated.createdAt,
     }),
+  });
+}
+
+export async function fetchWorkspaceTombstones(userId: string): Promise<WorkspaceTombstone[]> {
+  const rows = await databaseRequest<Array<Record<string, unknown>>>(
+    `/workspace_tombstones?user_id=eq.${encodeURIComponent(userId)}&select=id,deleted_at`,
+  );
+  const tombstones = rows.map((row) => validateWorkspaceTombstone({ id: row.id, deletedAt: row.deleted_at }));
+  if (tombstones.some((tombstone) => !tombstone)) throw new Error("Supabase 返回了无效的工作区墓碑数据");
+  return tombstones as WorkspaceTombstone[];
+}
+
+export async function upsertWorkspaceTombstone(userId: string, tombstone: WorkspaceTombstone): Promise<void> {
+  const validated = validateWorkspaceTombstone(tombstone);
+  if (!validated) throw new Error("工作区墓碑包含无效数据");
+  await databaseRequest<unknown>("/workspace_tombstones?on_conflict=user_id,id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify({ user_id: userId, id: validated.id, deleted_at: validated.deletedAt }),
   });
 }
 
