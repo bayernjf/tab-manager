@@ -7,6 +7,18 @@
 
 ---
 
+## 待办登记（标准）
+
+> 本段是本产品唯一活跃待办入口；详细背景见下方原有章节。
+> 最近同步：2026-09-09
+
+<!-- tier:todos v1 -->
+| id | title | status | priority | owner | next | evidence | updated |
+|---|---|---|---|---|---|---|---|
+| TM-01 | 最近关闭标签自动捕获链路 | open | p2 | self | 评估 `chrome.sessions` 自动捕获可行路径；否则移除死代码 | `handoff.md` §2 第 4 项 | 2026-09-09 |
+| TM-02 | 本轮未 push 提交 | open | p1 | owner | sync 超时修复、单测/e2e 补测、board 弹窗重构等提交并 push | `handoff.md` 头部 | 2026-09-09 |
+<!-- /tier:todos -->
+
 ## 1. 项目概述
 
 Tab Garden 是 Chrome / Edge Manifest V3 原生标签管理扩展，使用 TypeScript + HTML/CSS（无框架、无打包器）开发，后台为 ES Module service worker，数据层对接 Supabase Auth + PostgREST。
